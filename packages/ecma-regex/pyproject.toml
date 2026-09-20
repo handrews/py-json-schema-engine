@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ecma-regex"
+version = "0.0.0"
+description = "ECMA-262 regular expressions for Python: parse, translate to re, and search with JavaScript semantics"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Henry Andrews" },
+]
+dependencies = []
+keywords = ["regex", "regexp", "ecmascript", "ecma-262", "javascript", "unicode"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing",
+]
+
+[project.optional-dependencies]
+regex = ["regex"]
+
+[project.urls]
+Homepage = "https://github.com/handrews/py-json-schema-engine/tree/main/packages/ecma-regex"
+Repository = "https://github.com/handrews/py-json-schema-engine"
+Issues = "https://github.com/handrews/py-json-schema-engine/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ecma_regex"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/",
+    "/tests/",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
