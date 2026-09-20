@@ -1,0 +1,33 @@
+# Publishes to PyPI using PyPI's Trusted Publishing (OpenID Connect): no
+# stored PyPI token lives in this repository or its secrets. For this to
+# work, the PyPI project must be configured (or created) with a trusted
+# publisher that names:
+#   - this repository (handrews/py-json-schema-engine)
+#   - this workflow file (.github/workflows/publish.yml)
+#   - the "pypi" GitHub Environment
+# as the trusted publisher. See https://docs.pypi.org/trusted-publishers/
+# for setup details.
+name: Publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run pytest
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
