@@ -1,0 +1,13 @@
+[
+  {
+    "description": "nested-in-allOf",
+    "schema": {
+      "properties": {
+        "x": {
+          "allOf": [{ "unevaluatedProperties": false }]
+        }
+      }
+    },
+    "tests": [{ "description": "case-a", "data": { "x": {} }, "valid": true }]
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "description": "group-one",
+    "schema": { "type": "string" },
+    "tests": [
+      { "description": "case-a", "data": "x", "valid": true },
+      { "description": "case-a", "data": 1, "valid": false }
+    ]
+  },
+  {
+    "description": "group-two-unsupported",
+    "schema": { "unevaluatedProperties": false },
+    "tests": [
+      { "description": "case-a", "data": {}, "valid": true }
+    ]
+  },
+  {
+    "description": "group-three-enum-only",
+    "schema": { "enum": [{ "unevaluatedProperties": false }] },
+    "tests": [
+      {
+        "description": "matches enum member",
+        "data": { "unevaluatedProperties": false },
+        "valid": true
+      },
+      { "description": "does not match enum member", "data": {}, "valid": false }
+    ]
+  }
+]
