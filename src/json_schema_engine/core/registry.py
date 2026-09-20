@@ -1,0 +1,363 @@
+# Schema registration and static reference resolution (DESIGN.md D2, D18,
+# D19, P3, §5).
+#
+# The registration walk descends only into *schema positions*: it asks each
+# keyword behavior's `analyze()` for its subschema positions rather than
+# hard-coding them, so an `$id` inside `enum` data is never an identifier
+# and a custom applicator registered through the dialect registry gets
+# correct identifier handling for free.
+#
+# Dependency direction: imports `dialect`, `ref`, `uri`, `json_model`, and
+# `errors`. The evaluator and the engine façade build on this.
+
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import suppress
+from dataclasses import dataclass
+from urllib.parse import unquote
+
+from json_schema_engine.core.dialect import Dialect, DialectRegistry
+from json_schema_engine.core.errors import (
+    InvalidSchemaError,
+    MaxDepthExceededError,
+    UnresolvableReferenceError,
+)
+from json_schema_engine.core.json_model import (
+    JsonValue,
+    escape_segment,
+    is_object,
+    json_type_of,
+    unescape_segment,
+)
+from json_schema_engine.core.ref import SchemaRef
+from json_schema_engine.core.uri import resolve, split_fragment, strip_fragment
+
+# Chosen below CPython's default recursion limit so the typed error fires
+# before a `RecursionError`, while staying generous for real documents (P3).
+DEFAULT_MAX_DEPTH = 512
+
+type RegexHook = Callable[[str, str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentLocation:
+    """Where a schema resource physically lives (D17 bridge).
+
+    The registered document containing it and the JSON Pointer from that
+    document's root to the resource's root.
+    """
+
+    document_uri: str
+    pointer: str
+
+
+def _resource_of(uri: str) -> str:
+    return strip_fragment(uri)
+
+
+def _split(uri: str) -> tuple[str, str | None]:
+    """Resource and percent-decoded fragment.
+
+    A JSON Pointer travels percent-encoded inside a URI fragment (RFC 6901
+    §6), so `#/a%22b` names the member `a"b`; decoding here, once, keeps
+    `uri.split_fragment` a pure RFC 3986 operation.
+    """
+    resource, fragment = split_fragment(uri)
+    return resource, None if fragment is None else unquote(fragment)
+
+
+class SchemaRegistry:
+    """Schema registration, identifier indexing, and reference resolution."""
+
+    def __init__(
+        self,
+        dialects: DialectRegistry,
+        default_dialect_uri: str,
+        *,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+    ) -> None:
+        self._dialects = dialects
+        self._default_dialect_uri = _resource_of(default_dialect_uri)
+        self._max_depth = max_depth
+        self._documents: dict[str, JsonValue] = {}
+        self._anchors: dict[str, SchemaRef] = {}
+        self._dynamic_anchors: dict[str, SchemaRef] = {}
+        self._recursive_roots: set[str] = set()
+        # Unions of `StaticFacts.produces`/`consumes` over every registered
+        # keyword occurrence: `produce()`'s declaration guard and the
+        # elision predicate's "someone might read this" side (D5).
+        self._produced_ids: set[str] = set()
+        self._consumed_ids: set[str] = set()
+        self._document_dialects: dict[str, str] = {}
+        self._resource_locations: dict[str, DocumentLocation] = {}
+        # Retrieval URI -> declared `$id` base when they differ: the
+        # document must be reachable under both, but anchors and lexical
+        # bases live under `$id`.
+        self._aliases: dict[str, str] = {}
+        # External resources seen in reference values, drained by the
+        # engine's load loop (P4).
+        self._pending_resources: set[str] = set()
+        # Called for every regex a keyword declares during a walk. The
+        # engine installs this after its trusted metaschemas register, so
+        # the D20 screen applies only to caller schemas.
+        self.on_regex: RegexHook | None = None
+
+    # --- registration ----------------------------------------------------
+
+    def register(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None = None,
+    ) -> str:
+        """Register a schema document and return its canonical base URI.
+
+        The dialect comes from `$schema` when present (and must already be
+        registered), else `dialect_uri`, else the registry default. Dialect
+        URIs compare fragment-free: `…/draft-07/schema#` names the same
+        dialect as the bare form.
+        """
+        effective_dialect = _resource_of(dialect_uri or self._default_dialect_uri)
+        if is_object(schema):
+            declared = schema.get("$schema")
+            if isinstance(declared, str):
+                effective_dialect = _resource_of(resolve(retrieval_uri, declared))
+        dialect = self._dialects.get_dialect(effective_dialect)
+
+        retrieval_resource = _resource_of(retrieval_uri)
+        base_uri = retrieval_resource
+        root_ids = dialect.identifiers_of(schema)
+        if root_ids.base_id is not None:
+            base_uri = _resource_of(resolve(base_uri, root_ids.base_id))
+        if base_uri != retrieval_resource:
+            self._aliases[retrieval_resource] = base_uri
+        self._documents[base_uri] = schema
+        self._document_dialects[base_uri] = effective_dialect
+        self._resource_locations[base_uri] = DocumentLocation(base_uri, "")
+        self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
+        return base_uri
+
+    def _walk(
+        self,
+        node: JsonValue,
+        base_uri: str,
+        pointer: str,
+        document_uri: str,
+        doc_pointer: str,
+        dialect: Dialect,
+        depth: int,
+    ) -> None:
+        if depth > self._max_depth:
+            raise MaxDepthExceededError(
+                f"schema nesting exceeds max_depth ({self._max_depth})",
+                schema_location=f"{base_uri}#{pointer}",
+            )
+        if isinstance(node, bool):
+            return
+        if not is_object(node):
+            raise InvalidSchemaError(
+                f"non-schema value ({json_type_of(node).value}) in schema position",
+                schema_location=f"{base_uri}#{pointer}",
+            )
+
+        ids = dialect.identifiers(node)
+        if pointer != "" and ids.base_id is not None:
+            base_uri = _resource_of(resolve(base_uri, ids.base_id))
+            pointer = ""
+            self._documents[base_uri] = node
+            self._document_dialects[base_uri] = dialect.uri
+            self._resource_locations[base_uri] = DocumentLocation(
+                document_uri, doc_pointer
+            )
+        here = SchemaRef(node, base_uri, pointer)
+        for anchor in ids.anchors:
+            self._anchors[f"{base_uri}#{anchor}"] = here
+        # A dynamic anchor is also a plain anchor for `$ref`; only the
+        # dynamic index takes part in `$dynamicRef` rebinding (D8).
+        if ids.dynamic_anchor is not None:
+            key = f"{base_uri}#{ids.dynamic_anchor}"
+            self._anchors[key] = here
+            self._dynamic_anchors[key] = here
+        if ids.recursive_anchor and pointer == "":
+            self._recursive_roots.add(base_uri)
+
+        for name, value in node.items():
+            entry = dialect.keywords.get(name)
+            if entry is None:
+                continue
+            facts = entry.behavior.facts(value, node)
+            self._produced_ids.update(facts.produces)
+            self._consumed_ids.update(facts.consumes)
+            if self.on_regex is not None and facts.regexes:
+                keyword_location = f"{base_uri}#{pointer}/{escape_segment(name)}"
+                for regex in facts.regexes:
+                    self.on_regex(regex, keyword_location)
+            for reference in facts.references:
+                # Unresolvable now is not an error: evaluation reports it if
+                # the reference is actually followed.
+                with suppress(ValueError):
+                    self._pending_resources.add(
+                        _resource_of(resolve(base_uri, reference))
+                    )
+            for rel_path in facts.subschemas:
+                child: JsonValue = value
+                suffix = "/" + escape_segment(name)
+                for segment in rel_path:
+                    child = _step(child, segment)
+                    suffix += "/" + escape_segment(str(segment))
+                self._walk(
+                    child,
+                    base_uri,
+                    pointer + suffix,
+                    document_uri,
+                    doc_pointer + suffix,
+                    dialect,
+                    depth + 1,
+                )
+
+    # --- lookups ---------------------------------------------------------
+
+    def _canonical(self, resource_uri: str) -> str:
+        return self._aliases.get(resource_uri, resource_uri)
+
+    def has(self, resource_uri: str) -> bool:
+        """True if a resource is registered, directly or via an alias."""
+        return resource_uri in self._documents or resource_uri in self._aliases
+
+    def document(self, resource_uri: str) -> JsonValue | None:
+        """The schema node at a resource's root, if registered."""
+        return self._documents.get(self._canonical(resource_uri))
+
+    def document_location(self, resource_uri: str) -> DocumentLocation | None:
+        return self._resource_locations.get(self._canonical(resource_uri))
+
+    def take_unresolved(self) -> list[str]:
+        """External resources referenced but not registered; drained per call."""
+        missing = sorted(r for r in self._pending_resources if not self.has(r))
+        self._pending_resources.clear()
+        return missing
+
+    def dynamic_anchor(self, resource_uri: str, name: str) -> SchemaRef | None:
+        """The `$dynamicAnchor` target for a name in a resource (D8)."""
+        return self._dynamic_anchors.get(f"{self._canonical(resource_uri)}#{name}")
+
+    def has_recursive_root(self, resource_uri: str) -> bool:
+        return self._canonical(resource_uri) in self._recursive_roots
+
+    def produced_ids(self) -> frozenset[str]:
+        """Behavior ids some registered keyword declares it produces under."""
+        return frozenset(self._produced_ids)
+
+    def consumed_ids(self) -> frozenset[str]:
+        """Behavior ids some registered keyword declares it consumes."""
+        return frozenset(self._consumed_ids)
+
+    def is_produced(self, behavior_id: str) -> bool:
+        return behavior_id in self._produced_ids
+
+    def is_consumed(self, behavior_id: str) -> bool:
+        return behavior_id in self._consumed_ids
+
+    def dialect_uri_for(self, base_uri: str) -> str:
+        """The dialect URI a resource was registered under."""
+        uri = self._document_dialects.get(self._canonical(base_uri))
+        if uri is None:
+            raise UnresolvableReferenceError(f"unknown schema '{base_uri}'")
+        return uri
+
+    def dialect_for(self, base_uri: str) -> Dialect:
+        """The dialect a resource was registered under."""
+        return self._dialects.get_dialect(self.dialect_uri_for(base_uri))
+
+    def resources(self) -> Iterator[str]:
+        """Every registered resource URI, in registration order."""
+        return iter(self._documents)
+
+    # --- resolution ------------------------------------------------------
+
+    def root_ref(self, uri: str) -> SchemaRef:
+        """Resolve a URI to a schema position; fragment-free means the root."""
+        resource, fragment = _split(uri)
+        if fragment:
+            return self.resolve_ref(uri, self._canonical(resource))
+        resource = self._canonical(resource)
+        node = self._documents.get(resource)
+        if node is None:
+            raise UnresolvableReferenceError(f"unknown schema '{resource}'")
+        return SchemaRef(node, resource, "")
+
+    def resolve_ref(self, ref: str, current_base: str) -> SchemaRef:
+        """Resolve a reference value against the referring schema's base.
+
+        Raises `UnresolvableReferenceError` when the resource, anchor, or
+        pointer target does not exist.
+        """
+        resource, fragment = _split(resolve(current_base, ref))
+        resource = self._canonical(resource)
+
+        if fragment and not fragment.startswith("/"):
+            hit = self._anchors.get(f"{resource}#{fragment}")
+            if hit is None:
+                raise UnresolvableReferenceError(
+                    f"unknown anchor '{resource}#{fragment}'"
+                )
+            return hit
+
+        root = self._documents.get(resource)
+        if root is None:
+            raise UnresolvableReferenceError(f"unknown schema '{resource}'")
+        if not fragment:
+            return SchemaRef(root, resource, "")
+
+        # JSON Pointer navigation, tracking identifier-induced base changes
+        # on the way, per the target document's dialect (D18).
+        identifiers = self.dialect_for(resource).identifiers
+        node: JsonValue = root
+        base_uri = resource
+        pointer = ""
+        for raw_segment in fragment[1:].split("/"):
+            segment = unescape_segment(raw_segment)
+            try:
+                node = _step(node, segment)
+            except (KeyError, IndexError, ValueError, TypeError):
+                raise UnresolvableReferenceError(
+                    f"pointer '{fragment}' not found in '{resource}'"
+                ) from None
+            pointer += "/" + escape_segment(segment)
+            if is_object(node):
+                base_id = identifiers(node).base_id
+                if base_id is not None:
+                    base_uri = _resource_of(resolve(base_uri, base_id))
+                    pointer = ""
+        return SchemaRef(node, base_uri, pointer)
+
+    def child(self, ref: SchemaRef, segments: Sequence[str | int]) -> SchemaRef:
+        """Descend from a schema position into keyword or index children.
+
+        Maintains the canonical location and the lexical base, so a child
+        that declares `$id` starts a new resource with an empty pointer.
+        """
+        identifiers = self.dialect_for(ref.base_uri).identifiers
+        node = ref.node
+        base_uri = ref.base_uri
+        pointer = ref.pointer
+        for segment in segments:
+            node = _step(node, segment)
+            pointer += "/" + escape_segment(str(segment))
+            if is_object(node):
+                base_id = identifiers(node).base_id
+                if base_id is not None:
+                    base_uri = _resource_of(resolve(base_uri, base_id))
+                    pointer = ""
+        return SchemaRef(node, base_uri, pointer)
+
+
+def _step(node: JsonValue, segment: str | int) -> JsonValue:
+    """One JSON Pointer step. Raises the container's natural error on a miss."""
+    if isinstance(node, list):
+        index = int(segment) if isinstance(segment, str) else segment
+        if index < 0:
+            raise IndexError(segment)
+        return node[index]
+    if isinstance(node, dict):
+        return node[str(segment)]
+    raise TypeError(f"cannot step into {json_type_of(node).value}")
