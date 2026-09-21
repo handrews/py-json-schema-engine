@@ -49,6 +49,13 @@ result = engine.evaluate(uri, {}, output="list")
 assert result.errors is not None and result.errors[0]["evaluationPath"] == "/required"
 ```
 
+`create_engine(validate_schemas=True)` checks every registered document
+against its metaschema and raises `SchemaValidationError` with the errors.
+A loader that reports source positions (see the test-kit's
+`parse_json_with_ranges`) lets `evaluate(..., positions=True)` attach a
+`source` location to every error and annotation, and `engine.locate()`
+answers the same question for any schema location.
+
 ## Development
 
 ```sh
@@ -61,6 +68,15 @@ uv run lint-imports
 
 The official test suite is a git submodule at `test-suite/`; clone with
 `--recurse-submodules` or run `git submodule update --init`.
+
+The [Bowtie](https://bowtie.report) conformance leg builds a container
+image and runs the suite through Bowtie's harness protocol. It needs a
+reachable container engine (Docker, or `podman machine start`) and fetches
+Bowtie through `uvx`:
+
+```sh
+uv run python scripts/bowtie_check.py
+```
 
 ## IP policy
 
