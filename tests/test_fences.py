@@ -97,14 +97,32 @@ from json_schema_engine.core import create_engine
 from json_schema_engine.compiler import compile_validator
 engine = create_engine()
 uri = engine.register_schema({"type": "string"}, "https://fences.example/s")
-events = []
+ours = []
+imports = []
 def hook(name, args):
-    if name in ("compile", "exec"):
-        events.append((name, args[1] if name == "compile" else None))
+    # The import system also compiles and executes module bodies (on some
+    # versions `ast.unparse` lazily imports a stdlib helper): those carry a
+    # `.py` filename and bytes source, and are not code generation.
+    if name == "compile":
+        source, filename = args[0], args[1]
+        if type(source).__name__ == "Module":
+            ours.append(("compile", "ast"))
+        elif isinstance(source, bytes) and str(filename).endswith(".py"):
+            imports.append(("compile", filename))
+        else:
+            ours.append(("compile", "TEXT:" + type(source).__name__))
+    elif name == "exec":
+        filename = getattr(args[0], "co_filename", "")
+        if filename == "<json_schema_engine.compiler>":
+            ours.append(("exec", filename))
+        elif filename.endswith(".py"):
+            imports.append(("exec", filename))
+        else:
+            ours.append(("exec", "OTHER:" + filename))
 sys.addaudithook(hook)
 validate = compile_validator(engine, uri).validate
 assert validate("x") and not validate(1)
-print([name for name, _ in events], validate.__code__.co_filename)
+print(ours, validate.__code__.co_filename)
 """
 
 
@@ -116,5 +134,6 @@ def test_compiling_raises_exactly_one_compile_and_one_exec_event() -> None:
         check=True,
     )
     assert completed.stdout.strip() == (
-        "['compile', 'exec'] <json_schema_engine.compiler>"
+        "[('compile', 'ast'), ('exec', '<json_schema_engine.compiler>')] "
+        "<json_schema_engine.compiler>"
     ), completed.stderr
