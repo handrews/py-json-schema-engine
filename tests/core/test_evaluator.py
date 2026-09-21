@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from json_schema_engine.core.channel import materialize_path
+from json_schema_engine.core.channel import TraceNode, materialize_path
 from json_schema_engine.core.cursor import Cursor, child_cursor
 from json_schema_engine.core.dialect import (
     CompiledRegex,
@@ -236,7 +236,7 @@ def run(
     *,
     should_record: RecordPredicate | None = None,
     max_depth: int = 512,
-    retain_dropped: bool = False,
+    tracing: bool = False,
     registry: SchemaRegistry | None = None,
 ) -> tuple[bool, EvalState]:
     reg = registry or make_registry()
@@ -248,7 +248,7 @@ def run(
         compile_regex=_compile_regex,
         should_record=should_record,
         max_depth=max_depth,
-        retain_dropped=retain_dropped,
+        tracing=tracing,
     )
 
 
@@ -420,7 +420,7 @@ def test_accepting_keyword_drops_sub_errors_and_can_retain_them() -> None:
     assert valid
     assert state.errors == []
     assert state.dropped_errors == []
-    valid, state = run(schema, 0, retain_dropped=True)
+    valid, state = run(schema, 0, tracing=True)
     assert [e.message for e in state.dropped_errors] == ["always fails"]
 
 
@@ -497,4 +497,127 @@ def test_ref_ignores_siblings_in_legacy_dialects() -> None:
     schema: JsonValue = {"$defs": {"t": {}}, "$ref": "#/$defs/t", "fail": 1}
     valid, state = run(schema, 0, registry=reg)
     assert valid
+    assert state.errors == []
+
+
+# --- tracing (D6): the application tree and the retained records ----------
+
+
+type Shape = tuple[str, str, bool, list[tuple[str, bool]], list[object]]
+
+
+def shape(node: TraceNode) -> Shape:
+    """A trace node as comparable data: path, cursor, verdict, keywords, children."""
+    return (
+        materialize_path(node.path_node),
+        node.cursor.pointer,
+        node.valid,
+        [(k.name, k.valid) for k in node.keywords],
+        [shape(child) for child in node.children],
+    )
+
+
+def test_tracing_is_off_by_default() -> None:
+    valid, state = run({"title": "t"}, 0)
+    assert valid
+    assert state.trace_root is None
+    assert state.all_annotations is None
+
+
+def test_trace_tree_mirrors_nested_applications() -> None:
+    schema: JsonValue = {
+        "props": {"a": {"title": "a", "fail": 1}, "b": {"any": [{"fail": 1}, {}]}},
+        "title": "root",
+    }
+    valid, state = run(schema, {"a": 1, "b": 2}, tracing=True)
+    assert not valid
+    assert state.trace_root is not None
+    assert shape(state.trace_root) == (
+        "",
+        "",
+        False,
+        # Keywords trace in the dialect's evaluation order (registration
+        # order here), not in the schema's key order.
+        [("title", True), ("props", False)],
+        [
+            ("/props/a", "/a", False, [("title", True), ("fail", False)], []),
+            (
+                "/props/b",
+                "/b",
+                True,
+                [("any", True)],
+                [
+                    ("/props/b/any/0", "/b", False, [("fail", False)], []),
+                    ("/props/b/any/1", "/b", True, [], []),
+                ],
+            ),
+        ],
+    )
+
+
+def test_trace_omits_structural_keywords_and_shows_unknown_ones_valid() -> None:
+    schema: JsonValue = {
+        "$id": "https://channels.example/traced",
+        "$comment": "ignored",
+        "$defs": {"t": {}},
+        "x-unknown": 1,
+        "title": "t",
+    }
+    _, state = run(schema, 0, tracing=True)
+    assert state.trace_root is not None
+    assert [(k.name, k.valid) for k in state.trace_root.keywords] == [
+        ("title", True),
+        ("x-unknown", True),
+    ]
+
+
+def test_boolean_schemas_trace_as_leaves() -> None:
+    schema: JsonValue = {"props": {"yes": True, "no": False}}
+    valid, state = run(schema, {"yes": 1, "no": 2}, tracing=True)
+    assert not valid
+    assert state.trace_root is not None
+    assert [shape(c) for c in state.trace_root.children] == [
+        ("/props/yes", "/yes", True, [], []),
+        ("/props/no", "/no", False, [], []),
+    ]
+
+
+def test_ref_traces_one_node_for_the_target_under_the_ref_segment() -> None:
+    schema: JsonValue = {"$defs": {"t": {"title": "via ref"}}, "$ref": "#/$defs/t"}
+    _, state = run(schema, 0, tracing=True)
+    assert state.trace_root is not None
+    (child,) = state.trace_root.children
+    assert materialize_path(child.path_node) == "/$ref"
+    assert child.schema_ref.location == "https://channels.example/schema#/$defs/t"
+    assert [(k.name, k.valid) for k in child.keywords] == [("title", True)]
+
+
+def test_all_annotations_retains_discarded_frames() -> None:
+    schema: JsonValue = {"any": [{"title": "lost", "fail": 1}, {"title": "kept"}]}
+    valid, state = run(schema, 0, tracing=True)
+    assert valid
+    assert annotations(state) == [("/any/1/title", "", "kept")]
+    assert state.all_annotations is not None
+    assert [(a.value) for a in state.all_annotations] == ["lost", "kept"]
+    # The retained record is the very object the frame held, so identity
+    # comparison can tell relevant from dropped.
+    assert state.all_annotations[1] is state.root_annotations[0]
+    # Unknown keywords' annotations are retained too.
+    _, state = run({"any": [{"x-a": 1, "fail": 1}]}, 0, tracing=True)
+    assert state.all_annotations is not None
+    assert [a.keyword_name for a in state.all_annotations] == ["x-a"]
+
+
+def test_all_annotations_respects_the_record_predicate() -> None:
+    schema: JsonValue = {"title": "t", "note": "n"}
+    _, state = run(schema, 0, tracing=True, should_record=lambda n, v: n == "note")
+    assert state.all_annotations is not None
+    assert [a.keyword_name for a in state.all_annotations] == ["note"]
+
+
+def test_dropped_errors_are_retained_only_when_tracing() -> None:
+    schema: JsonValue = {"any": [{"fail": 1}, {}]}
+    assert run(schema, 0)[1].dropped_errors == []
+    _, state = run(schema, 0, tracing=True)
+    assert [e.message for e in state.dropped_errors] == ["always fails"]
     assert state.errors == []

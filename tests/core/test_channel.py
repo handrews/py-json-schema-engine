@@ -7,6 +7,7 @@ from json_schema_engine.core.channel import (
     DependencyRecord,
     ErrorRecord,
     Frame,
+    KeywordTrace,
     PathNode,
     TraceNode,
     materialize_path,
@@ -197,13 +198,16 @@ def test_frame_merge_is_a_list_extension() -> None:
     assert parent.annotations[0] is child.annotations[0]
 
 
-def test_trace_node_stub() -> None:
+def test_trace_node_defaults() -> None:
     cursor = root_cursor({"a": 1})
     node = TraceNode(schema_ref=SCHEMA_REF, path_node=None, cursor=cursor)
     child = TraceNode(
         schema_ref=SCHEMA_REF, path_node=PathNode(None, "a"), cursor=cursor
     )
     node.children.append(child)
+    node.keywords.append(KeywordTrace("type", False))
     assert node.children == [child]
-    assert node.keyword_results == []
+    assert node.valid is True
+    assert node.keywords == [KeywordTrace("type", False)]
+    assert child.keywords == []
     assert node != child

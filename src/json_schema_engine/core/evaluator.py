@@ -15,9 +15,13 @@
 #     by the annotation selection; selection never affects rule 4;
 #  6. relevance (draft-03 §12.2): a keyword that accepts makes the errors of
 #     its rejecting sub-evaluations irrelevant — evaluate_keyword drops them
-#     (kept aside only when retention is requested, for verbose output);
-#     rule 3 is the same transition for a rejecting schema object's accepting
-#     sub-evaluations.
+#     (kept aside only when tracing, for verbose output); rule 3 is the same
+#     transition for a rejecting schema object's accepting sub-evaluations.
+#
+# Tracing (D6) is opt-in and costs nothing when off: every schema
+# application becomes a `TraceNode` with each non-structural keyword's
+# verdict, and every annotation is kept in `all_annotations` regardless of
+# frame discard, so verbose output can report the irrelevant ones.
 #
 # Dependency direction: imports the registry, dialect, channel, cursor, ref,
 # json_model, and errors modules. The engine façade imports this; keyword
@@ -31,7 +35,9 @@ from json_schema_engine.core.channel import (
     DependencyRecord,
     ErrorRecord,
     Frame,
+    KeywordTrace,
     PathNode,
+    TraceNode,
 )
 from json_schema_engine.core.cursor import Cursor, root_cursor
 from json_schema_engine.core.dialect import (
@@ -73,21 +79,28 @@ type RegexCompiler = Callable[[str], CompiledRegex]
 class EvalState:
     """Mutable state for one evaluation run.
 
-    Frames, the relevant error list, the dynamic scope, the cycle guard, and
-    the depth budget. Created per run, never shared.
+    Frames, the relevant error list, the dynamic scope, the cycle guard, the
+    depth budget, and (when tracing) the trace tree with every record kept
+    regardless of frame discard. Created per run, never shared.
     """
 
     registry: SchemaRegistry
     compile_regex: RegexCompiler
     should_record: RecordPredicate | None = None
     max_depth: int = DEFAULT_MAX_DEPTH
-    # When true, errors made irrelevant by rule 6 are kept aside in
-    # `dropped_errors` instead of being forgotten (verbose output, M5).
-    retain_dropped: bool = False
+    # Tracing (D6): when true, every application is recorded as a
+    # `TraceNode`, errors made irrelevant by rule 6 are kept aside in
+    # `dropped_errors`, and every annotation is kept in `all_annotations`.
+    tracing: bool = False
     frames: list[Frame] = field(default_factory=lambda: [Frame()])
     # Relevant errors, in encounter order (rule 6).
     errors: list[ErrorRecord] = field(default_factory=list[ErrorRecord])
     dropped_errors: list[ErrorRecord] = field(default_factory=list[ErrorRecord])
+    trace_root: TraceNode | None = None
+    # Every annotation recorded, relevant or not; `None` unless tracing, so
+    # the flag path never pays for the list.
+    all_annotations: list[AnnotationRecord] | None = None
+    _trace_stack: list[TraceNode] = field(default_factory=list[TraceNode])
     # Dynamic scope (D8): resources entered by schema application, outermost
     # first. Duplicates are fine — resolution takes the first hit.
     dynamic_scope: list[str] = field(default_factory=list[str])
@@ -112,11 +125,43 @@ class EvalState:
     def root_dependencies(self) -> list[DependencyRecord]:
         return self.frames[0].dependencies
 
+    def __post_init__(self) -> None:
+        if self.tracing:
+            self.all_annotations = []
+
     def drop_errors_from(self, mark: int) -> None:
         """Forget the errors pushed since `mark` (rule 6)."""
-        if self.retain_dropped:
+        if self.tracing:
             self.dropped_errors.extend(self.errors[mark:])
         del self.errors[mark:]
+
+    def record_annotation(self, record: AnnotationRecord) -> None:
+        """Append an annotation to the current frame (rule 2), and to the
+        trace's full list when tracing."""
+        self.frame.annotations.append(record)
+        if self.all_annotations is not None:
+            self.all_annotations.append(record)
+
+    def trace_enter(
+        self, schema_ref: SchemaRef, path_node: PathNode | None, cursor: Cursor
+    ) -> TraceNode:
+        """Open a trace node for a schema application under the current one."""
+        node = TraceNode(schema_ref, path_node, cursor)
+        if self._trace_stack:
+            self._trace_stack[-1].children.append(node)
+        else:
+            self.trace_root = node
+        self._trace_stack.append(node)
+        return node
+
+    def trace_exit(self, node: TraceNode, valid: bool) -> None:
+        """Close the current trace node with its final verdict."""
+        node.valid = valid
+        self._trace_stack.pop()
+
+    def trace_keyword(self, name: str, valid: bool) -> None:
+        """Record one keyword evaluation's verdict on the current trace node."""
+        self._trace_stack[-1].keywords.append(KeywordTrace(name, valid))
 
     def enter(self, schema_ref: SchemaRef, cursor: Cursor) -> None:
         """Record entry into a schema application for cycle detection."""
@@ -238,7 +283,7 @@ class _KeywordContext:
         predicate = self._state.should_record
         if predicate is not None and not predicate(self._name, self._vocabulary_uri):
             return
-        self._state.frame.annotations.append(
+        self._state.record_annotation(
             AnnotationRecord(
                 behavior_id=self._behavior_id,
                 keyword_name=self._name,
@@ -363,6 +408,8 @@ def _apply_at_depth(
                     message="schema is false",
                 )
             )
+        if state.tracing:
+            state.trace_exit(state.trace_enter(schema_ref, path_node, cursor), node)
         return node
     # Backstop for the registration walk's eager D19 check: a position the
     # walk never saw (a `$ref` whose pointer lands inside unwalked data)
@@ -380,6 +427,9 @@ def _apply_at_depth(
     state.enter(schema_ref, cursor)
     state.dynamic_scope.append(schema_ref.base_uri)
     state.frames.append(Frame())
+    trace_node = (
+        state.trace_enter(schema_ref, path_node, cursor) if state.tracing else None
+    )
     valid = True
     try:
         for entry in dialect.ordered:
@@ -400,11 +450,14 @@ def _apply_at_depth(
                         schema_location=schema_ref.location,
                     )
                 # Unknown keywords are collected as annotations whose value
-                # is the keyword's value (spec SHOULD).
+                # is the keyword's value (spec SHOULD). They assert nothing,
+                # so the trace shows them as valid.
+                if trace_node is not None:
+                    state.trace_keyword(name, True)
                 predicate = state.should_record
                 if predicate is not None and not predicate(name, None):
                     continue
-                state.frame.annotations.append(
+                state.record_annotation(
                     AnnotationRecord(
                         behavior_id=unknown_keyword_id(name),
                         keyword_name=name,
@@ -421,6 +474,8 @@ def _apply_at_depth(
             parent = state.frame
             parent.annotations.extend(frame.annotations)
             parent.dependencies.extend(frame.dependencies)
+        if trace_node is not None:
+            state.trace_exit(trace_node, valid)
         state.dynamic_scope.pop()
         state.exit(schema_ref, cursor)
     return valid
@@ -449,6 +504,10 @@ def _evaluate_keyword(
             )
         if len(state.errors) > mark:
             state.drop_errors_from(mark)
+    # Identifier and reserved-location keywords evaluate to nothing and
+    # appear in no output unit (draft-03 §12.6, §12.10).
+    if state.tracing and not entry.behavior.structural:
+        state.trace_keyword(entry.name, ok)
     return ok
 
 
@@ -460,22 +519,23 @@ def run_evaluation(
     compile_regex: RegexCompiler,
     should_record: RecordPredicate | None = None,
     max_depth: int = DEFAULT_MAX_DEPTH,
-    retain_dropped: bool = False,
+    tracing: bool = False,
 ) -> tuple[bool, EvalState]:
     """Evaluate an instance against a registered root schema.
 
     Returns the verdict and the final state, whose root frame holds the
-    surviving records. A `RecursionError` escaping the interpreter (only
-    possible when `max_depth` exceeds what the runtime's stack allows) is
-    reported as `MaxDepthExceededError` so callers never see an untyped
-    crash (P3).
+    surviving records and, with `tracing`, whose `trace_root` holds the
+    application tree with the irrelevant records retained. A
+    `RecursionError` escaping the interpreter (only possible when
+    `max_depth` exceeds what the runtime's stack allows) is reported as
+    `MaxDepthExceededError` so callers never see an untyped crash (P3).
     """
     state = EvalState(
         registry,
         compile_regex,
         should_record=should_record,
         max_depth=max_depth,
-        retain_dropped=retain_dropped,
+        tracing=tracing,
     )
     try:
         valid = apply_schema(
