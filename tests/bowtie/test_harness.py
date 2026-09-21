@@ -171,7 +171,7 @@ def test_full_protocol_transcript() -> None:
     assert response == {
         "seq": 2,
         "skipped": True,
-        "message": "annotation output arrives in M5",
+        "message": "this harness serves flag output only",
     }
 
     # run: schema loads, but a $ref inside it cannot be resolved at

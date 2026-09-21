@@ -12,9 +12,10 @@ Produced by Henry Andrews via Claude Code.
 
 **Status: pre-release.** The published `0.0.1` is a name reservation with no
 functionality. The `main` branch holds the interpreter core for 2020-12, 2019-09,
-draft-07, and draft-06 with every standard output format (M5), green on
-every official test-suite file for those drafts, on the official
-output-tests, and on Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
+draft-07, and draft-06 with every standard output format, and the compiler
+tier's flag validator (M6), green on every official test-suite file for
+those drafts through both tiers, on the official output-tests, and on
+Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
 carries the milestone status.
 
 The regular-expression translator lives in its own package,
@@ -88,6 +89,36 @@ A loader that reports source positions (see the test-kit's
 `parse_json_with_ranges`) lets `evaluate(..., positions=True)` attach a
 `source` location to every error and annotation, and `engine.locate()`
 answers the same question for any schema location.
+
+## Compile
+
+The compiler tier turns a registered schema into a Python function. It is
+not a second implementation: any subschema it cannot emit (a `$dynamicRef`,
+an `unevaluated*` whose coverage is only known at runtime, an in-place
+cycle) calls back into the interpreter, so a compiled validator is exactly
+as correct as `Engine.evaluate` and never less complete. Tier choice is a
+performance decision, not a semantic one.
+
+```python
+from json_schema_engine.compiler import compile_validator, emit_standalone
+
+compiled = compile_validator(engine, uri)
+assert compiled.validate({"name": "Ada"}) is True
+assert compiled.validate({}) is False
+print(compiled.source)  # the emitted module, for reading
+module_source = emit_standalone(engine, uri)  # importable without the compiler
+```
+
+`compile_validator` returns a verdict-only validator (the flag level) that
+binds a snapshot of the registries at compile time, so register everything
+first. `emit_standalone` writes the same code as a module that imports
+only the standard library and this package's pure helpers; it refuses,
+with `StandaloneUnsupportedError`, a schema that would need the
+interpreter at evaluation time. Compiled code assumes plain data as
+`json.loads` produces it (`dict`, `list`, `str`, `int`, `float`, `bool`,
+`None`); subclasses of those types belong to the interpreter. Errors,
+annotations, and the output formats are interpreter features today;
+compiled output beyond the verdict is a later milestone.
 
 ## Security
 

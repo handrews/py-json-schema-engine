@@ -446,14 +446,23 @@ def _flush_run(
         # Licensed short-circuit (§4 rule 7): the planner islands every
         # consumer whose channel could observe these branches.
         return [e.if_(e.not_(e.or_(*verdicts)), [e.return_(false)])]
+    # `exactly_one`: every branch runs until a second success, which
+    # settles the verdict (a licensed early exit, §4 rule 7: the planner
+    # islands any consumer that could observe these branches).
     counter = body.fn.module.names.fresh("c")
     out: list[ast.stmt] = [e.assign(counter, e.const(0))]
-    for verdict in verdicts:
+    too_many = e.if_(
+        e.compare(e.load(counter), ast.Gt(), e.const(1)), [e.return_(false)]
+    )
+    for position, verdict in enumerate(verdicts):
+        increment: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
+        if position > 0:
+            increment.append(too_many)
         if isinstance(verdict, ast.Constant):
             if verdict.value:
-                out.append(e.aug_add(counter, e.const(1)))
+                out.extend(increment)
             continue
-        out.append(e.if_(verdict, [e.aug_add(counter, e.const(1))]))
+        out.append(e.if_(verdict, increment))
     out.append(
         e.if_(e.compare(e.load(counter), ast.NotEq(), e.const(1)), [e.return_(false)])
     )
@@ -478,9 +487,21 @@ def _count_range(
     finally:
         fn.loop_depth -= 1
     iterable = e.call(e.load("range"), e.call(e.load("len"), expression(body, target)))
+    hit: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
+    if maximum is None and minimum > 0:
+        # Unbounded above: reaching the minimum settles the verdict, so the
+        # sweep stops there (licensed as above; `contains`' matched indexes
+        # are dependency data only a runtime-tracked consumer could read,
+        # and M6 islands those).
+        hit.append(
+            e.if_(
+                e.compare(e.load(counter), ast.GtE(), e.const(minimum)),
+                [ast.Break()],
+            )
+        )
     out: list[ast.stmt] = [
         e.assign(counter, e.const(0)),
-        e.for_(name, iterable, [e.if_(probe, [e.aug_add(counter, e.const(1))])]),
+        e.for_(name, iterable, [e.if_(probe, hit)]),
     ]
     if minimum > 0:
         out.append(
