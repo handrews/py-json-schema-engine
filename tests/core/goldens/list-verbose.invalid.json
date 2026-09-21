@@ -1,0 +1,44 @@
+{
+  "valid": false,
+  "details": [
+    {
+      "valid": false,
+      "evaluationPath": "",
+      "schemaLocation": "https://golden.example/schema#",
+      "instanceLocation": "",
+      "droppedAnnotations": {
+        "title": "root"
+      }
+    },
+    {
+      "valid": true,
+      "evaluationPath": "/properties/item",
+      "schemaLocation": "https://golden.example/schema#/properties/item",
+      "instanceLocation": "/item"
+    },
+    {
+      "valid": true,
+      "evaluationPath": "/properties/item/$ref",
+      "schemaLocation": "https://golden.example/schema#/$defs/named",
+      "instanceLocation": "/item",
+      "droppedAnnotations": {
+        "title": "a named thing"
+      }
+    },
+    {
+      "valid": true,
+      "evaluationPath": "/properties/item/$ref/properties/name",
+      "schemaLocation": "https://golden.example/schema#/$defs/named/properties/name",
+      "instanceLocation": "/item/name"
+    },
+    {
+      "valid": false,
+      "evaluationPath": "/properties/count",
+      "schemaLocation": "https://golden.example/schema#/properties/count",
+      "instanceLocation": "/count",
+      "errors": {
+        "type": "expected integer"
+      }
+    }
+  ]
+}

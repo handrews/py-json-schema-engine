@@ -1,0 +1,14 @@
+{
+  "valid": false,
+  "keywordLocation": "",
+  "absoluteKeywordLocation": "https://golden.example/schema#",
+  "instanceLocation": "",
+  "errors": [
+    {
+      "keywordLocation": "/properties/count/type",
+      "absoluteKeywordLocation": "https://golden.example/schema#/properties/count/type",
+      "instanceLocation": "/count",
+      "error": "expected integer"
+    }
+  ]
+}

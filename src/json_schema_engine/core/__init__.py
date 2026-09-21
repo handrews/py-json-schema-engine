@@ -61,9 +61,11 @@ from json_schema_engine.core.output import (
     AnnotationsOption,
     AnnotationUnit,
     BasicOutputDocument,
+    DetailedOutputUnit,
     ErrorUnit,
     ListOutputDocument,
     OutputUnit,
+    TraceUnit,
 )
 from json_schema_engine.core.regex import (
     RegexBackend,
@@ -71,7 +73,7 @@ from json_schema_engine.core.regex import (
     UnsafeRegexReport,
     detect_unsafe_regex,
 )
-from json_schema_engine.core.result import OutputFormat, Result
+from json_schema_engine.core.result import OutputDocument, OutputFormat, Result
 
 __all__ = [
     "DIALECT_2019_09",
@@ -84,6 +86,7 @@ __all__ = [
     "AnnotationsOption",
     "BasicOutputDocument",
     "DependencyView",
+    "DetailedOutputUnit",
     "Dialect",
     "DialectRegistry",
     "Engine",
@@ -101,6 +104,7 @@ __all__ = [
     "LoadedResource",
     "Loader",
     "MaxDepthExceededError",
+    "OutputDocument",
     "OutputFormat",
     "OutputOptionsError",
     "OutputUnit",
@@ -115,6 +119,7 @@ __all__ = [
     "SourceRange",
     "SourceSpan",
     "StaticFacts",
+    "TraceUnit",
     "UndeclaredConsumptionError",
     "UndeclaredProductionError",
     "UnknownDialectError",

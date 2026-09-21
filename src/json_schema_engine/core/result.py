@@ -3,16 +3,16 @@
 # Result"). `resolve_output_demand` is the one place every combination of
 # output format and control is admitted or rejected, before any evaluation
 # happens — so a caller never pays for a run whose result it cannot be
-# given (D6). `assemble_result` is the one place a `Result` is built from a
-# `RenderInput`, so presence rules have one owner regardless of what tier
-# produced the render input.
+# given (D6). `assemble_result` is the one place a `Result` is built from
+# the flat surface and the located tree, so presence rules have one owner
+# regardless of what tier produced them.
 #
 # Dependency direction: imports `output` (units, `AnnotationSelection`,
-# `RecordPredicate`, `RenderInput`, the format renderers) and `errors`
-# (`OutputOptionsError`). No engine record, `Cursor`, or `SchemaRef` is
-# named here — those stop at `records.py`.
+# `RecordPredicate`, `RenderInput`/`RenderNode`, the format renderers) and
+# `errors` (`OutputOptionsError`). No engine record, `Cursor`, or
+# `SchemaRef` is named here — those stop at `records.py`.
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from json_schema_engine.core.errors import OutputOptionsError
@@ -20,23 +20,29 @@ from json_schema_engine.core.output import (
     AnnotationsOption,
     AnnotationUnit,
     BasicOutputDocument,
+    DetailedOutputUnit,
     ErrorUnit,
+    IrrelevantRendering,
     ListOutputDocument,
+    OutputUnit,
     RecordPredicate,
     RenderInput,
+    RenderNode,
+    TraceUnit,
     make_record_predicate,
     render_basic,
+    render_detailed,
+    render_hierarchical,
     render_list,
-    select_units,
+    render_trace,
+    render_verbose,
 )
 
 
 class OutputFormat(StrEnum):
-    """Output format names (D6): `flag`/`basic`/`detailed`/`verbose` from IETF
-    draft-03 §13, `list`/`hierarchical` from the machines-oriented output
-    proposal. M1 implements `flag`, `basic`, and `list`; the rest are named
-    here so the surface never has to be widened, only unlocked, at M5.
-    """
+    """Output format names (D6), each fixing a document structure and field
+    vocabulary: `flag`/`basic`/`detailed`/`verbose` from IETF draft-03 §13,
+    `list`/`hierarchical` from the machines-oriented output proposal."""
 
     FLAG = "flag"
     BASIC = "basic"
@@ -46,12 +52,16 @@ class OutputFormat(StrEnum):
     HIERARCHICAL = "hierarchical"
 
 
-# Whole formats M5 adds. Distinct from the M5-deferred *controls* (`trace`,
-# `positions`, and the verbose *level* of `list`), which apply to formats M1
-# already implements.
-_DEFERRED_FORMATS = frozenset(
-    {OutputFormat.DETAILED, OutputFormat.VERBOSE, OutputFormat.HIERARCHICAL}
+type OutputDocument = (
+    BasicOutputDocument
+    | DetailedOutputUnit
+    | ListOutputDocument
+    | OutputUnit
+    | dict[str, bool]
 )
+"""The document each non-flag `OutputFormat` renders: `basic` →
+`BasicOutputDocument`; `detailed`/`verbose` → `DetailedOutputUnit`; `list` →
+`ListOutputDocument`; `hierarchical` → `OutputUnit`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,10 +69,13 @@ class OutputDemand:
     """What an evaluation must produce for a resolved set of output options.
 
     `annotations` is the record-time gate (`make_record_predicate`, D5):
-    `None` means "record nothing". It deliberately is not the raw
-    `AnnotationsOption` — `assemble_result` still needs the raw selection
-    (including `keep`) to render, and callers pass it separately, but nothing
-    downstream of `resolve_output_demand` should re-derive the gate.
+    `None` means "record nothing", which is also the presence rule for the
+    result's annotation fields. It deliberately is not the raw
+    `AnnotationsOption` — `assemble_result`'s caller still applies the full
+    selection (including `keep`) when rendering — but nothing downstream of
+    `resolve_output_demand` should re-derive the gate. `verbose` is the
+    verbose level (irrelevant records rendered, marked); `tracing` means the
+    located tree is built: every format but `flag` and `basic`, or `trace`.
     """
 
     format: OutputFormat
@@ -72,31 +85,21 @@ class OutputDemand:
     tracing: bool
 
 
-def _reject_deferred(name: str) -> None:
-    raise OutputOptionsError(
-        f"'{name}' is not implemented in this milestone (M1 ships flag, basic, "
-        "and list; it lands in M5)"
-    )
-
-
 def resolve_output_demand(
     *,
     output: str | OutputFormat = OutputFormat.FLAG,
     annotations: AnnotationsOption = False,
     error_params: bool = False,
-    verbose: bool = False,
+    verbose: bool | None = None,
     trace: bool = False,
     positions: bool = False,
 ) -> OutputDemand:
     """Admit or reject a combination of output options before evaluation (D6).
 
-    Every combination is either supported now, rejected because it can never
-    be (an unknown format name, `verbose` on `basic`, or any control on
-    `flag`, which carries no records), or rejected as "not implemented in
-    this milestone" because M5 has not landed yet (`detailed`/`verbose`/
-    `hierarchical`, `trace`, `positions`, and the verbose level of `list`).
-    The two kinds of rejection carry distinct wording so a caller can tell
-    "never" from "not yet".
+    `flag` carries no records, so every control is rejected with it.
+    `verbose=True` is rejected for `basic` and `detailed`, relevant-level
+    formats by definition (IETF draft-03 §13.4); `verbose=False` contradicts
+    the `verbose` format. Everything else is admitted.
     """
     try:
         output_format = OutputFormat(output)
@@ -107,7 +110,7 @@ def resolve_output_demand(
         requested: tuple[tuple[str, bool], ...] = (
             ("annotations", annotations is not False),
             ("error_params", error_params),
-            ("verbose", verbose),
+            ("verbose", verbose is True),
             ("trace", trace),
             ("positions", positions),
         )
@@ -126,31 +129,41 @@ def resolve_output_demand(
             tracing=False,
         )
 
-    if output_format in _DEFERRED_FORMATS:
+    if verbose is True and output_format in (OutputFormat.BASIC, OutputFormat.DETAILED):
         raise OutputOptionsError(
-            f'output "{output_format}" is not implemented in this milestone '
-            "(M1 ships flag, basic, and list; detailed/verbose/hierarchical "
-            "land in M5)"
+            f"'verbose' does not apply to output \"{output_format}\", a "
+            "relevant-level format by definition (IETF draft-03 §13.4); use "
+            '"verbose", or "list"/"hierarchical" with verbose=True'
         )
-
-    if trace:
-        _reject_deferred("trace")
-
-    if verbose:
-        if output_format is OutputFormat.BASIC:
-            raise OutputOptionsError(
-                "'verbose' does not apply to output \"basic\", a relevant-level "
-                "format by definition (IETF draft-03 §13.4)"
-            )
-        # Only `list` remains, and only its verbose level is deferred.
-        _reject_deferred("verbose")
+    if verbose is False and output_format is OutputFormat.VERBOSE:
+        raise OutputOptionsError(
+            'output "verbose" is the verbose level by definition; verbose=False '
+            "contradicts it"
+        )
 
     return OutputDemand(
         format=output_format,
         annotations=make_record_predicate(annotations),
         error_params=error_params,
-        verbose=False,
-        tracing=False,
+        verbose=output_format is OutputFormat.VERBOSE or verbose is True,
+        tracing=output_format is not OutputFormat.BASIC or trace,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class UnitSets:
+    """The flat surface as one evaluation produced it.
+
+    `annotations` is empty on an invalid run or when none are selected, and
+    the dropped pair is empty unless irrelevant records were retained (the
+    verbose demand).
+    """
+
+    errors: list[ErrorUnit] = field(default_factory=list[ErrorUnit])
+    dropped_errors: list[ErrorUnit] = field(default_factory=list[ErrorUnit])
+    annotations: list[AnnotationUnit] = field(default_factory=list[AnnotationUnit])
+    dropped_annotations: list[AnnotationUnit] = field(
+        default_factory=list[AnnotationUnit]
     )
 
 
@@ -158,54 +171,88 @@ def resolve_output_demand(
 class Result:
     """The result of an evaluation (D6).
 
-    `errors` is present (non-`None`) iff the result is invalid; `annotations`
-    is present iff the result is valid and annotations were selected
-    (`selection is not False`), independent of whether anything survived
-    selection. `output_document` is `None` for `flag` — flag carries nothing
-    beyond `valid` itself, so `render_flag` exists for callers that want that
-    document directly rather than through a `Result`.
+    Presence rules: `errors` iff invalid; `annotations` iff valid and
+    annotations were selected (independent of whether anything survived);
+    `dropped_errors` at the verbose level; `dropped_annotations` at the
+    verbose level when annotations were selected; `trace` when requested,
+    its `errorIndexes` referencing `errors` on this result;
+    `output_document` in the requested format's structure, `None` for
+    `flag` (which carries nothing beyond `valid`; `render_flag` exists for
+    callers that want that document directly).
     """
 
     valid: bool
     errors: list[ErrorUnit] | None
     annotations: list[AnnotationUnit] | None
-    output_document: BasicOutputDocument | ListOutputDocument | dict[str, bool] | None
+    output_document: OutputDocument | None
+    dropped_errors: list[ErrorUnit] | None = None
+    dropped_annotations: list[AnnotationUnit] | None = None
+    trace: TraceUnit | None = None
 
 
 def assemble_result(
-    demand: OutputDemand, render_input: RenderInput, selection: AnnotationsOption
+    demand: OutputDemand,
+    valid: bool,
+    units: UnitSets,
+    root: RenderNode | None,
+    root_location: str,
+    trace: bool,
 ) -> Result:
-    """Assemble a `Result` from a flat `RenderInput` (D6).
+    """Assemble a `Result` from the flat surface and, when the demand built
+    one, the located tree (D6).
 
-    `selection` is the raw `AnnotationsOption` (not `demand.annotations`,
-    which only ever gates recording, D5): this is where the full selection,
-    `keep` included, is applied to `render_input.annotations` before either
-    the flat `Result.annotations` or the rendered document sees it.
+    `root` is required whenever `demand.tracing`; `root_location` is the
+    root schema's canonical location (the `basic` document's own). The unit
+    lists are placed on the result as they are — selection (D5), `keep`
+    included, was applied by whoever rendered them.
     """
     if demand.format is OutputFormat.FLAG:
-        return Result(render_input.valid, None, None, None)
+        return Result(valid, None, None, None)
 
-    selection_active = selection is not False
-    selected_annotations = (
-        select_units(render_input.annotations, selection)
-        if render_input.valid and selection_active
-        else []
-    )
-    working_input = replace(render_input, annotations=selected_annotations)
-
-    errors = None if working_input.valid else list(working_input.errors)
-    annotations = (
-        selected_annotations if working_input.valid and selection_active else None
+    selected = demand.annotations is not None
+    errors = None if valid else units.errors
+    annotations = units.annotations if valid and selected else None
+    dropped_errors = units.dropped_errors if demand.verbose else None
+    dropped_annotations = (
+        units.dropped_annotations if demand.verbose and selected else None
     )
 
-    document: BasicOutputDocument | ListOutputDocument
-    if demand.format is OutputFormat.BASIC:
-        document = render_basic(working_input)
-    elif demand.format is OutputFormat.LIST:
-        document = render_list(working_input)
-    else:  # pragma: no cover - resolve_output_demand rejects every other format
-        raise OutputOptionsError(
-            f"output format {demand.format!r} is not implemented in this milestone"
+    render_input: RenderInput | None = None
+    if demand.tracing:
+        if root is None:
+            raise ValueError("a tracing demand needs the located tree's root")
+        render_input = RenderInput(
+            errors=units.errors,
+            dropped_errors=units.dropped_errors,
+            annotations=units.annotations,
+            dropped_annotations=units.dropped_annotations,
+            root=root,
         )
+    rendered_trace = (
+        render_trace(render_input.root) if trace and render_input is not None else None
+    )
 
-    return Result(working_input.valid, errors, annotations, document)
+    irrelevant: IrrelevantRendering = "mark" if demand.verbose else "omit"
+    document: OutputDocument
+    if demand.format is OutputFormat.BASIC:
+        document = render_basic(valid, root_location, units.errors, units.annotations)
+    else:
+        assert render_input is not None
+        if demand.format is OutputFormat.LIST:
+            document = render_list(render_input, irrelevant)
+        elif demand.format is OutputFormat.HIERARCHICAL:
+            document = render_hierarchical(render_input, irrelevant)
+        elif demand.format is OutputFormat.DETAILED:
+            document = render_detailed(render_input)
+        else:
+            document = render_verbose(render_input)
+
+    return Result(
+        valid,
+        errors,
+        annotations,
+        document,
+        dropped_errors=dropped_errors,
+        dropped_annotations=dropped_annotations,
+        trace=rendered_trace,
+    )

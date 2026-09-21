@@ -1,0 +1,42 @@
+{
+  "valid": true,
+  "evaluationPath": "",
+  "schemaLocation": "https://golden.example/schema#",
+  "instanceLocation": "",
+  "annotations": {
+    "title": "root"
+  },
+  "details": [
+    {
+      "valid": true,
+      "evaluationPath": "/properties/item",
+      "schemaLocation": "https://golden.example/schema#/properties/item",
+      "instanceLocation": "/item",
+      "details": [
+        {
+          "valid": true,
+          "evaluationPath": "/properties/item/$ref",
+          "schemaLocation": "https://golden.example/schema#/$defs/named",
+          "instanceLocation": "/item",
+          "annotations": {
+            "title": "a named thing"
+          },
+          "details": [
+            {
+              "valid": true,
+              "evaluationPath": "/properties/item/$ref/properties/name",
+              "schemaLocation": "https://golden.example/schema#/$defs/named/properties/name",
+              "instanceLocation": "/item/name"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "valid": true,
+      "evaluationPath": "/properties/count",
+      "schemaLocation": "https://golden.example/schema#/properties/count",
+      "instanceLocation": "/count"
+    }
+  ]
+}

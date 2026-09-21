@@ -8,16 +8,17 @@
 # engine records, so any producer of a `RenderInput` (the interpreter today,
 # a compiled artifact from M6) renders through the same code path.
 #
-# M1 scope (DESIGN.md §6): `flag`, `basic`, and `list` only. `RenderInput`
-# carries a `tree` placeholder and the M5 formats
-# (`detailed`/`verbose`/`hierarchical`) are rejected by `result.py`'s
-# `resolve_output_demand`, never reaching this module — but the surfaces
-# below (the unit shapes, `AnnotationSelection`, the six-member
-# `OutputFormat`) are already the ones M5 extends, not ones M5 replaces.
+# Two kinds of input: the flat surface (units with the engine's native field
+# names) and a located tree of schema applications (`RenderNode`), rendered
+# by format name into each documented structure — IETF draft-03 §13 for
+# `basic`/`detailed`/`verbose`, the machines-oriented output proposal for
+# `list`/`hierarchical`, and the engine's own `trace`.
+
+from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from json_schema_engine.core.json_model import (
     JsonValue,
@@ -25,6 +26,11 @@ from json_schema_engine.core.json_model import (
     unescape_segment,
 )
 from json_schema_engine.core.loader import SourceLocation
+
+if TYPE_CHECKING:
+    # Type-only: the trace's per-keyword verdict is plain data (name, valid)
+    # and importing it at runtime would pull the record module in here.
+    from json_schema_engine.core.channel import KeywordTrace
 
 
 class ErrorUnit(TypedDict):
@@ -186,61 +192,6 @@ class BasicOutputDocument(TypedDict):
     annotations: NotRequired[list[BasicAnnotationUnit]]
 
 
-class OutputUnit(TypedDict):
-    """One schema application in the machines-oriented `list`/`hierarchical`
-    documents: its location plus errors and annotations keyed by keyword.
-
-    `droppedErrors`/`droppedAnnotations` and nested `details` arrive with the
-    verbose level and `hierarchical` in M5.
-    """
-
-    valid: bool
-    evaluationPath: str
-    schemaLocation: str
-    instanceLocation: str
-    errors: NotRequired[dict[str, str]]
-    annotations: NotRequired[dict[str, JsonValue]]
-
-
-class ListOutputDocument(TypedDict):
-    """The machines-oriented `list` document: `valid` and a flat `details`.
-
-    One unit per schema application that has relevant records, in
-    application order (parents before children, siblings in evaluation
-    order).
-    """
-
-    valid: bool
-    details: list[OutputUnit]
-
-
-@dataclass(frozen=True, slots=True)
-class RenderInput:
-    """The input every document renderer consumes (engine-free, D6).
-
-    `errors` and `annotations` are already the relevant, already-selected
-    units a caller wants rendered — selection (D5) is applied before a
-    `RenderInput` is built, in `result.py`. `root_location` is the root
-    schema's canonical location, which the draft-03 documents put on their
-    root unit.
-
-    `error_keywords` and `annotation_keywords` run parallel to the unit
-    lists and name the keyword each unit belongs to (`None` for a boolean
-    `false` schema's error, which has none). The `list` document groups by
-    application and cannot recover that from a unit's path alone. When they
-    are omitted, the last path segment is taken as the keyword. `tree` is
-    the M5 located application tree; M1 never populates it.
-    """
-
-    valid: bool
-    errors: Sequence[ErrorUnit]
-    annotations: Sequence[AnnotationUnit]
-    root_location: str
-    error_keywords: Sequence[str | None] | None = None
-    annotation_keywords: Sequence[str | None] | None = None
-    tree: object | None = None
-
-
 def render_flag(valid: bool) -> dict[str, bool]:
     """The `flag` document (IETF draft-03 §13.4.1 / machines-oriented proposal).
 
@@ -249,16 +200,27 @@ def render_flag(valid: bool) -> dict[str, bool]:
     return {"valid": valid}
 
 
-def render_basic(render_input: RenderInput) -> BasicOutputDocument:
-    """Render the draft-03 `basic` document."""
+def render_basic(
+    valid: bool,
+    root_location: str,
+    errors: Sequence[ErrorUnit],
+    annotations: Sequence[AnnotationUnit],
+) -> BasicOutputDocument:
+    """Render the draft-03 `basic` document from the flat surface.
+
+    `root_location` is the root schema's canonical location; `errors` and
+    `annotations` are the relevant, already selected units. Per the official
+    output-tests fixtures, `errors` is absent on success and `annotations`
+    appears only when non-empty.
+    """
     document: BasicOutputDocument = {
-        "valid": render_input.valid,
+        "valid": valid,
         "keywordLocation": "",
-        "absoluteKeywordLocation": render_input.root_location,
+        "absoluteKeywordLocation": root_location,
         "instanceLocation": "",
     }
-    if render_input.valid:
-        if render_input.annotations:
+    if valid:
+        if annotations:
             document["annotations"] = [
                 {
                     "keywordLocation": a["evaluationPath"],
@@ -266,7 +228,7 @@ def render_basic(render_input: RenderInput) -> BasicOutputDocument:
                     "instanceLocation": a["inputLocation"],
                     "annotation": a["annotation"],
                 }
-                for a in render_input.annotations
+                for a in annotations
             ]
     else:
         document["errors"] = [
@@ -276,93 +238,403 @@ def render_basic(render_input: RenderInput) -> BasicOutputDocument:
                 "instanceLocation": e["inputLocation"],
                 "error": e["error"],
             }
-            for e in render_input.errors
+            for e in errors
         ]
     return document
 
 
-def _parent_of(location: str, keyword: str | None) -> str:
-    """The application's location, given a unit's location and its keyword."""
-    if keyword is None:
-        return location
-    suffix = "/" + escape_segment(keyword)
-    return location[: -len(suffix)] if location.endswith(suffix) else location
+# --- the located tree ------------------------------------------------------
 
 
-def _keyword_of(location: str, keyword: str | None) -> str:
-    if keyword is not None:
-        return keyword
-    return unescape_segment(location.rsplit("/", 1)[-1]) if "/" in location else ""
+@dataclass(frozen=True, slots=True)
+class RenderNode:
+    """One schema application in a located evaluation tree (D6).
 
+    What the document renderers need from any producer — the interpreter's
+    trace (`records.to_render_node`) or a compiled artifact. Locations are
+    absolute strings; records are indexes into the owning `RenderInput`'s
+    flat unit sequences.
 
-def render_list(render_input: RenderInput) -> ListOutputDocument:
-    """Render the machines-oriented `list` document from flat units.
-
-    Units are grouped by the schema application they belong to. The flat
-    lists are in encounter order, and a keyword's own error is recorded
-    after its sub-applications' errors, so a group is ordered by the first
-    appearance of any unit in its subtree: that reproduces the application
-    tree's pre-order without the tree.
+    Producers keep three invariants: a child's `evaluation_path` equals or
+    extends its parent's; a unit indexed at a node has the node's
+    `evaluation_path` (a boolean `false` schema) or extends it by exactly
+    one escaped segment, the keyword; `keywords` lists the node's
+    non-structural keyword evaluations in evaluation order.
     """
-    groups: dict[tuple[str, str, str], OutputUnit] = {}
-    first_seen: dict[tuple[str, str, str], int] = {}
-    index = 0
 
-    def group_for(
-        unit: ErrorUnit | AnnotationUnit, keyword: str | None, valid: bool
-    ) -> OutputUnit:
-        nonlocal index
-        key = (
-            _parent_of(unit["evaluationPath"], keyword),
-            _parent_of(unit["schemaLocation"], keyword),
-            unit["inputLocation"],
-        )
-        group = groups.get(key)
-        if group is None:
-            group = OutputUnit(
-                valid=valid,
-                evaluationPath=key[0],
-                schemaLocation=key[1],
-                instanceLocation=key[2],
-            )
-            groups[key] = group
-            first_seen[key] = index
-        index += 1
-        return group
+    evaluation_path: str
+    schema_location: str
+    input_location: str
+    valid: bool
+    keywords: tuple[KeywordTrace, ...]
+    errors: tuple[int, ...]
+    dropped_errors: tuple[int, ...]
+    annotations: tuple[int, ...]
+    dropped_annotations: tuple[int, ...]
+    children: tuple[RenderNode, ...]
 
-    error_keywords = render_input.error_keywords
-    for position, error in enumerate(render_input.errors):
-        keyword = error_keywords[position] if error_keywords is not None else None
-        if keyword is None and error_keywords is None:
-            keyword = _keyword_of(error["evaluationPath"], None)
-        group = group_for(error, keyword, False)
-        by_keyword = group.setdefault("errors", {})
-        name = keyword if keyword is not None else ""
-        prior = by_keyword.get(name)
-        by_keyword[name] = (
+
+@dataclass(frozen=True, slots=True)
+class RenderInput:
+    """The flat surface plus its located tree: every tree renderer's input.
+
+    The unit sequences are already relevant/irrelevant-partitioned and
+    already selected (D5). `dropped_errors` and `dropped_annotations` are
+    empty unless the producer retained irrelevant records (the verbose
+    demand); relevant-level renderings never read them.
+    """
+
+    errors: Sequence[ErrorUnit]
+    dropped_errors: Sequence[ErrorUnit]
+    annotations: Sequence[AnnotationUnit]
+    dropped_annotations: Sequence[AnnotationUnit]
+    root: RenderNode
+
+
+type IrrelevantRendering = Literal["omit", "mark"]
+"""How `list`/`hierarchical` treat irrelevant records: `omit` drops them and
+prunes the units left empty (the relevant level); `mark` keeps every unit
+and renders them under `droppedErrors`/`droppedAnnotations` (verbose)."""
+
+
+def _keyword_of(unit: ErrorUnit, node: RenderNode) -> str:
+    """The keyword an error at `node` belongs to, decoded; `""` for a boolean
+    `false` schema's error, which sits at the node itself."""
+    rest = unit["evaluationPath"][len(node.evaluation_path) :]
+    return "" if rest == "" else unescape_segment(rest[1:])
+
+
+def _segments_below(child: RenderNode, parent_path: str) -> list[str]:
+    rest = child.evaluation_path[len(parent_path) :]
+    return [] if rest == "" else [unescape_segment(s) for s in rest[1:].split("/")]
+
+
+def _first_segment_below(child: RenderNode, parent_path: str) -> str | None:
+    """The applying keyword: the first segment of `child` below `parent_path`."""
+    path = child.evaluation_path
+    if len(path) == len(parent_path):
+        return None
+    end = path.find("/", len(parent_path) + 1)
+    return unescape_segment(path[len(parent_path) + 1 : None if end == -1 else end])
+
+
+def _pick[T](indexes: Sequence[int], units: Sequence[T]) -> list[T]:
+    return [units[i] for i in indexes]
+
+
+def _join_messages(errors: Sequence[ErrorUnit]) -> str:
+    # A keyword may report several errors (`required`'s missing names); a
+    # one-message-per-keyword field joins them.
+    return "; ".join(e["error"] for e in errors)
+
+
+# --- list / hierarchical (machines-oriented proposal) ----------------------
+
+
+class OutputUnit(TypedDict):
+    """One schema application in the `list`/`hierarchical` documents: its
+    location plus errors and annotations keyed by keyword name.
+
+    At the verbose level `droppedErrors`/`droppedAnnotations` mark irrelevant
+    records (draft-03 §12.2): the proposal defines `droppedAnnotations` for a
+    failed unit's own annotations, and the verbose level extends the marker
+    to every irrelevant record. `details` nests the sub-applications in
+    `hierarchical`; `list` flattens them.
+    """
+
+    valid: bool
+    evaluationPath: str
+    schemaLocation: str
+    instanceLocation: str
+    errors: NotRequired[dict[str, str]]
+    annotations: NotRequired[dict[str, JsonValue]]
+    droppedErrors: NotRequired[dict[str, str]]
+    droppedAnnotations: NotRequired[dict[str, JsonValue]]
+    details: NotRequired[list[OutputUnit]]
+
+
+class ListOutputDocument(TypedDict):
+    """The `list` document: `valid` and a flat `details` list, one unit per
+    schema application in pre-order (parents before children, siblings in
+    evaluation order)."""
+
+    valid: bool
+    details: list[OutputUnit]
+
+
+def _errors_by_keyword(errors: Sequence[ErrorUnit], node: RenderNode) -> dict[str, str]:
+    by_keyword: dict[str, str] = {}
+    for error in errors:
+        key = _keyword_of(error, node)
+        prior = by_keyword.get(key)
+        by_keyword[key] = (
             error["error"] if prior is None else f"{prior}; {error['error']}"
         )
+    return by_keyword
 
-    annotation_keywords = render_input.annotation_keywords
-    for position, annotation in enumerate(render_input.annotations):
-        keyword = (
-            annotation_keywords[position]
-            if annotation_keywords is not None
-            else annotation["keyword"]
-        )
-        group = group_for(annotation, keyword, True)
-        group.setdefault("annotations", {})[annotation["keyword"]] = annotation[
-            "annotation"
-        ]
 
-    def order(key: tuple[str, str, str]) -> tuple[int, int]:
-        path = key[0]
-        earliest = min(
-            seen
-            for other, seen in first_seen.items()
-            if other[0] == path or other[0].startswith(path + "/") or path == ""
-        )
-        return (earliest, len(path))
+def _annotations_by_keyword(
+    annotations: Sequence[AnnotationUnit],
+) -> dict[str, JsonValue]:
+    return {a["keyword"]: a["annotation"] for a in annotations}
 
-    details = [groups[key] for key in sorted(groups, key=order)]
-    return {"valid": render_input.valid, "details": details}
+
+def render_hierarchical(
+    render_input: RenderInput, irrelevant: IrrelevantRendering
+) -> OutputUnit:
+    """Render the `hierarchical` document: one unit per application, nested.
+
+    Irrelevant records render per `irrelevant`; at the relevant level a
+    unit carrying nothing is omitted (§13.4), but the root always remains.
+    """
+
+    def unit_of(node: RenderNode) -> OutputUnit:
+        return {
+            "valid": node.valid,
+            "evaluationPath": node.evaluation_path,
+            "schemaLocation": node.schema_location,
+            "instanceLocation": node.input_location,
+        }
+
+    def to_unit(node: RenderNode) -> OutputUnit | None:
+        details = [u for u in map(to_unit, node.children) if u is not None]
+        unit = unit_of(node)
+
+        errors = _pick(node.errors, render_input.errors)
+        if errors:
+            unit["errors"] = _errors_by_keyword(errors, node)
+        if irrelevant == "mark":
+            dropped = _pick(node.dropped_errors, render_input.dropped_errors)
+            if dropped:
+                unit["droppedErrors"] = _errors_by_keyword(dropped, node)
+
+        annotations = _pick(node.annotations, render_input.annotations)
+        if annotations:
+            unit["annotations"] = _annotations_by_keyword(annotations)
+        if irrelevant == "mark":
+            dropped_annotations = _pick(
+                node.dropped_annotations, render_input.dropped_annotations
+            )
+            if dropped_annotations:
+                unit["droppedAnnotations"] = _annotations_by_keyword(
+                    dropped_annotations
+                )
+
+        if details:
+            unit["details"] = details
+
+        if (
+            irrelevant == "omit"
+            and "errors" not in unit
+            and "annotations" not in unit
+            and "details" not in unit
+        ):
+            return None
+        return unit
+
+    rendered = to_unit(render_input.root)
+    return rendered if rendered is not None else unit_of(render_input.root)
+
+
+def render_list(
+    render_input: RenderInput, irrelevant: IrrelevantRendering
+) -> ListOutputDocument:
+    """Render the `list` document: the `hierarchical` units flattened under a
+    root carrying only `valid` and `details`.
+
+    At the relevant level only units that report an error or an annotation
+    appear (the proposal's SHOULD); the verbose level includes every unit.
+    """
+    details: list[OutputUnit] = []
+
+    def collect(unit: OutputUnit) -> None:
+        children = unit.pop("details", None)
+        if irrelevant == "mark" or "errors" in unit or "annotations" in unit:
+            details.append(unit)
+        for child in children or ():
+            collect(child)
+
+    collect(render_hierarchical(render_input, irrelevant))
+    return {"valid": render_input.root.valid, "details": details}
+
+
+# --- detailed / verbose (IETF draft-03 §13.4.3-13.4.4) ---------------------
+
+
+class DetailedOutputUnit(TypedDict):
+    """Output unit of IETF draft-03 §13.3 for `detailed` and `verbose`: one
+    node per keyword evaluation or schema application, with a local
+    `error`/`annotation` and nested results under `errors` (failed node) or
+    `annotations` (successful node)."""
+
+    valid: bool
+    keywordLocation: str
+    absoluteKeywordLocation: str
+    instanceLocation: str
+    error: NotRequired[str]
+    annotation: NotRequired[JsonValue]
+    errors: NotRequired[list[DetailedOutputUnit]]
+    annotations: NotRequired[list[DetailedOutputUnit]]
+
+
+def _attach_nested(unit: DetailedOutputUnit, nested: list[DetailedOutputUnit]) -> None:
+    if not nested:
+        return
+    # §13.3.5: nested results key on the node's own result.
+    if unit["valid"]:
+        unit["annotations"] = nested
+    else:
+        unit["errors"] = nested
+
+
+def _nested_of(unit: DetailedOutputUnit) -> list[DetailedOutputUnit]:
+    nested = unit.get("errors")
+    if nested is None:
+        nested = unit.get("annotations")
+    return nested if nested is not None else []
+
+
+def _build_draft03_tree(
+    render_input: RenderInput, level: Literal["relevant", "verbose"]
+) -> DetailedOutputUnit:
+    """The keyword-level tree: every schema application becomes a node whose
+    children are one node per keyword evaluation, in evaluation order; each
+    keyword node carries the keyword's own error or annotation and the
+    applications it performed. The verbose level includes every record and
+    relies on `valid` per node as the relevance marker."""
+
+    def build(node: RenderNode) -> DetailedOutputUnit:
+        keyword_location = node.evaluation_path
+        unit: DetailedOutputUnit = {
+            "valid": node.valid,
+            "keywordLocation": keyword_location,
+            "absoluteKeywordLocation": node.schema_location,
+            "instanceLocation": node.input_location,
+        }
+        errors = _pick(node.errors, render_input.errors)
+        annotations = _pick(node.annotations, render_input.annotations)
+        if level == "verbose":
+            errors += _pick(node.dropped_errors, render_input.dropped_errors)
+            annotations += _pick(
+                node.dropped_annotations, render_input.dropped_annotations
+            )
+        # A boolean `false` schema's error belongs to the application itself.
+        own = [e for e in errors if e["evaluationPath"] == keyword_location]
+        if own:
+            unit["error"] = _join_messages(own)
+
+        # The first evaluation-path segment of a child application below its
+        # parent names the applying keyword.
+        children_of: dict[str | None, list[RenderNode]] = {}
+        for child in node.children:
+            children_of.setdefault(
+                _first_segment_below(child, keyword_location), []
+            ).append(child)
+
+        nested: list[DetailedOutputUnit] = []
+        for keyword in node.keywords:
+            suffix = "/" + escape_segment(keyword.name)
+            kw_location = keyword_location + suffix
+            kw_unit: DetailedOutputUnit = {
+                "valid": keyword.valid,
+                "keywordLocation": kw_location,
+                "absoluteKeywordLocation": node.schema_location + suffix,
+                "instanceLocation": node.input_location,
+            }
+            kw_errors = [e for e in errors if e["evaluationPath"] == kw_location]
+            if kw_errors:
+                kw_unit["error"] = _join_messages(kw_errors)
+            for annotation in annotations:
+                if annotation["keyword"] == keyword.name:
+                    kw_unit["annotation"] = annotation["annotation"]
+                    break
+            applied = children_of.pop(keyword.name, None)
+            if applied is not None:
+                _attach_nested(kw_unit, [build(c) for c in applied])
+            nested.append(kw_unit)
+        # Applications not attributable to a keyword entry (a custom keyword
+        # applying with no segment of its own) stay under the application.
+        for stray in children_of.values():
+            nested.extend(build(c) for c in stray)
+        _attach_nested(unit, nested)
+        return unit
+
+    return build(render_input.root)
+
+
+def _condense(unit: DetailedOutputUnit, is_root: bool) -> DetailedOutputUnit | None:
+    """§13.4.3: a node with no local result is removed when it has no
+    children and replaced by its child when it has one; the root remains."""
+    nested = [n for n in (_condense(c, False) for c in _nested_of(unit)) if n]
+    local = "error" in unit or "annotation" in unit
+    if not local and not is_root:
+        if not nested:
+            return None
+        if len(nested) == 1:
+            return nested[0]
+    out: DetailedOutputUnit = {
+        "valid": unit["valid"],
+        "keywordLocation": unit["keywordLocation"],
+        "absoluteKeywordLocation": unit["absoluteKeywordLocation"],
+        "instanceLocation": unit["instanceLocation"],
+    }
+    if "error" in unit:
+        out["error"] = unit["error"]
+    if "annotation" in unit:
+        out["annotation"] = unit["annotation"]
+    _attach_nested(out, nested)
+    return out
+
+
+def render_detailed(render_input: RenderInput) -> DetailedOutputUnit:
+    """The `detailed` document (§13.4.3): the condensed keyword-level tree of
+    relevant results."""
+    condensed = _condense(_build_draft03_tree(render_input, "relevant"), True)
+    assert condensed is not None  # the root is never removed
+    return condensed
+
+
+def render_verbose(render_input: RenderInput) -> DetailedOutputUnit:
+    """The `verbose` document (§13.4.4): the full keyword-level tree,
+    irrelevant results included and marked only by `valid`."""
+    return _build_draft03_tree(render_input, "verbose")
+
+
+# --- trace -----------------------------------------------------------------
+
+
+class TraceUnit(TypedDict):
+    """One schema application from a traced evaluation (`Result.trace`).
+
+    The tree mirrors the evaluation exactly, including applications inside
+    subtrees that passed, so a consumer can reconstruct application context
+    (which `anyOf` branches an error competed against) without parsing
+    location strings. `segments` are the evaluation-path segments below the
+    parent application, decoded: the first is the applying keyword, any
+    following are branch indexes or property names; empty at the root.
+    `errorIndexes` index `Result.errors` of the same run and are populated
+    only when the evaluation failed.
+    """
+
+    segments: list[str]
+    schemaLocation: str
+    inputLocation: str
+    valid: bool
+    errorIndexes: list[int]
+    children: list[TraceUnit]
+
+
+def render_trace(root: RenderNode) -> TraceUnit:
+    """Render the located tree into the public trace."""
+
+    def to_unit(node: RenderNode, parent_path: str) -> TraceUnit:
+        return {
+            "segments": _segments_below(node, parent_path),
+            "schemaLocation": node.schema_location,
+            "inputLocation": node.input_location,
+            "valid": node.valid,
+            "errorIndexes": list(node.errors),
+            "children": [to_unit(c, node.evaluation_path) for c in node.children],
+        }
+
+    return to_unit(root, "")
