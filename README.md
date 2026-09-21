@@ -66,12 +66,14 @@ one. Each keeps its own semantics, so a draft-07 `$ref` ignores its
 siblings while a 2019-09 one does not.
 
 Every standard output format is available by name: `flag` (the default),
-`basic`, `detailed`, and `verbose` from the IETF draft-03 output spec, and
-`list` and `hierarchical` from the machines-oriented proposal. Annotations
-are a separate control (`annotations=True`, or an `AnnotationSelection`),
-`verbose=True` asks `list`/`hierarchical` for the verbose level with
-irrelevant records marked as dropped, and `trace=True` adds the application
-tree with error indexes into `result.errors`.
+`basic`, `detailed`, and `verbose` from the
+[IETF working group draft-03](https://www.ietf.org/archive/id/draft-ietf-jsonschema-json-schema-03.html)
+output sections, and `list` and `hierarchical` from the
+[machines-oriented proposal](https://github.com/json-schema-org/json-schema-spec/blob/main/specs/output/jsonschema-validation-output-machines.md).
+Annotations are a separate control (`annotations=True`, or an
+`AnnotationSelection`), `verbose=True` asks `list`/`hierarchical` for the
+verbose level with irrelevant records marked as dropped, and `trace=True`
+adds the application tree with error indexes into `result.errors`.
 
 ```python
 result = engine.evaluate(uri, {"name": 3}, output="hierarchical")
@@ -230,10 +232,6 @@ on a canonical key and confirming collisions with full JSON equality, so
 large arrays of distinct values do not incur quadratic cost, while genuine
 duplicates — including numbers equal across `int`/`float` and objects that
 differ only in member order — are still reported.
-
-**No prototype hazard.** Python dicts have no prototype chain, so there is
-nothing for a hostile property name to pollute: `__proto__`, `constructor`,
-and similar reserved-looking names evaluate as ordinary properties.
 
 ## Development
 
