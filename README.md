@@ -36,7 +36,11 @@ from json_schema_engine.core import create_engine
 
 engine = create_engine()
 uri = engine.register_schema(
-    {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    },
     "https://example.com/person",
 )
 assert engine.evaluate(uri, {"name": "Ada"}).valid
