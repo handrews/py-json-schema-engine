@@ -17,11 +17,9 @@ it, and it is useful anywhere an ECMA-262 pattern has to run under Python.
 
 Produced by Henry Andrews via Claude Code.
 
-**Status: 0.0.x.** The implementation is functional and tested against every
-regular expression in the official JSON Schema test suite, but the
-documentation is AI-written and not yet audited against actual usage or
-human readability standards. `0.1.x` ships once the documentation is deemed
-suitable for general consumption.
+**Status: `0.1.0`, the first documented release.** The README and docstrings
+are audited against the code, and every README example is executed by the
+test suite. APIs may still change before `1.0`.
 
 ## Install
 
@@ -37,18 +35,20 @@ Python 3.12+.
 ## Usage
 
 ```python
+import re
+
 import ecma_regex
 
 pattern = ecma_regex.compile(r"^\p{Letter}+$")
-pattern.search("olé")  # True
-pattern.search("olé1")  # False
-pattern.translated  # the emitted `re` pattern
-pattern.compiled  # the underlying re.Pattern
+assert pattern.search("olé") is True
+assert pattern.search("olé1") is False
+assert isinstance(pattern.translated, str)  # the emitted `re` pattern
+assert isinstance(pattern.compiled, re.Pattern)  # the underlying re.Pattern
 
-ecma_regex.compile("^a+$").search("aaa\n")  # False  (re says True)
-ecma_regex.compile("f.o").search("f\ro")  # False  (re says True)
-ecma_regex.compile(r"\d").search("٣")  # False  (re says True)
-ecma_regex.compile("^b$", flags="m").search("a\u2028b")  # True
+assert ecma_regex.compile("^a+$").search("aaa\n") is False  # re says True
+assert ecma_regex.compile("f.o").search("f\ro") is False  # re says True
+assert ecma_regex.compile(r"\d").search("٣") is False  # re says True
+assert ecma_regex.compile("^b$", flags="m").search("a\u2028b") is True
 ```
 
 `search` has `RegExp.prototype.test` semantics: unanchored, boolean.
@@ -57,9 +57,18 @@ Lower-level entry points, if you want the pieces:
 
 ```python
 tree = ecma_regex.parse(r"(?<year>\d{4})-\d{2}")  # an AST
+assert isinstance(tree, ecma_regex.Pattern)
+
 source = ecma_regex.translate(tree)  # a backend pattern string
+assert source == "(?P<year>[0-9]{4})-[0-9]{2}"
+
 flags = ecma_regex.translate_flags(tree)  # re.IGNORECASE, or 0
+assert flags == 0
+
 depth = ecma_regex.star_height(tree)  # ReDoS screening
+assert depth == 0
+assert ecma_regex.star_height(ecma_regex.parse("a+")) == 1
+assert ecma_regex.star_height(ecma_regex.parse("(a+)+")) == 2
 ```
 
 `star_height` reports the nesting depth of unbounded quantifiers — `a+` is
@@ -144,7 +153,9 @@ Properties that *are* derivable everywhere: every `General_Category` value
 | `regex` | Optional extra. Keeps `\p{...}` native, allows variable-width lookbehind, supports scripts. |
 
 ```python
-ecma_regex.compile(r"\p{Script=Greek}+", backend="regex")
+greek = ecma_regex.compile(r"\p{Script=Greek}+", backend="regex")
+assert greek.search("αβγ") is True
+assert greek.search("abc") is False
 ```
 
 Neither backend is linear-time; both backtrack. Use `star_height` to screen

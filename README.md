@@ -2,25 +2,25 @@
 
 A JSON Schema implementation for Python that aims to be both spec-complete
 and built for speed: an interpreter that is the reference semantics, a
-compiler tier for hot paths (planned), full annotation collection, and every
-standard output format. It is the Python counterpart of
+compiler tier for hot paths, full annotation collection, and every standard
+output format. It is the Python counterpart of
 [handrews/json-schema-engine](https://github.com/handrews/json-schema-engine)
 and shares its architecture: two tiers, one keyword registry, a frame-scoped
 record channel, and the IETF draft-03 relevance model.
 
 Produced by Henry Andrews via Claude Code.
 
-**Status: pre-release.** The published `0.0.1` is a name reservation with no
-functionality. The `main` branch holds the interpreter core for 2020-12, 2019-09,
-draft-07, and draft-06 with every standard output format, and the compiler
-tier's flag validator (M6), green on every official test-suite file for
-those drafts through both tiers, on the official output-tests, and on
-Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
-carries the milestone status.
+**Status: `0.0.2` is the first functional release.** It carries the
+interpreter core for 2020-12, 2019-09, draft-07, and draft-06 with every
+standard output format, the compiler tier (a flag validator and standalone
+modules, M6–M7), and the `json_schema_engine.formats` package — green on
+every official test-suite file for those drafts through both tiers, on the
+official output-tests, and on Bowtie. [DESIGN.md](DESIGN.md) is the design
+contract and carries the milestone status.
 
 The regular-expression translator lives in its own package,
-[`ecma-regex`](packages/ecma-regex/README.md): ECMA-262 patterns for Python,
-with JavaScript semantics, no dependency on this engine.
+[`ecma-regex`](packages/ecma-regex/README.md) (`0.1.0`): ECMA-262 patterns
+for Python, with JavaScript semantics, no dependency on this engine.
 
 ## Install
 
@@ -28,8 +28,9 @@ with JavaScript semantics, no dependency on this engine.
 pip install json-schema-engine
 ```
 
-Do not expect functionality from `0.0.1`; install from source until the
-first functional release.
+Python 3.12+. Extras: `[idna]` for IDNA2008 support (`idn-hostname`, and the
+`xn--` label check inside `hostname`); `[regex]` to swap in the `regex`
+package as the pattern backend.
 
 ## Use
 
@@ -85,10 +86,10 @@ assert result.output_document == {
 
 `create_engine(validate_schemas=True)` checks every registered document
 against its metaschema and raises `SchemaValidationError` with the errors.
-A loader that reports source positions (see the test-kit's
-`parse_json_with_ranges`) lets `evaluate(..., positions=True)` attach a
-`source` location to every error and annotation, and `engine.locate()`
-answers the same question for any schema location.
+A loader that reports source positions (see `parse_json_with_ranges`,
+exported from `json_schema_engine.core`) lets `evaluate(..., positions=True)`
+attach a `source` location to every error and annotation, and
+`engine.locate()` answers the same question for any schema location.
 
 ## Compile
 
@@ -107,6 +108,8 @@ assert compiled.validate({"name": "Ada"}) is True
 assert compiled.validate({}) is False
 print(compiled.source)  # the emitted module, for reading
 module_source = emit_standalone(engine, uri)  # importable without the compiler
+assert "def validate" in module_source
+assert "import json_schema_engine.compiler" not in module_source
 ```
 
 `compile_validator` returns a verdict-only validator (the flag level) that
@@ -163,6 +166,17 @@ decoding it. Compiled validators assert formats too; a standalone module
 imports the predicates it needs from `json_schema_engine.formats`, so the
 extra must be installed wherever such a module runs.
 
+## Documentation
+
+- [User guide](docs/guide/index.md) — validation, output formats,
+  annotations, dialects, loaders, source positions, metaschemas, custom
+  keywords, security, compiling schemas, and formats, topic by topic.
+- [API reference](docs/reference.md) — every public name, by package.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — setup, gates, and conventions.
+- [CHANGELOG.md](CHANGELOG.md) — what changed, release by release.
+- [DESIGN.md](DESIGN.md) — the engineering design contract and milestone
+  status.
+
 ## Security
 
 Schemas and instances are both often untrusted input. The interpreter
@@ -185,6 +199,8 @@ try:
     engine.register_schema({"pattern": "(a+)+$"}, "https://ex/redos")
 except UnsafeRegexError:
     pass  # rejected before it ever runs
+else:
+    raise AssertionError("expected UnsafeRegexError")
 ```
 
 Patterns are ECMA-262 by default, translated by the `ecma-regex` package to
@@ -241,13 +257,19 @@ uv run python scripts/bench.py --budget-ms 250 --filter user
 
 `scripts/bench.py` times the compiler tier's flag and standalone artifacts
 against the interpreter and two competitors (fastjsonschema, jsonschema)
-over the corpora in `packages/bench`. It is report-only — it enforces no
-performance threshold — and, per the IP policy below, runs the
+over seven corpora in `packages/bench`: three small hand-authored schemas,
+the official OpenAPI 3.1 schema against a real document, a generated
+API-payload corpus, and two 2000-record corpora. It is report-only (it
+enforces no performance threshold) and, per the IP policy below, runs the
 competitors only, never reading or porting their source. `--filter` takes
 a regex over corpus/subject/partition names; omit `--out` to skip writing
-JSON. The committed run lives at `packages/bench/results/results.json`
-(`--budget-ms 250`). The interpreter is the reference semantics, so ratios
-are informational, not a compatibility claim.
+JSON; `--compare BEFORE AFTER` prints a before/after comparison of two
+results files. The committed run lives at
+`packages/bench/results/results.json` (`--budget-ms 250`). The interpreter
+is the reference semantics, so ratios are informational, not a
+compatibility claim. [`packages/bench/README.md`](packages/bench/README.md)
+covers corpus provenance and licensing, methodology, and the recorded
+exclusions.
 
 ## IP policy
 
