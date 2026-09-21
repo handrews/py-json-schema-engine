@@ -135,8 +135,6 @@ def resolve_output_demand(
 
     if trace:
         _reject_deferred("trace")
-    if positions:
-        _reject_deferred("positions")
 
     if verbose:
         if output_format is OutputFormat.BASIC:

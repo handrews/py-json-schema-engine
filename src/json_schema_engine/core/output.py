@@ -24,6 +24,7 @@ from json_schema_engine.core.json_model import (
     escape_segment,
     unescape_segment,
 )
+from json_schema_engine.core.loader import SourceLocation
 
 
 class ErrorUnit(TypedDict):
@@ -41,6 +42,8 @@ class ErrorUnit(TypedDict):
     keyword: NotRequired[str]
     vocabulary: NotRequired[str]
     params: NotRequired[dict[str, JsonValue]]
+    # Schema-side source position, present with the `positions` option (D17).
+    source: NotRequired[SourceLocation]
 
 
 class AnnotationUnit(TypedDict):
@@ -52,6 +55,7 @@ class AnnotationUnit(TypedDict):
     keyword: str
     annotation: JsonValue
     vocabulary: NotRequired[str]
+    source: NotRequired[SourceLocation]
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,6 +28,7 @@ from json_schema_engine.core.json_model import (
     json_type_of,
     unescape_segment,
 )
+from json_schema_engine.core.loader import RangeLookup, SourceRange
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.uri import resolve, split_fragment, strip_fragment
 
@@ -114,6 +115,10 @@ class SchemaRegistry:
         self._consumed_ids: set[str] = set()
         self._document_dialects: dict[str, str] = {}
         self._resource_locations: dict[str, DocumentLocation] = {}
+        # Position lookups by document URI (D17): only the outermost
+        # registration installs one; embedded resources map back to their
+        # document through `_resource_locations`.
+        self._document_ranges: dict[str, RangeLookup] = {}
         # Retrieval URI -> declared `$id` base when they differ: the
         # document must be reachable under both, but anchors and lexical
         # bases live under `$id`.
@@ -133,6 +138,7 @@ class SchemaRegistry:
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
     ) -> str:
         """Register a schema document and return its canonical base URI.
 
@@ -156,6 +162,8 @@ class SchemaRegistry:
         self._documents[base_uri] = schema
         self._document_dialects[base_uri] = effective_dialect
         self._resource_locations[base_uri] = DocumentLocation(base_uri, "")
+        if get_range is not None:
+            self._document_ranges[base_uri] = get_range
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
         return base_uri
 
@@ -274,6 +282,11 @@ class SchemaRegistry:
 
     def document_location(self, resource_uri: str) -> DocumentLocation | None:
         return self._resource_locations.get(self._canonical(resource_uri))
+
+    def range(self, document_uri: str, pointer: str) -> SourceRange | None:
+        """The source range of a document-rooted pointer, if its loader knows."""
+        lookup = self._document_ranges.get(document_uri)
+        return None if lookup is None else lookup(pointer)
 
     def take_unresolved(self) -> list[str]:
         """External resources referenced but not registered; drained per call."""

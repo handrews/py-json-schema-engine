@@ -22,9 +22,14 @@ from json_schema_engine.core.evaluator import run_evaluation
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import DIALECT_2020_12, VOCAB_CORE_2019
 from json_schema_engine.core.keywords.dialect2020 import register_standard_dialects
-from json_schema_engine.core.loader import Loader
+from json_schema_engine.core.loader import Loader, RangeLookup, SourceLocation
 from json_schema_engine.core.metaschemas import bundled_metaschemas
-from json_schema_engine.core.output import AnnotationsOption, RenderInput
+from json_schema_engine.core.output import (
+    AnnotationsOption,
+    AnnotationUnit,
+    ErrorUnit,
+    RenderInput,
+)
 from json_schema_engine.core.records import render_annotation, render_error
 from json_schema_engine.core.regex import (
     RegexBackend,
@@ -43,6 +48,7 @@ from json_schema_engine.core.result import (
     assemble_result,
     resolve_output_demand,
 )
+from json_schema_engine.core.uri import split_fragment
 
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
@@ -105,16 +111,18 @@ class Engine:
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
     ) -> str:
         """Register a schema document locally and return its canonical URI.
 
         The document's dialect must exist or be assemblable from a
         registered or bundled metaschema; `$ref` targets are not followed
-        (use `load_schema` for that).
+        (use `load_schema` for that). `get_range` is the D17 position
+        capability for this document.
         """
         self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
         try:
-            uri = self.schemas.register(schema, retrieval_uri, dialect_uri)
+            uri = self.schemas.register(schema, retrieval_uri, dialect_uri, get_range)
         except RecursionError:
             raise MaxDepthExceededError(
                 "schema nesting exceeded the interpreter's stack "
@@ -128,9 +136,10 @@ class Engine:
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
     ) -> str:
         """Register a document and load every resource it references (P4)."""
-        uri = self.register_schema(schema, retrieval_uri, dialect_uri)
+        uri = self.register_schema(schema, retrieval_uri, dialect_uri, get_range)
         self._drain()
         return uri
 
@@ -152,9 +161,42 @@ class Engine:
         for loader in self._loaders:
             loaded = loader(uri)
             if loaded is not None:
-                self.register_schema(loaded.value, loaded.uri)
+                # A resource type that never heard of positions is still a
+                # valid loaded resource (P4); the capability is optional.
+                get_range: RangeLookup | None = getattr(loaded, "get_range", None)
+                self.register_schema(loaded.value, loaded.uri, None, get_range)
                 return True
         return False
+
+    # --- positions (D17) -------------------------------------------------
+
+    def locate(self, schema_location: str) -> SourceLocation | None:
+        """Translate a canonical schema location back to its document.
+
+        Returns the containing document, the document-rooted pointer, and
+        the source range when that document's loader reported positions;
+        None for a resource the registry never saw. Zero cost on the
+        evaluation path: nothing calls this unless asked.
+        """
+        resource, fragment = split_fragment(schema_location)
+        location = self.schemas.document_location(resource)
+        if location is None:
+            return None
+        pointer = location.pointer + (fragment or "")
+        source: SourceLocation = {
+            "documentUri": location.document_uri,
+            "pointer": pointer,
+        }
+        found = self.schemas.range(location.document_uri, pointer)
+        if found is not None:
+            source["range"] = found
+        return source
+
+    def _decorate(self, units: list[ErrorUnit] | list[AnnotationUnit] | None) -> None:
+        for unit in units or []:
+            source = self.locate(unit["schemaLocation"])
+            if source is not None:
+                unit["source"] = source
 
     # --- dialects --------------------------------------------------------
 
@@ -296,7 +338,11 @@ class Engine:
             error_keywords=[e.keyword_name for e in state.errors],
             annotation_keywords=[a.keyword_name for a in annotation_records],
         )
-        return assemble_result(demand, render_input, annotations)
+        result = assemble_result(demand, render_input, annotations)
+        if positions:
+            self._decorate(result.errors)
+            self._decorate(result.annotations)
+        return result
 
 
 def create_engine(

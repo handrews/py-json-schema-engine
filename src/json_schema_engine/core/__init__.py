@@ -41,7 +41,16 @@ from json_schema_engine.core.errors import (
 )
 from json_schema_engine.core.json_model import JsonType, JsonValue, json_equal
 from json_schema_engine.core.keywords._ids import DIALECT_2020_12
-from json_schema_engine.core.loader import LoadedDocument, LoadedResource, Loader
+from json_schema_engine.core.loader import (
+    LoadedDocument,
+    LoadedResource,
+    Loader,
+    RangeLookup,
+    SourceLocation,
+    SourcePosition,
+    SourceRange,
+    SourceSpan,
+)
 from json_schema_engine.core.output import (
     AnnotationSelection,
     AnnotationsOption,
@@ -88,10 +97,15 @@ __all__ = [
     "OutputOptionsError",
     "OutputUnit",
     "Phase",
+    "RangeLookup",
     "RegexBackend",
     "RegexDialect",
     "Result",
     "SchemaValidationError",
+    "SourceLocation",
+    "SourcePosition",
+    "SourceRange",
+    "SourceSpan",
     "StaticFacts",
     "UndeclaredConsumptionError",
     "UndeclaredProductionError",
