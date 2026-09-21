@@ -20,7 +20,6 @@
 # `formats` contract and dialect URIs. Nothing in `json_schema_engine.core`
 # or `.compiler` imports this package.
 
-import re
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -36,6 +35,7 @@ from json_schema_engine.core.keywords._ids import (
     DIALECT_DRAFT_07,
 )
 from json_schema_engine.formats import datetime_, idna_, misc, net, pointer, uri
+from json_schema_engine.formats._abnf import anchored
 
 __all__ = [
     "FORMATS_2019_09",
@@ -45,11 +45,6 @@ __all__ = [
     "anchored",
     "format_table_for",
 ]
-
-
-def anchored(fragment: str) -> re.Pattern[str]:
-    """Compile an ABNF fragment as a whole-string match (`\\A`…`\\Z`)."""
-    return re.compile(rf"\A(?:{fragment})\Z")
 
 
 def _entry(
