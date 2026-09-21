@@ -6,18 +6,35 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from json_schema_engine.core.json_model import JsonValue
 
 
+class LoadedResource(Protocol):
+    """What the engine needs from a loader's result: the value and its URI.
+
+    A Protocol rather than a class so that a loader written without any
+    dependency on the engine (the test-kit's suite remotes loader, a
+    framework's own document type) satisfies the contract structurally.
+    """
+
+    @property
+    def value(self) -> JsonValue: ...
+
+    @property
+    def uri(self) -> str:
+        """The URI to register the document under, normally the one requested.
+
+        A loader that followed a redirect reports where the document
+        actually lives so aliases stay correct.
+        """
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class LoadedDocument:
-    """A resource a loader found.
-
-    `uri` is the URI the document should be registered under, normally the
-    one requested; a loader that followed a redirect may report where the
-    document actually lives so aliases stay correct.
-    """
+    """The engine's own concrete `LoadedResource`, for loaders that want one."""
 
     value: JsonValue
     uri: str
@@ -26,4 +43,4 @@ class LoadedDocument:
 # A loader returns `None` for a URI it does not know: a miss is not an
 # error, since the next loader may know it and evaluation reports a
 # reference that is never satisfied only if it is actually followed.
-type Loader = Callable[[str], LoadedDocument | None]
+type Loader = Callable[[str], LoadedResource | None]

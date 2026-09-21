@@ -18,6 +18,12 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_VALIDATION,
 )
 from json_schema_engine.core.keywords.applicator import APPLICATOR_VOCABULARY
+from json_schema_engine.core.keywords.applicator_array import (
+    ARRAY_APPLICATOR_VOCABULARY,
+)
+from json_schema_engine.core.keywords.applicator_object import (
+    OBJECT_APPLICATOR_VOCABULARY,
+)
 from json_schema_engine.core.keywords.content import CONTENT_VOCABULARY
 from json_schema_engine.core.keywords.core import CORE_VOCABULARY
 from json_schema_engine.core.keywords.format import FORMAT_ANNOTATION_VOCABULARY
@@ -43,7 +49,16 @@ VOCABULARIES_2020_12: tuple[str, ...] = (
 def register_standard_dialects(dialects: DialectRegistry) -> None:
     """Register the built-in vocabularies and assemble the 2020-12 dialect."""
     dialects.register_vocabulary(VOCAB_CORE, CORE_VOCABULARY)
-    dialects.register_vocabulary(VOCAB_APPLICATOR, APPLICATOR_VOCABULARY)
+    # One vocabulary, three modules: in-place, object, and array applicators
+    # are split by keyword class so each can grow on its own.
+    dialects.register_vocabulary(
+        VOCAB_APPLICATOR,
+        {
+            **APPLICATOR_VOCABULARY,
+            **OBJECT_APPLICATOR_VOCABULARY,
+            **ARRAY_APPLICATOR_VOCABULARY,
+        },
+    )
     dialects.register_vocabulary(VOCAB_VALIDATION, VALIDATION_VOCABULARY)
     dialects.register_vocabulary(VOCAB_UNEVALUATED, UNEVALUATED_VOCABULARY)
     dialects.register_vocabulary(VOCAB_META_DATA, META_DATA_VOCABULARY)

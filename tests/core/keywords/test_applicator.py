@@ -17,6 +17,9 @@ from json_schema_engine.core.keywords.applicator import (
     ALL_OF,
     ANY_OF,
     APPLICATOR_VOCABULARY,
+)
+from json_schema_engine.core.keywords.applicator_object import (
+    OBJECT_APPLICATOR_VOCABULARY,
     PROPERTIES,
 )
 from json_schema_engine.core.keywords.unevaluated import (
@@ -27,6 +30,7 @@ from json_schema_engine.core.registry import SchemaRegistry
 
 KEYWORDS: dict[str, KeywordBehavior] = {
     **APPLICATOR_VOCABULARY,
+    **OBJECT_APPLICATOR_VOCABULARY,
     **UNEVALUATED_VOCABULARY,
 }
 
@@ -214,7 +218,8 @@ def test_unevaluated_properties_non_object_instance_passes() -> None:
 
 
 def test_dialect_assembles_from_applicator_and_unevaluated_vocabularies_only() -> None:
-    assert set(APPLICATOR_VOCABULARY) == {"properties", "anyOf", "allOf"}
+    assert set(APPLICATOR_VOCABULARY) == {"anyOf", "allOf"}
+    assert set(OBJECT_APPLICATOR_VOCABULARY) == {"properties"}
     assert set(UNEVALUATED_VOCABULARY) == {"unevaluatedProperties"}
     assert APPLICATOR_VOCABULARY["anyOf"].id == ANY_OF.id
     assert APPLICATOR_VOCABULARY["allOf"].id == ALL_OF.id

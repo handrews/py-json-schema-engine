@@ -10,7 +10,7 @@
 # be added to `consumes` then.
 #
 # Dependency direction: imports `cursor`, `dialect`, `json_model`, `_ids`,
-# and this package's `applicator` module (for `PROPERTIES_ID`). Never the
+# and this package's `applicator_object` module (for `PROPERTIES_ID`). Never the
 # evaluator or the registry.
 
 from typing import cast
@@ -26,7 +26,7 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_UNEVALUATED, keyword_id
-from json_schema_engine.core.keywords.applicator import PROPERTIES_ID
+from json_schema_engine.core.keywords.applicator_object import PROPERTIES_ID
 
 UNEVALUATED_PROPERTIES_ID = keyword_id(VOCAB_UNEVALUATED, "unevaluatedProperties")
 

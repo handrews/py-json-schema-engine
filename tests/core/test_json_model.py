@@ -11,7 +11,10 @@ from json_schema_engine.core.json_model import (
     canonical_key,
     code_point_length,
     escape_segment,
+    first_duplicate_pair,
+    has_duplicate_items,
     is_integer_value,
+    is_multiple_of,
     is_object,
     json_equal,
     json_type_of,
@@ -284,3 +287,51 @@ def test_pointer_of(segments: Sequence[str | int], expected: str) -> None:
 )
 def test_code_point_length(text: str, expected: int) -> None:
     assert code_point_length(text) == expected
+
+
+# --- M2 helpers: multipleOf exactness and uniqueItems duplicates (P2, D20) --
+
+
+@pytest.mark.parametrize(
+    ("instance", "divisor", "expected"),
+    [
+        (10, 5, True),
+        (7, 5, False),
+        (0.0075, 0.0001, True),  # suite: decimal, not binary, semantics
+        (3e-8, 1e-8, True),
+        (4.5, 1.5, True),
+        (0.3, 0.1, True),  # 0.3/0.1 is 2.9999… in binary, 3 in decimal
+        (1e308, 0.123456789, False),  # suite: "float division = inf"
+        (12391239123, 1e-8, True),
+        (10**40, 10**20, True),
+        (3, 0.5, True),
+        (5, 0, False),
+    ],
+)
+def test_is_multiple_of(
+    instance: int | float, divisor: int | float, expected: bool
+) -> None:
+    assert is_multiple_of(instance, divisor) is expected
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        ([1, 2, 3], None),
+        ([1, 1.0], (0, 1)),
+        ([1, True], None),
+        ([0, False], None),
+        (["a", "a"], (0, 1)),
+        ([{"a": 1, "b": 2}, {"b": 2, "a": 1}], (0, 1)),
+        ([{"a": 1}, {"a": True}], None),
+        ([[1, 2], [2, 1]], None),
+        ([None, None], (0, 1)),
+        ([1, 2, 1, 2], (0, 2)),
+        ([], None),
+    ],
+)
+def test_first_duplicate_pair(
+    items: list[JsonValue], expected: tuple[int, int] | None
+) -> None:
+    assert first_duplicate_pair(items) == expected
+    assert has_duplicate_items(items) is (expected is not None)
