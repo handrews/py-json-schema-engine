@@ -25,6 +25,7 @@ jobs:
       - run: uv run pyright
       - run: uv run lint-imports
       - run: uv run pytest -q
+      - run: uv run python scripts/standalone_smoke.py
       - run: uv build
 
   bowtie:

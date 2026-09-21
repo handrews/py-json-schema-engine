@@ -54,6 +54,7 @@ dev = [
     "import-linter",
     "json-schema-engine-test-kit",
     "regex>=2026.9.10",
+    "hypothesis>=6.168.0",
 ]
 
 [tool.uv.workspace]

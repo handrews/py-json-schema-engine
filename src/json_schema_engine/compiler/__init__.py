@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from json_schema_engine.compiler import emit as e
+from json_schema_engine.compiler.errors import StandaloneUnsupportedError
 from json_schema_engine.compiler.plan import (
     CompilationExplanation,
     CompilationPlan,
@@ -30,6 +31,7 @@ from json_schema_engine.compiler.plan import (
 from json_schema_engine.compiler.runtime import make_namespace, make_runtime
 from json_schema_engine.compiler.runtime_compile import instantiate
 from json_schema_engine.compiler.serialize import Flags, assemble, serialize_plan
+from json_schema_engine.compiler.standalone import emit_standalone
 from json_schema_engine.core.engine import Engine
 from json_schema_engine.core.json_model import JsonValue
 
@@ -40,8 +42,10 @@ __all__ = [
     "FallbackCause",
     "PlannedApplication",
     "PlannedUnit",
+    "StandaloneUnsupportedError",
     "build_plan",
     "compile_validator",
+    "emit_standalone",
     "explain_compilation",
 ]
 
