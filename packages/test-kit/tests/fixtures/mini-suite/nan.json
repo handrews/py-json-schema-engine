@@ -1,0 +1,7 @@
+[
+  {
+    "description": "not-valid-json",
+    "schema": true,
+    "tests": [{ "description": "nan-is-rejected", "data": NaN, "valid": true }]
+  }
+]

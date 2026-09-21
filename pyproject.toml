@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Henry Andrews" },
 ]
-dependencies = []
+dependencies = ["ecma-regex"]
 keywords = ["json", "json-schema", "validation"]
 classifiers = [
     "Development Status :: 1 - Planning",
@@ -26,6 +26,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+[project.optional-dependencies]
+regex = ["regex"]
+
 [project.urls]
 Homepage = "https://github.com/handrews/py-json-schema-engine"
 Repository = "https://github.com/handrews/py-json-schema-engine"
@@ -36,15 +39,80 @@ packages = ["src/json_schema_engine"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/",
-    "tests/",
-    "README.md",
-    "LICENSE",
-    "pyproject.toml",
+    "/src/",
+    "/tests/",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "ruff",
+    "pyright",
+    "import-linter",
+    "json-schema-engine-test-kit",
+    "regex>=2026.9.10",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ecma-regex = { workspace = true }
+json-schema-engine-test-kit = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/test-kit/tests", "packages/ecma-regex/tests"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "packages/*/src"]
+extend-exclude = ["DESIGN.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH", "TID", "C4", "PIE", "RET", "N"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+"packages/*/tests/**" = ["ANN"]
+
+[tool.pyright]
+include = ["src", "packages"]
+extraPaths = ["src", "packages/test-kit/src", "packages/ecma-regex/src"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.importlinter]
+root_packages = ["json_schema_engine", "ecma_regex"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core never imports compiler"
+type = "forbidden"
+source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["json_schema_engine.compiler"]
+
+[[tool.importlinter.contracts]]
+name = "core never uses ast"
+type = "forbidden"
+source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["ast"]
+
+[[tool.importlinter.contracts]]
+name = "core never imports test-kit"
+type = "forbidden"
+source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["json_schema_engine.test_kit"]
+
+[[tool.importlinter.contracts]]
+name = "ecma-regex is standalone"
+type = "forbidden"
+source_modules = ["ecma_regex"]
+forbidden_modules = ["json_schema_engine"]
