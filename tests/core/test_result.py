@@ -1,7 +1,5 @@
 """Record rendering (records.py), output demand, and result assembly (D5, D6, D13)."""
 
-from collections.abc import Sequence
-
 import pytest
 
 from json_schema_engine.core.channel import AnnotationRecord, ErrorRecord, PathNode
@@ -10,9 +8,8 @@ from json_schema_engine.core.errors import OutputOptionsError
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.output import (
     AnnotationSelection,
-    AnnotationUnit,
     ErrorUnit,
-    RenderInput,
+    RenderNode,
 )
 from json_schema_engine.core.records import (
     render_annotation,
@@ -24,6 +21,7 @@ from json_schema_engine.core.result import (
     OutputDemand,
     OutputFormat,
     Result,
+    UnitSets,
     assemble_result,
     resolve_output_demand,
 )
@@ -158,7 +156,8 @@ def _annotation(
 
 def test_render_selected_false_selection_yields_nothing() -> None:
     records = [_annotation("title", "urn:v1", "T")]
-    assert render_selected(records, False) == []
+    selected = render_selected(records, False)
+    assert selected.units == [] and selected.records == []
 
 
 def test_render_selected_applies_allow_list_and_keep() -> None:
@@ -171,14 +170,16 @@ def test_render_selected_applies_allow_list_and_keep() -> None:
         keywords=frozenset({"title", "description"}),
         keep=lambda unit: unit["annotation"] == "shown",
     )
-    units = render_selected(records, selection)
-    assert [u["keyword"] for u in units] == ["title"]
-    assert units[0]["annotation"] == "shown"
+    selected = render_selected(records, selection)
+    assert [u["keyword"] for u in selected.units] == ["title"]
+    assert selected.units[0]["annotation"] == "shown"
+    # The survivors' records stay paired with their units.
+    assert selected.records == [records[0]]
 
 
 def test_render_selected_true_renders_every_record_once() -> None:
     records = [_annotation("title", "urn:v1", "T"), _annotation("x-vendor", None, 1)]
-    units = render_selected(records, True)
+    units = render_selected(records, True).units
     assert [u["keyword"] for u in units] == ["title", "x-vendor"]
     assert "vocabulary" not in units[1]
 
@@ -230,39 +231,64 @@ def test_flag_rejects_every_control(kwargs: dict[str, bool]) -> None:
         resolve_output_demand(output="flag", **kwargs)
 
 
-def test_verbose_on_basic_is_rejected_as_never_supported_not_deferred() -> None:
-    with pytest.raises(OutputOptionsError) as excinfo:
-        resolve_output_demand(output="basic", verbose=True)
-    message = str(excinfo.value)
-    assert "not implemented in this milestone" not in message
-    assert "basic" in message
-
-
-def test_verbose_on_list_is_rejected_as_deferred_to_m5() -> None:
-    with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
-        resolve_output_demand(output="list", verbose=True)
-
-
-@pytest.mark.parametrize("output_format", ["detailed", "verbose", "hierarchical"])
-def test_m5_formats_are_rejected_as_deferred(output_format: str) -> None:
-    with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
-        resolve_output_demand(output=output_format)
-
-
-@pytest.mark.parametrize("output_format", ["basic", "list"])
-def test_trace_is_rejected_as_deferred_regardless_of_format(output_format: str) -> None:
-    with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
-        resolve_output_demand(output=output_format, trace=True)
-
-
-@pytest.mark.parametrize("output_format", ["basic", "list"])
-def test_positions_is_admitted_for_record_carrying_formats(
+@pytest.mark.parametrize("output_format", ["basic", "detailed"])
+def test_verbose_true_is_rejected_for_relevant_level_formats(
     output_format: str,
 ) -> None:
-    # D17: decoration happens post-hoc on the flat units, so any format
-    # that carries units admits it; `flag` still rejects it (tested above).
-    demand = resolve_output_demand(output=output_format, positions=True)
+    with pytest.raises(OutputOptionsError, match="relevant-level format"):
+        resolve_output_demand(output=output_format, verbose=True)
+    # `verbose=False` merely restates the default there.
+    assert resolve_output_demand(output=output_format, verbose=False).verbose is False
+
+
+def test_verbose_false_contradicts_the_verbose_format() -> None:
+    with bare_raises("verbose level by definition"):
+        resolve_output_demand(output="verbose", verbose=False)
+    assert resolve_output_demand(output="verbose").verbose is True
+    assert resolve_output_demand(output="verbose", verbose=True).verbose is True
+
+
+def bare_raises(match: str) -> pytest.RaisesExc[OutputOptionsError]:
+    return pytest.raises(OutputOptionsError, match=match)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "verbose", "tracing"),
+    [
+        ({"output": "basic"}, False, False),
+        ({"output": "basic", "trace": True}, False, True),
+        ({"output": "list"}, False, True),
+        ({"output": "list", "verbose": True}, True, True),
+        ({"output": "hierarchical"}, False, True),
+        ({"output": "hierarchical", "verbose": True}, True, True),
+        ({"output": "detailed"}, False, True),
+        ({"output": "verbose"}, True, True),
+        ({"output": "verbose", "trace": True, "positions": True}, True, True),
+    ],
+)
+def test_admitted_combinations_set_verbose_and_tracing(
+    kwargs: dict[str, object], verbose: bool, tracing: bool
+) -> None:
+    # The verbose level: the `verbose` format, or `verbose=True`. Tracing:
+    # every format but `flag`, and `basic` only with `trace=True`.
+    demand = resolve_output_demand(**kwargs)  # type: ignore[arg-type]
+    assert demand.verbose is verbose
+    assert demand.tracing is tracing
+
+
+@pytest.mark.parametrize(
+    "output_format", ["basic", "list", "hierarchical", "detailed", "verbose"]
+)
+def test_positions_and_error_params_are_admitted_for_record_carrying_formats(
+    output_format: str,
+) -> None:
+    # D17/D13: decoration and params live on the flat units, so any format
+    # that carries units admits them; `flag` still rejects them.
+    demand = resolve_output_demand(
+        output=output_format, positions=True, error_params=True
+    )
     assert demand.format.value == output_format
+    assert demand.error_params is True
 
 
 def test_output_format_enum_accepts_an_existing_output_format_value() -> None:
@@ -272,31 +298,28 @@ def test_output_format_enum_accepts_an_existing_output_format_value() -> None:
 
 # --- assemble_result: presence rules (D6) -------------------------------
 
+ROOT_LOCATION = "https://example.com/s#"
 
-def _render_input(
-    *,
-    valid: bool,
-    errors: Sequence[ErrorUnit] = (),
-    annotations: Sequence[AnnotationUnit] = (),
-) -> RenderInput:
-    return RenderInput(
+
+def _root(
+    valid: bool, *, errors: tuple[int, ...] = (), annotations: tuple[int, ...] = ()
+) -> RenderNode:
+    return RenderNode(
+        evaluation_path="",
+        schema_location=ROOT_LOCATION,
+        input_location="",
         valid=valid,
-        errors=list(errors),
-        annotations=list(annotations),
-        root_location="https://example.com/s#",
+        keywords=(),
+        errors=errors,
+        dropped_errors=(),
+        annotations=annotations,
+        dropped_annotations=(),
+        children=(),
     )
 
 
-def test_assemble_result_flag_carries_nothing() -> None:
-    demand = resolve_output_demand()
-    result = assemble_result(demand, _render_input(valid=True), False)
-    assert result == Result(True, None, None, None)
-    result = assemble_result(demand, _render_input(valid=False), False)
-    assert result == Result(False, None, None, None)
-
-
-def test_assemble_result_basic_invalid_has_errors_no_annotations() -> None:
-    error = render_error(
+def _error_unit() -> ErrorUnit:
+    return render_error(
         ErrorRecord(
             behavior_id="id",
             keyword_name="type",
@@ -308,11 +331,28 @@ def test_assemble_result_basic_invalid_has_errors_no_annotations() -> None:
         ),
         error_params=False,
     )
+
+
+def test_assemble_result_flag_carries_nothing() -> None:
+    demand = resolve_output_demand()
+    result = assemble_result(demand, True, UnitSets(), None, ROOT_LOCATION, False)
+    assert result == Result(True, None, None, None)
+    result = assemble_result(demand, False, UnitSets(), None, ROOT_LOCATION, False)
+    assert result == Result(False, None, None, None)
+
+
+def test_assemble_result_basic_invalid_has_errors_no_annotations() -> None:
+    error = _error_unit()
     demand = resolve_output_demand(output="basic", annotations=True)
-    result = assemble_result(demand, _render_input(valid=False, errors=[error]), True)
+    result = assemble_result(
+        demand, False, UnitSets(errors=[error]), None, ROOT_LOCATION, False
+    )
     assert result.valid is False
     assert result.errors == [error]
     assert result.annotations is None
+    assert result.dropped_errors is None
+    assert result.dropped_annotations is None
+    assert result.trace is None
     assert result.output_document is not None
     assert result.output_document["valid"] is False
     assert "errors" in result.output_document
@@ -322,7 +362,7 @@ def test_assemble_result_basic_valid_with_selection_has_annotations_no_errors() 
     annotation = render_annotation(_annotation("title", "urn:v1", "T"))
     demand = resolve_output_demand(output="basic", annotations=True)
     result = assemble_result(
-        demand, _render_input(valid=True, annotations=[annotation]), True
+        demand, True, UnitSets(annotations=[annotation]), None, ROOT_LOCATION, False
     )
     assert result.valid is True
     assert result.errors is None
@@ -333,57 +373,93 @@ def test_assemble_result_basic_valid_with_selection_has_annotations_no_errors() 
 
 def test_assemble_result_basic_valid_without_selection_has_neither() -> None:
     demand = resolve_output_demand(output="basic")
-    result = assemble_result(demand, _render_input(valid=True), False)
+    result = assemble_result(demand, True, UnitSets(), None, ROOT_LOCATION, False)
     assert result.errors is None
     assert result.annotations is None
     assert result.output_document is not None
     assert "annotations" not in result.output_document
 
 
-def test_assemble_result_selection_truthy_but_empty_result_still_present() -> None:
-    # A selection was requested (selection is not False) but nothing
-    # survived it: annotations is `[]`, not `None` (D6: presence tracks
-    # whether selection was requested, not whether anything matched).
+def test_assemble_result_selection_requested_but_empty_is_still_present() -> None:
+    # A selection was requested but nothing survived it: annotations is
+    # `[]`, not `None` (D6: presence tracks whether selection was requested,
+    # not whether anything matched).
     demand = resolve_output_demand(output="basic", annotations=True)
-    selection = AnnotationSelection(keep=lambda unit: False)
+    result = assemble_result(demand, True, UnitSets(), None, ROOT_LOCATION, False)
+    assert result.annotations == []
+    assert result.output_document is not None
+    assert "annotations" not in result.output_document
+
+
+def test_assemble_result_verbose_level_exposes_the_dropped_lists() -> None:
+    error = _error_unit()
     annotation = render_annotation(_annotation("title", "urn:v1", "T"))
-    result = assemble_result(
-        demand, _render_input(valid=True, annotations=[annotation]), selection
-    )
-    assert result.annotations == []
-    assert result.output_document is not None
-    assert "annotations" not in result.output_document
-
-
-def test_assemble_result_list_document_mirrors_flat_surface() -> None:
-    error = render_error(
-        ErrorRecord(
-            behavior_id="id",
-            keyword_name="type",
-            vocabulary_uri=None,
-            schema_ref=SCHEMA_REF,
-            path_node=None,
-            cursor=root_cursor(1),
-            message="nope",
-        ),
-        error_params=False,
-    )
+    units = UnitSets(dropped_errors=[error], dropped_annotations=[annotation])
+    demand = resolve_output_demand(output="list", verbose=True, annotations=True)
+    result = assemble_result(demand, True, units, _root(True), ROOT_LOCATION, False)
+    assert result.dropped_errors == [error]
+    assert result.dropped_annotations == [annotation]
+    # Without a selection the dropped annotations are absent, like the
+    # relevant ones.
+    demand = resolve_output_demand(output="list", verbose=True)
+    result = assemble_result(demand, True, units, _root(True), ROOT_LOCATION, False)
+    assert result.dropped_errors == [error]
+    assert result.dropped_annotations is None
+    assert result.annotations is None
+    # The relevant level never exposes them.
     demand = resolve_output_demand(output="list", annotations=True)
-    result = assemble_result(demand, _render_input(valid=False, errors=[error]), True)
-    assert result.output_document is not None
-    assert result.output_document.get("details") is not None
+    result = assemble_result(demand, True, units, _root(True), ROOT_LOCATION, False)
+    assert result.dropped_errors is None
+    assert result.dropped_annotations is None
 
 
-def test_assemble_result_applies_keep_that_make_record_predicate_ignored() -> None:
-    # The annotation was "recorded" (it is present in render_input, as if
-    # make_record_predicate had allowed it); assemble_result must still
-    # apply `keep` at render time.
-    annotation = render_annotation(_annotation("title", "urn:v1", "hide me"))
-    selection = AnnotationSelection(keep=lambda unit: unit["annotation"] != "hide me")
-    demand = resolve_output_demand(output="basic", annotations=True)
-    result = assemble_result(
-        demand, _render_input(valid=True, annotations=[annotation]), selection
-    )
-    assert result.annotations == []
+def test_assemble_result_renders_the_tree_formats_from_the_root() -> None:
+    error = _error_unit()
+    units = UnitSets(errors=[error])
+    root = _root(False, errors=(0,))
+    for output_format in ("list", "hierarchical", "detailed", "verbose"):
+        demand = resolve_output_demand(output=output_format)
+        result = assemble_result(demand, False, units, root, ROOT_LOCATION, False)
+        assert result.output_document is not None
+        assert result.output_document["valid"] is False
+    document = assemble_result(
+        resolve_output_demand(output="hierarchical"),
+        False,
+        units,
+        root,
+        ROOT_LOCATION,
+        False,
+    ).output_document
+    assert document == {
+        "valid": False,
+        "evaluationPath": "",
+        "schemaLocation": ROOT_LOCATION,
+        "instanceLocation": "",
+        "errors": {"type": "nope"},
+    }
+
+
+def test_assemble_result_requires_a_root_for_a_tracing_demand() -> None:
+    demand = resolve_output_demand(output="list")
+    with pytest.raises(ValueError, match="located tree"):
+        assemble_result(demand, True, UnitSets(), None, ROOT_LOCATION, False)
+
+
+def test_assemble_result_trace_is_present_only_when_asked() -> None:
+    root = _root(False, errors=(0,))
+    units = UnitSets(errors=[_error_unit()])
+    demand = resolve_output_demand(output="basic", trace=True)
+    result = assemble_result(demand, False, units, root, ROOT_LOCATION, True)
+    assert result.trace == {
+        "segments": [],
+        "schemaLocation": ROOT_LOCATION,
+        "inputLocation": "",
+        "valid": False,
+        "errorIndexes": [0],
+        "children": [],
+    }
     assert result.output_document is not None
-    assert "annotations" not in result.output_document
+    assert "keywordLocation" in result.output_document
+    demand = resolve_output_demand(output="list")
+    result = assemble_result(demand, False, units, root, ROOT_LOCATION, False)
+    assert result.trace is None

@@ -1,6 +1,6 @@
 # json-schema-engine (Python): engineering design
 
-**Status:** living design contract. M0–M4 complete (2026-09-20); M5 next. Derived from the
+**Status:** living design contract. M0–M5 complete (2026-09-20); M6 next. Derived from the
 TypeScript engine's design record
 ([handrews/json-schema-engine `DESIGN.md`](https://github.com/handrews/json-schema-engine/blob/main/DESIGN.md)),
 whose decisions were validated by a complete implementation (all official
@@ -56,8 +56,8 @@ not the intent), **N/A** (JavaScript-only).
 | D2  | Keyword identity               | carried | Keywords identified by URI; a vocabulary is a named map of keyword URIs; a dialect is an ordered set of vocabularies; drafts are predefined dialects. All data, no privileged built-ins. `KeywordBehavior` is a frozen dataclass of callables (§3), not a class hierarchy.                                                                                                                                                                                                                        |
 | D3  | Keyword interface              | carried | `analyze(value, context) -> StaticFacts` + `evaluate(value, cursor, ctx) -> bool` (§3). Applicators request subschema application through the engine; the engine owns path, scope, and frame bookkeeping in exactly one place (`evaluator.py`).                                                                                                                                                                                                                                                 |
 | D4  | Keyword communication          | carried | Frame-scoped record channel (§4) with two record kinds: annotation records (the keyword's own value; output) and dependency records (computed data for other keywords; never output). Records merge to the parent frame only on success.                                                                                                                                                                                                                                                         |
-| D5  | Annotation selection           | carried | `annotations=False \| True \| AnnotationSelection`: allow-lists by keyword name and vocabulary URI, deny-lists subtracted after, a `keep` predicate over the rendered unit. Internal consumers always see the channel. The interpreter elides at annotate time what the selection rules out and dependency records nothing consumes. Producers declare `produces`, consumers declare `consumes`, or `UndeclaredProductionError` / `UndeclaredConsumptionError` is raised — never a silently empty channel. |
-| D6  | Output                         | carried | Formats by name: `flag`, `basic`, `detailed`, `verbose` (draft-03 §13) and `list`, `hierarchical` (machines-oriented proposal); three levels (minimal, relevant, verbose); orthogonal controls `annotations`, `error_params`, `positions`, `trace`. Unsupported combinations raise `OutputOptionsError` before evaluation. Each format fixes its own document structure and field vocabulary (`basic` speaks draft-03's `keywordLocation`/`absoluteKeywordLocation`/`instanceLocation`; `list`/`hierarchical` speak the proposal's `evaluationPath`/`schemaLocation`/`instanceLocation`), while the flat `Result.errors`/`Result.annotations` surface always carries the engine's native `evaluationPath`/`schemaLocation`/`inputLocation`. Python-side option names are snake_case (P8).      |
+| D5  | Annotation selection           | carried | `annotations=False \| True \| AnnotationSelection`: allow-lists by keyword name and vocabulary URI, deny-lists subtracted after, a `keep` predicate over the rendered unit. Internal consumers always see the channel. The interpreter elides at annotate time what the selection rules out and dependency records nothing consumes. Producers declare `produces`, consumers declare `consumes`, or `UndeclaredProductionError` / `UndeclaredConsumptionError` is raised — never a silently empty channel. Complete at M5: every suite case is evaluated under `flag` (elided) and under `hierarchical`+verbose (nothing elided) and the verdicts must agree. |
+| D6  | Output                         | carried | Formats by name: `flag`, `basic`, `detailed`, `verbose` (draft-03 §13) and `list`, `hierarchical` (machines-oriented proposal); three levels (minimal, relevant, verbose); orthogonal controls `annotations`, `error_params`, `positions`, `trace`. Unsupported combinations raise `OutputOptionsError` before evaluation. Each format fixes its own document structure and field vocabulary (`basic` speaks draft-03's `keywordLocation`/`absoluteKeywordLocation`/`instanceLocation`; `list`/`hierarchical` speak the proposal's `evaluationPath`/`schemaLocation`/`instanceLocation`), while the flat `Result.errors`/`Result.annotations` surface always carries the engine's native `evaluationPath`/`schemaLocation`/`inputLocation`. Python-side option names are snake_case (P8). Complete at M5: tracing is opt-in in the evaluator (`TraceNode` per application, `KeywordTrace` per non-structural keyword); `records.to_render_node` turns the trace into the engine-free `RenderNode` tree that `output.py` renders; `verbose` (the format, or `verbose=True` on `list`/`hierarchical`) exposes `Result.dropped_errors`/`dropped_annotations`; `trace=True` renders `Result.trace` with decoded segments and `errorIndexes` into `Result.errors`. |
 | D7  | Async boundary                 | amended | `evaluate` (and later `compile`) are synchronous. **Amendment (P4):** loaders are synchronous callables by default; an `AsyncEngine` façade over `asyncio` loaders is a later milestone. Registration itself never awaits.                                                                                                                                                                                                                                                                       |
 | D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler marks dynamically reachable scope as an island → interpreter trampoline.                                                                                                                                                                                                                                                                |
 | D9  | Lowering catalogue             | carried | Same catalogue in intent (evaluated-set tracking, production elision, constant locations, small-set membership, lazy unit materialization, regex/format hoisting). Thresholds and mechanisms (`frozenset` vs equality chains, etc.) are re-measured against CPython at M6, not assumed from V8.                                                                                                                                                                                                  |
@@ -290,6 +290,15 @@ Python-specific (measured 2026-09-20 on CPython 3.14):
 - `repr(float)` is the shortest round-trip form, so `Decimal(repr(x))`
   recovers the decimal a schema author wrote; exact binary rationals
   (`Fraction(x)` directly) would make `0.0075` a non-multiple of `0.0001`.
+- Records attribute to tree nodes by path-node **identity**, never by path
+  string: two applications of one keyword (`items` over an array) share
+  the evaluation-path string but each mints its own `PathNode`, and a
+  string-keyed attribution would merge their records. `to_render_node`
+  keys on `id(path_node)`, which is safe because the state keeps every
+  record and trace node alive until the tree is built.
+- A `NotRequired` unit field whose value may be JSON `null` (`annotation`,
+  a `default` of `null`) is tested by key presence, never by `.get() is
+  None`; the renderers' condensation rule keys on presence.
 
 ## 6. Milestones
 
@@ -360,6 +369,22 @@ loader-backed, zero skips: draft2020-12 **1301**, draft2019-09 **1261**,
 draft7 **929**, draft6 **841**; optional legs 26, 26, 12, 10. Bowtie, all
 four dialects: the same counts, zero failures, errors, skips, or
 mismatches.
+
+**Status note (M5, completed 2026-09-20):** every output format renders
+from one located tree: opt-in tracing in the evaluator, `to_render_node`
+attributing records by path-node identity, and engine-free renderers for
+`hierarchical`, `list`, the draft-03 `detailed` (built, then condensed per
+§13.4.3) and `verbose`, and the public `trace`. The option matrix is
+complete; `Result` carries `dropped_errors`/`dropped_annotations` at the
+verbose level. Goldens: the TS engine's fourteen documents, byte-identical
+apart from error text. Official output-tests: draft2020-12 **4**,
+draft2019-09 **4** (`basic`, validated against each release's
+output-schema), `v1` **3** (`list`). The D5 differential runs in every
+suite leg (flag vs. hierarchical+verbose, verdicts equal). Security
+baseline (`tests/core/test_security.py`): 100k-element `uniqueItems`, 5000-deep
+schema and instance nesting, the `RecursionError` backstop, `reject_unsafe_regex`,
+the star-height table, reserved names, wide instances, undeclared-* errors
+under tree output — all within budget.
 
 
 ## 7. Open items (owner decisions)

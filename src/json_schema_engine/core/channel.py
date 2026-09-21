@@ -1,6 +1,6 @@
 # The record channel's data: evaluation-path nodes, the three record kinds,
-# the frame, and the trace node (DESIGN.md §4 normative channel semantics;
-# P6 records vs. units; P7 identity-keyed structures).
+# the frame, and the trace tree (DESIGN.md §4 normative channel semantics;
+# D6 tracing; P6 records vs. units; P7 identity-keyed structures).
 #
 # Dependency direction: imports `cursor`, `ref`, and `json_model`. The
 # evaluator (which owns §4's rules) and the renderers import this; this
@@ -140,20 +140,33 @@ class Frame:
     dependencies: list[DependencyRecord] = field(default_factory=list[DependencyRecord])
 
 
+@dataclass(frozen=True, slots=True)
+class KeywordTrace:
+    """One keyword evaluation within a traced schema application.
+
+    Structural keywords (`$id`, `$schema`, `$defs`, ...) evaluate to nothing
+    and never appear here (draft-03 §12.6, §12.10); an unknown keyword
+    appears as valid, since it annotates and asserts nothing.
+    """
+
+    name: str
+    valid: bool
+
+
 @dataclass(eq=False, slots=True)
 class TraceNode:
-    """One schema application in the trace tree (opt-in; D6 `trace` control).
+    """One schema application, recorded only when tracing (D6).
 
-    A stub: M5 completes it with the per-keyword results that `verbose` and
-    `hierarchical` output need. It exists now so the evaluator's tracing hook
-    has a type, and it is deliberately empty of policy.
+    The structured renderers need application boundaries, per-branch
+    validity, and each keyword's verdict in evaluation order (draft-03
+    `verbose` renders one node per keyword), which the flat error list
+    cannot reconstruct. `valid` is settled when the application ends;
+    `keywords` and `children` grow in evaluation order.
     """
 
     schema_ref: SchemaRef
     path_node: PathNode | None
     cursor: Cursor
+    valid: bool = True
+    keywords: list[KeywordTrace] = field(default_factory=list[KeywordTrace])
     children: list["TraceNode"] = field(default_factory=list["TraceNode"])
-    # Per-keyword outcomes, in evaluation order. Typed `object` until M5
-    # defines the keyword-result record; naming a placeholder type now would
-    # be a guess that later code has to unpick.
-    keyword_results: list[object] = field(default_factory=list[object])

@@ -1,0 +1,20 @@
+{
+  "valid": true,
+  "keywordLocation": "",
+  "absoluteKeywordLocation": "https://golden.example/schema#",
+  "instanceLocation": "",
+  "annotations": [
+    {
+      "keywordLocation": "/properties/item/$ref/title",
+      "absoluteKeywordLocation": "https://golden.example/schema#/$defs/named/title",
+      "instanceLocation": "/item",
+      "annotation": "a named thing"
+    },
+    {
+      "keywordLocation": "/title",
+      "absoluteKeywordLocation": "https://golden.example/schema#/title",
+      "instanceLocation": "",
+      "annotation": "root"
+    }
+  ]
+}

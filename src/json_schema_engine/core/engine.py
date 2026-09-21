@@ -7,6 +7,7 @@
 
 from collections.abc import Sequence
 
+from json_schema_engine.core.channel import AnnotationRecord
 from json_schema_engine.core.dialect import (
     DialectRegistry,
     identifiers_2019,
@@ -28,9 +29,13 @@ from json_schema_engine.core.output import (
     AnnotationsOption,
     AnnotationUnit,
     ErrorUnit,
-    RenderInput,
 )
-from json_schema_engine.core.records import render_annotation, render_error
+from json_schema_engine.core.records import (
+    RecordSets,
+    render_error,
+    render_selected,
+    to_render_node,
+)
 from json_schema_engine.core.regex import (
     RegexBackend,
     RegexCache,
@@ -45,6 +50,7 @@ from json_schema_engine.core.registry import (
 from json_schema_engine.core.result import (
     OutputFormat,
     Result,
+    UnitSets,
     assemble_result,
     resolve_output_demand,
 )
@@ -277,7 +283,7 @@ class Engine:
         if not self.schemas.has(dialect_uri):
             return
         document = self.schemas.document(base_uri)
-        result = self.evaluate(dialect_uri, document, output="list")
+        result = self.evaluate(dialect_uri, document, output="basic")
         if not result.valid:
             raise SchemaValidationError(
                 f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
@@ -295,11 +301,20 @@ class Engine:
         output: str | OutputFormat = OutputFormat.FLAG,
         annotations: AnnotationsOption = False,
         error_params: bool = False,
-        verbose: bool = False,
+        verbose: bool | None = None,
         trace: bool = False,
         positions: bool = False,
     ) -> Result:
-        """Evaluate `instance` against a registered schema (D6)."""
+        """Evaluate `instance` against a registered schema (D6).
+
+        `output` names the format; `annotations` selects which annotations
+        reach output (D5); `error_params` adds keyword identity and
+        structured params to the flat error units (D13); `verbose` asks
+        for the verbose level of `list`/`hierarchical`; `trace` renders the
+        application tree into `Result.trace`; `positions` decorates the
+        flat units with schema-side source positions (D17). An unsupported
+        combination raises `OutputOptionsError` before evaluating.
+        """
         demand = resolve_output_demand(
             output=output,
             annotations=annotations,
@@ -322,26 +337,61 @@ class Engine:
             compile_regex=self._regex.compile,
             should_record=should_record,
             max_depth=self._max_depth,
+            tracing=demand.tracing,
         )
         if demand.format is OutputFormat.FLAG:
             return Result(valid, None, None, None)
 
-        errors = [
-            render_error(e, error_params=demand.error_params) for e in state.errors
-        ]
-        annotation_records = state.root_annotations if valid else []
-        render_input = RenderInput(
-            valid=valid,
-            errors=errors,
-            annotations=[render_annotation(a) for a in annotation_records],
-            root_location=self.schemas.root_ref(schema_uri).location,
-            error_keywords=[e.keyword_name for e in state.errors],
-            annotation_keywords=[a.keyword_name for a in annotation_records],
+        # The flat surface first; its record lists stay paired with the unit
+        # lists so the located tree can index the units.
+        params = demand.error_params
+        units = UnitSets(
+            errors=[render_error(e, error_params=params) for e in state.errors]
         )
-        result = assemble_result(demand, render_input, annotations)
+        records = RecordSets(errors=state.errors)
+        if valid and demand.annotations is not None:
+            selected = render_selected(state.root_annotations, annotations)
+            units.annotations.extend(selected.units)
+            records = RecordSets(errors=state.errors, annotations=selected.records)
+        if demand.verbose:
+            units.dropped_errors.extend(
+                render_error(e, error_params=params) for e in state.dropped_errors
+            )
+            dropped_records: list[AnnotationRecord] = []
+            if demand.annotations is not None:
+                # The relevant annotations are a valid run's root survivors;
+                # an invalid run has none (draft-03 §12.2). Identity, not
+                # equality: two keywords may record equal-looking values.
+                relevant = {id(a) for a in (state.root_annotations if valid else ())}
+                candidates = [
+                    a for a in state.all_annotations or () if id(a) not in relevant
+                ]
+                selected = render_selected(candidates, annotations)
+                units.dropped_annotations.extend(selected.units)
+                dropped_records = selected.records
+            records = RecordSets(
+                errors=state.errors,
+                dropped_errors=state.dropped_errors,
+                annotations=records.annotations,
+                dropped_annotations=dropped_records,
+            )
+        root = None
+        if demand.tracing:
+            assert state.trace_root is not None
+            root = to_render_node(state.trace_root, records)
+        result = assemble_result(
+            demand,
+            valid,
+            units,
+            root,
+            self.schemas.root_ref(schema_uri).location,
+            trace,
+        )
         if positions:
             self._decorate(result.errors)
             self._decorate(result.annotations)
+            self._decorate(result.dropped_errors)
+            self._decorate(result.dropped_annotations)
         return result
 
 

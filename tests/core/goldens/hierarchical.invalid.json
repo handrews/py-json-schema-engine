@@ -1,0 +1,17 @@
+{
+  "valid": false,
+  "evaluationPath": "",
+  "schemaLocation": "https://golden.example/schema#",
+  "instanceLocation": "",
+  "details": [
+    {
+      "valid": false,
+      "evaluationPath": "/properties/count",
+      "schemaLocation": "https://golden.example/schema#/properties/count",
+      "instanceLocation": "/count",
+      "errors": {
+        "type": "expected integer"
+      }
+    }
+  ]
+}
