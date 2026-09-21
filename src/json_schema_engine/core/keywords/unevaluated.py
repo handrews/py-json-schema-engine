@@ -48,126 +48,132 @@ UNEVALUATED_PROPERTIES_ID = keyword_id(VOCAB_UNEVALUATED, "unevaluatedProperties
 UNEVALUATED_ITEMS_ID = keyword_id(VOCAB_UNEVALUATED, "unevaluatedItems")
 
 
-def _unevaluated_properties_analyze(
-    _value: JsonValue, _ctx: AnalyzeContext
-) -> StaticFacts:
-    # The keyword's own value *is* the subschema: an empty path under it is
-    # the whole value, applied via `ctx.apply(("unevaluatedProperties",), ...)`.
-    return StaticFacts(
-        subschemas=((),),
-        consumes=(
-            PROPERTIES_ID,
-            PATTERN_PROPERTIES_ID,
-            ADDITIONAL_PROPERTIES_ID,
-            UNEVALUATED_PROPERTIES_ID,
-        ),
-        produces=(UNEVALUATED_PROPERTIES_ID,),
-        evaluates_names=AllNames(),
+def unevaluated_properties(
+    behavior_id: str, consumes: tuple[str, ...]
+) -> KeywordBehavior:
+    """Build an `unevaluatedProperties` consumer for one dialect (D11).
+
+    Every dialect's version is the same fold over `list[str]` dependency
+    data; only the producer ids it reads differ (2019-09 has its own id
+    space for the keyword itself). `consumes` must include `behavior_id`,
+    since a nested `unevaluatedProperties` reports what it covered.
+    """
+
+    def analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
+        # The keyword's own value *is* the subschema: an empty path under
+        # it is the whole value.
+        return StaticFacts(
+            subschemas=((),),
+            consumes=consumes,
+            produces=(behavior_id,),
+            evaluates_names=AllNames(),
+        )
+
+    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+        instance = cursor.value
+        if not is_object(instance):
+            return True
+        # §4 rule 4: visibility is filtered by cursor identity, so this sees
+        # only this instance location's own-schema and successfully-merged
+        # in-place producers — never a cousin's, never a failed branch's.
+        covered: set[str] = set()
+        for view in ctx.visible(consumes):
+            for name in cast(list[str], view.data):
+                covered.add(name)
+        ok = True
+        matched: list[str] = []
+        for name in instance:
+            if name in covered:
+                continue
+            matched.append(name)
+            if not ctx.apply(
+                ("unevaluatedProperties",), child_cursor(cursor, name, instance[name])
+            ):
+                ok = False
+        # Dependency data comes only from an accepting keyword (§4 rule 6).
+        if ok:
+            ctx.produce(matched)
+        return ok
+
+    return KeywordBehavior(
+        id=behavior_id, evaluate=evaluate, analyze=analyze, phase=Phase.UNEVALUATED
     )
 
 
-def _unevaluated_properties_evaluate(
-    _value: JsonValue, cursor: Cursor, ctx: KeywordContext
-) -> bool:
-    instance = cursor.value
-    if not is_object(instance):
-        return True
-    # §4 rule 4: visibility is filtered by cursor identity, so this sees only
-    # this instance location's own-schema and successfully-merged in-place
-    # producers — never a cousin's, never a failed branch's.
-    covered: set[str] = set()
-    for view in ctx.visible(
-        (
-            PROPERTIES_ID,
-            PATTERN_PROPERTIES_ID,
-            ADDITIONAL_PROPERTIES_ID,
-            UNEVALUATED_PROPERTIES_ID,
+def unevaluated_items(
+    behavior_id: str,
+    consumes: tuple[str, ...],
+    prefix_producer_id: str,
+    contains_id: str = CONTAINS_ID,
+) -> KeywordBehavior:
+    """Build an `unevaluatedItems` consumer for one dialect (D11).
+
+    The fold is dialect-independent: `contains` reports `True` (every
+    element) or a list of matched indexes; any other `True` means the whole
+    array was covered; the prefix producer (`prefixItems`, or 2019-09's
+    tuple-form `items`) reports the largest applied index as an int.
+    """
+
+    def analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
+        return StaticFacts(
+            subschemas=((),),
+            consumes=consumes,
+            produces=(behavior_id,),
+            evaluates_indexes=AllIndexes(),
         )
-    ):
-        for name in cast(list[str], view.data):
-            covered.add(name)
-    ok = True
-    matched: list[str] = []
-    for name in instance:
-        if name in covered:
-            continue
-        matched.append(name)
-        if not ctx.apply(
-            ("unevaluatedProperties",), child_cursor(cursor, name, instance[name])
-        ):
-            ok = False
-    # Dependency data comes only from an accepting keyword (§4 rule 6).
-    if ok:
-        ctx.produce(matched)
-    return ok
+
+    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+        instance = cursor.value
+        if not isinstance(instance, list):
+            return True
+        length = len(instance)
+        covered_prefix = 0
+        covered: set[int] = set()
+        for view in ctx.visible(consumes):
+            if view.behavior_id == contains_id:
+                if view.data is True:
+                    covered_prefix = length
+                else:
+                    for index in cast(list[int], view.data):
+                        covered.add(index)
+            elif view.data is True:
+                covered_prefix = length
+            elif view.behavior_id == prefix_producer_id and isinstance(view.data, int):
+                covered_prefix = max(covered_prefix, view.data + 1)
+        ok = True
+        applied = False
+        for index in range(covered_prefix, length):
+            if index in covered:
+                continue
+            applied = True
+            if not ctx.apply(
+                ("unevaluatedItems",), child_cursor(cursor, index, instance[index])
+            ):
+                ok = False
+        # Dependency data comes only from an accepting keyword (§4 rule 6).
+        if applied and ok:
+            ctx.produce(True)
+        return ok
+
+    return KeywordBehavior(
+        id=behavior_id, evaluate=evaluate, analyze=analyze, phase=Phase.UNEVALUATED
+    )
 
 
-UNEVALUATED_PROPERTIES = KeywordBehavior(
-    id=UNEVALUATED_PROPERTIES_ID,
-    evaluate=_unevaluated_properties_evaluate,
-    analyze=_unevaluated_properties_analyze,
-    phase=Phase.UNEVALUATED,
+UNEVALUATED_PROPERTIES = unevaluated_properties(
+    UNEVALUATED_PROPERTIES_ID,
+    (
+        PROPERTIES_ID,
+        PATTERN_PROPERTIES_ID,
+        ADDITIONAL_PROPERTIES_ID,
+        UNEVALUATED_PROPERTIES_ID,
+    ),
 )
 
-
-# --- unevaluatedItems (array-side channel consumer) -----------------------
-
-
-def _unevaluated_items_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
-    return StaticFacts(
-        subschemas=((),),
-        consumes=(PREFIX_ITEMS_ID, ITEMS_ID, CONTAINS_ID, UNEVALUATED_ITEMS_ID),
-        produces=(UNEVALUATED_ITEMS_ID,),
-        evaluates_indexes=AllIndexes(),
-    )
-
-
-def _unevaluated_items_evaluate(
-    _value: JsonValue, cursor: Cursor, ctx: KeywordContext
-) -> bool:
-    instance = cursor.value
-    if not isinstance(instance, list):
-        return True
-    length = len(instance)
-    # §4 rule 4: visibility is filtered by cursor identity, so this sees only
-    # this instance location's own-schema and successfully-merged in-place
-    # producers — never a cousin's, never a failed branch's.
-    covered_prefix = 0
-    covered: set[int] = set()
-    for view in ctx.visible(
-        (PREFIX_ITEMS_ID, ITEMS_ID, CONTAINS_ID, UNEVALUATED_ITEMS_ID)
-    ):
-        if view.behavior_id == CONTAINS_ID:
-            if view.data is True:
-                covered_prefix = length
-            else:
-                for index in cast(list[int], view.data):
-                    covered.add(index)
-        elif view.data is True:
-            covered_prefix = length
-        elif view.behavior_id == PREFIX_ITEMS_ID and isinstance(view.data, int):
-            covered_prefix = max(covered_prefix, view.data + 1)
-    ok = True
-    applied = False
-    for index in range(covered_prefix, length):
-        if index in covered:
-            continue
-        applied = True
-        if not ctx.apply(
-            ("unevaluatedItems",), child_cursor(cursor, index, instance[index])
-        ):
-            ok = False
-    # Dependency data comes only from an accepting keyword (§4 rule 6).
-    if applied and ok:
-        ctx.produce(True)
-    return ok
-
-
-UNEVALUATED_ITEMS = KeywordBehavior(
-    id=UNEVALUATED_ITEMS_ID,
-    evaluate=_unevaluated_items_evaluate,
-    analyze=_unevaluated_items_analyze,
-    phase=Phase.UNEVALUATED,
+UNEVALUATED_ITEMS = unevaluated_items(
+    UNEVALUATED_ITEMS_ID,
+    (PREFIX_ITEMS_ID, ITEMS_ID, CONTAINS_ID, UNEVALUATED_ITEMS_ID),
+    PREFIX_ITEMS_ID,
 )
 
 

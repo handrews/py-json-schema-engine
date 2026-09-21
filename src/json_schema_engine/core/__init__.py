@@ -40,7 +40,12 @@ from json_schema_engine.core.errors import (
     UnsupportedPatternError,
 )
 from json_schema_engine.core.json_model import JsonType, JsonValue, json_equal
-from json_schema_engine.core.keywords._ids import DIALECT_2020_12
+from json_schema_engine.core.keywords._ids import (
+    DIALECT_2019_09,
+    DIALECT_2020_12,
+    DIALECT_DRAFT_06,
+    DIALECT_DRAFT_07,
+)
 from json_schema_engine.core.loader import (
     LoadedDocument,
     LoadedResource,
@@ -69,7 +74,10 @@ from json_schema_engine.core.regex import (
 from json_schema_engine.core.result import OutputFormat, Result
 
 __all__ = [
+    "DIALECT_2019_09",
     "DIALECT_2020_12",
+    "DIALECT_DRAFT_06",
+    "DIALECT_DRAFT_07",
     "AnalyzeContext",
     "AnnotationSelection",
     "AnnotationUnit",

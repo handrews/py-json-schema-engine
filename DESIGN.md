@@ -1,6 +1,6 @@
 # json-schema-engine (Python): engineering design
 
-**Status:** living design contract. M0–M3 complete (2026-09-20); M4 next. Derived from the
+**Status:** living design contract. M0–M4 complete (2026-09-20); M5 next. Derived from the
 TypeScript engine's design record
 ([handrews/json-schema-engine `DESIGN.md`](https://github.com/handrews/json-schema-engine/blob/main/DESIGN.md)),
 whose decisions were validated by a complete implementation (all official
@@ -62,14 +62,14 @@ not the intent), **N/A** (JavaScript-only).
 | D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler marks dynamically reachable scope as an island → interpreter trampoline.                                                                                                                                                                                                                                                                |
 | D9  | Lowering catalogue             | carried | Same catalogue in intent (evaluated-set tracking, production elision, constant locations, small-set membership, lazy unit materialization, regex/format hoisting). Thresholds and mechanisms (`frozenset` vs equality chains, etc.) are re-measured against CPython at M6, not assumed from V8.                                                                                                                                                                                                  |
 | D10 | Compiler output modes          | amended | Runtime compilation = `compile()` of an `ast.Module` (D1). Standalone emission = `ast.unparse` to a `.py` module importable without the compiler. There is no CSP; the security analogue is that only `json_schema_engine.compiler` may touch `ast`/`compile` (P5), and deployments can audit that with `sys.addaudithook`. CPython's cap on statically nested blocks means emission splits units into functions rather than nesting loops.                                                     |
-| D11 | Draft support                  | carried | Native in core: 2020-12, IETF drafts, 2019-09, draft-07, draft-06. draft-04 as a separately importable dialect module (`json_schema_engine.dialects.draft04`, M10), assembled through the public dialect-authoring surface and coexisting with every other draft in one registry.                                                                                                                                                                                                                 |
+| D11 | Draft support                  | carried | Native in core: 2020-12, 2019-09, draft-07, draft-06 (M4), all coexisting in one registry with their own identifier syntax and `$ref` semantics (D18). draft-07/06 predate vocabularies, so their keywords live under registry-internal `urn:jse:vocab:draft-0X:*` names. draft-04 as a separately importable dialect module (`json_schema_engine.dialects.draft04`, M10), assembled through the public dialect-authoring surface.                                                                                                                                                                                                                 |
 | D12 | Testing strategy               | carried | Official suite as git submodule with a pytest runner in `test_kit`; both tiers pass the identical suite with exact-count pins; differential fuzzing (Hypothesis) as the compiler's primary correctness gate; Bowtie harness from M3; releases conformance-gated.                                                                                                                                                                                                                                  |
 | D13 | Error model                    | carried | Keywords emit structured error data (keyword id, params, message) into units; rendering is presentation. Params are designed so a future compatibility adapter can reconstruct another library's error shape mechanically.                                                                                                                                                                                                                                                                       |
 | D14 | Strictness                     | carried | Core is spec-clean; strict-mode hygiene is opt-in only via a lint layer or stricter metaschemas. No python-jsonschema compatibility shim in the first release (owner decision 2026-09-20).                                                                                                                                                                                                                                                                                                       |
 | D15 | IP policy                      | carried | §0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | D16 | Packaging                      | amended | One repository as a uv workspace. **One published distribution `json-schema-engine`** laid out as a PEP 420 namespace package: `json_schema_engine.core`, `.compiler`, `.formats`, `.dialects.*`, so a later split into several distributions changes no import path. Unpublished workspace members: `test-kit`, later `bench`, `bowtie`. **`ecma-regex` is a separate, publishable workspace member** with no dependency on the engine (P1). No third-party runtime dependencies.  |
 | D17 | Source-position correlation    | carried | Loaders may return `get_range(document_root_pointer)`; the registry maps resource-rooted locations to document-rooted pointers; correlation only at unit escape (`positions=True` decorates units with `source`) or via `Engine.locate()`. Zero hot-path cost. Implemented in M3; the test-kit's `parse_json_with_ranges` is the reference loader.                                                                                                                                                                                                                                                                          |
-| D18 | Per-dialect identifier syntax  | carried | Identifier extraction is dialect data (`IdentifierExtractor`), consumed by the registration walk and pointer navigation. `ref_ignores_siblings` for draft-07/06.                                                                                                                                                                                                                                                                                                                                 |
+| D18 | Per-dialect identifier syntax  | carried | Identifier extraction is dialect data (`IdentifierExtractor`), consumed by the registration walk and pointer navigation. `ref_ignores_siblings` for draft-07/06 is honored by the registration walk as well as the evaluator (owner ruling 2026-09-20: ignored is ignored — no identifier, subschema, or pattern beside a `$ref` is seen; pointer references into siblings still resolve).                                                                                                                                                                                                                                                                                                                                 |
 | D19 | Non-schema values              | carried | Fail loud in two layers: the registration walk raises `InvalidSchemaError` for a keyword-claimed schema position holding neither object nor boolean; `apply_schema` raises the same as a lazy backstop. Keyword-value validity stays the metaschema's job.                                                                                                                                                                                                                                       |
 | D20 | Resource-exhaustion bounds     | amended | Same three defenses. (1) ReDoS: the regex dialect/backend is pluggable (P1); `detect_unsafe_regex` star-height screen backs opt-in `reject_unsafe_regex` raising `UnsafeRegexError` at registration; a linear-time backend is a revisit item (neither `re` nor `regex` is linear-time). (2) `uniqueItems`: O(n) bucketing by `canonical_key`, confirmed by `json_equal`. (3) Depth: P3. Prototype-pollution defenses are N/A — Python dicts have no prototype chain; the suite's trap keys are still unit-tested to prove it. |
 
@@ -280,6 +280,10 @@ Python-specific (measured 2026-09-20 on CPython 3.14):
   proven rather than assumed.
 - A PEP 420 namespace breaks the moment anyone adds
   `src/json_schema_engine/__init__.py`; CI asserts `__file__ is None`.
+- One implementation per keyword class, many dialects: `unevaluated*` and
+  `contains` are factories parameterized by producer ids and sibling
+  bounds, so 2019-09 and draft-07/06 wire their own instances without
+  duplicating the fold.
 - Bundled metaschemas register lazily on first reference, so `create_engine()`
   stays cheap for the suite and Bowtie, which build one engine per case;
   eager registration of eight documents would have doubled the suite's time.
@@ -345,6 +349,17 @@ Bowtie (harness in `bowtie/`, `scripts/bowtie_check.py`, CI job): 2020-12
 **1301 tests, 0 failed/errored/skipped/mismatched**, run locally against
 the podman machine and in CI. The public bowtie.report listing is the
 owner's submission.
+
+**Status note (M4, completed 2026-09-20):** 2019-09, draft-07, and draft-06
+are built in. New keywords: `$recursiveRef`/`$recursiveAnchor`,
+tuple-or-schema `items`, `additionalItems`, `dependencies`, `definitions`,
+a sibling-free `contains`; `unevaluated*` and `contains` are factories.
+Nine more bundled metaschemas (17 total). In `$ref`-ignoring dialects the
+registration walk skips a `$ref` node's siblings entirely. Suite legs, all
+loader-backed, zero skips: draft2020-12 **1301**, draft2019-09 **1261**,
+draft7 **929**, draft6 **841**; optional legs 26, 26, 12, 10. Bowtie, all
+four dialects: the same counts, zero failures, errors, skips, or
+mismatches.
 
 
 ## 7. Open items (owner decisions)

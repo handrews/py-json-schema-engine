@@ -21,7 +21,7 @@ from json_schema_engine.core.errors import (
 from json_schema_engine.core.evaluator import run_evaluation
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import DIALECT_2020_12, VOCAB_CORE_2019
-from json_schema_engine.core.keywords.dialect2020 import register_standard_dialects
+from json_schema_engine.core.keywords.dialects import register_standard_dialects
 from json_schema_engine.core.loader import Loader, RangeLookup, SourceLocation
 from json_schema_engine.core.metaschemas import bundled_metaschemas
 from json_schema_engine.core.output import (

@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HARNESS = REPO_ROOT / "bowtie" / "harness.py"
 
 DIALECT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
+DIALECT_DRAFT_07 = "http://json-schema.org/draft-07/schema"
 
 
 class HarnessProcess:
@@ -69,7 +70,12 @@ def test_full_protocol_transcript() -> None:
     implementation = response["implementation"]
     assert implementation["name"] == "json-schema-engine"
     assert implementation["language"] == "python"
-    assert implementation["dialects"] == [DIALECT_2020_12]
+    assert implementation["dialects"] == [
+        DIALECT_2020_12,
+        "https://json-schema.org/draft/2019-09/schema",
+        DIALECT_DRAFT_07,
+        "http://json-schema.org/draft-06/schema",
+    ]
     assert implementation["homepage"] == (
         "https://github.com/handrews/py-json-schema-engine"
     )
@@ -94,9 +100,35 @@ def test_full_protocol_transcript() -> None:
 
     # dialect: unsupported
     response = harness.send(
-        {"cmd": "dialect", "dialect": "http://json-schema.org/draft-07/schema#"}
+        {"cmd": "dialect", "dialect": "http://json-schema.org/draft-04/schema#"}
     )
     assert response == {"ok": False}
+
+    # dialect: draft-07, supported, with a trailing '#'
+    response = harness.send({"cmd": "dialect", "dialect": DIALECT_DRAFT_07 + "#"})
+    assert response == {"ok": True}
+
+    # run: draft-07 ignores keywords sibling to a $ref
+    response = harness.send(
+        {
+            "cmd": "run",
+            "seq": 100,
+            "case": {
+                "description": "$ref siblings are ignored in draft-07",
+                "schema": {
+                    "$ref": "#/definitions/a",
+                    "type": "string",
+                    "definitions": {"a": {"type": "integer"}},
+                },
+                "tests": [{"description": "an integer", "instance": 1, "valid": True}],
+            },
+            "output": "flag",
+        }
+    )
+    assert response == {
+        "seq": 100,
+        "results": [{"valid": True}],
+    }
 
     # re-select the supported dialect for the runs below
     harness.send({"cmd": "dialect", "dialect": DIALECT_2020_12})

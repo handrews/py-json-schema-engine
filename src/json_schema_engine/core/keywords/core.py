@@ -12,7 +12,12 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.errors import InvalidSchemaError
 from json_schema_engine.core.json_model import JsonValue, is_object
-from json_schema_engine.core.keywords._ids import VOCAB_CORE, keyword_id
+from json_schema_engine.core.keywords._ids import (
+    VOCAB_CORE,
+    VOCAB_CORE_07,
+    VOCAB_CORE_2019,
+    keyword_id,
+)
 
 _EMPTY_FACTS = StaticFacts()
 
@@ -104,6 +109,38 @@ dynamic_ref = KeywordBehavior(
     keyword_id(VOCAB_CORE, "$dynamicRef"),
     _dynamic_ref_evaluate,
     analyze=_dynamic_ref_analyze,
+)
+
+
+def _recursive_ref_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
+    if not isinstance(value, str):
+        return _EMPTY_FACTS
+    return StaticFacts(references=(value,), dynamic_scope_sensitive=True)
+
+
+def _recursive_ref_evaluate(
+    value: JsonValue, _cursor: Cursor, ctx: KeywordContext
+) -> bool:
+    if not isinstance(value, str):
+        raise InvalidSchemaError("'$recursiveRef' value must be a string")
+    return ctx.apply_resolved(ctx.resolve_recursive(value))
+
+
+# 2019-09's degenerate case of `$dynamicRef` (D8): rebinding is all or
+# nothing on a resource root's `$recursiveAnchor: true` rather than a name.
+recursive_ref = KeywordBehavior(
+    keyword_id(VOCAB_CORE_2019, "$recursiveRef"),
+    _recursive_ref_evaluate,
+    analyze=_recursive_ref_analyze,
+)
+
+# Indexed by the registration walk through the 2019-09 identifier
+# extractor; the keyword itself evaluates to nothing.
+recursive_anchor = structural(keyword_id(VOCAB_CORE_2019, "$recursiveAnchor"))
+
+# draft-07/06's `$defs`: a map of schemas reachable only by reference.
+definitions = structural(
+    keyword_id(VOCAB_CORE_07, "definitions"), analyze=_defs_analyze
 )
 
 

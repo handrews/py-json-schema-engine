@@ -26,7 +26,10 @@ from collections.abc import Callable, Iterable
 from typing import IO, Any
 
 from json_schema_engine.core import (
+    DIALECT_2019_09,
     DIALECT_2020_12,
+    DIALECT_DRAFT_06,
+    DIALECT_DRAFT_07,
     JsonSchemaEngineError,
     LoadedDocument,
     create_engine,
@@ -39,7 +42,12 @@ PROTOCOL_VERSION = 1
 # resolution rather than needing special-cased handling.
 RETRIEVAL_URI = "urn:bowtie:schema"
 
-SUPPORTED_DIALECTS = [DIALECT_2020_12]
+SUPPORTED_DIALECTS = [
+    DIALECT_2020_12,
+    DIALECT_2019_09,
+    DIALECT_DRAFT_07,
+    DIALECT_DRAFT_06,
+]
 
 IMPLEMENTATION = {
     "language": "python",

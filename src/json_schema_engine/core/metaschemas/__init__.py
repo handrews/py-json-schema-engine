@@ -14,16 +14,32 @@ from importlib import resources
 from json_schema_engine.core.json_model import JsonValue
 
 _BASE_2020_12 = "https://json-schema.org/draft/2020-12/"
+_BASE_2019_09 = "https://json-schema.org/draft/2019-09/"
 
-_FILES_2020_12: Mapping[str, str] = {
-    _BASE_2020_12 + "schema": "schema.json",
-    _BASE_2020_12 + "meta/core": "core.json",
-    _BASE_2020_12 + "meta/applicator": "applicator.json",
-    _BASE_2020_12 + "meta/validation": "validation.json",
-    _BASE_2020_12 + "meta/unevaluated": "unevaluated.json",
-    _BASE_2020_12 + "meta/meta-data": "meta-data.json",
-    _BASE_2020_12 + "meta/format-annotation": "format-annotation.json",
-    _BASE_2020_12 + "meta/content": "content.json",
+# Directory -> {canonical URI: file}. The draft-07/06 documents declare
+# their `$id` with a trailing `#`; the registry keys resources fragment-free.
+_FILES: Mapping[str, Mapping[str, str]] = {
+    "2020-12": {
+        _BASE_2020_12 + "schema": "schema.json",
+        _BASE_2020_12 + "meta/core": "core.json",
+        _BASE_2020_12 + "meta/applicator": "applicator.json",
+        _BASE_2020_12 + "meta/validation": "validation.json",
+        _BASE_2020_12 + "meta/unevaluated": "unevaluated.json",
+        _BASE_2020_12 + "meta/meta-data": "meta-data.json",
+        _BASE_2020_12 + "meta/format-annotation": "format-annotation.json",
+        _BASE_2020_12 + "meta/content": "content.json",
+    },
+    "2019-09": {
+        _BASE_2019_09 + "schema": "schema.json",
+        _BASE_2019_09 + "meta/core": "core.json",
+        _BASE_2019_09 + "meta/applicator": "applicator.json",
+        _BASE_2019_09 + "meta/validation": "validation.json",
+        _BASE_2019_09 + "meta/meta-data": "meta-data.json",
+        _BASE_2019_09 + "meta/format": "format.json",
+        _BASE_2019_09 + "meta/content": "content.json",
+    },
+    "draft-07": {"http://json-schema.org/draft-07/schema": "schema.json"},
+    "draft-06": {"http://json-schema.org/draft-06/schema": "schema.json"},
 }
 
 
@@ -34,8 +50,11 @@ def bundled_metaschemas() -> Mapping[str, JsonValue]:
     Parsed once per process; the registry reads the mapping lazily, so an
     engine that never touches a metaschema never pays for parsing it either.
     """
-    package = resources.files(__name__) / "2020-12"
+    root = resources.files(__name__)
     documents: dict[str, JsonValue] = {}
-    for uri, filename in _FILES_2020_12.items():
-        documents[uri] = json.loads((package / filename).read_text("utf-8"))
+    for directory, files in _FILES.items():
+        for uri, filename in files.items():
+            documents[uri] = json.loads(
+                (root / directory / filename).read_text("utf-8")
+            )
     return documents

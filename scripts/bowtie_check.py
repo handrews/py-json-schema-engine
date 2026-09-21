@@ -32,7 +32,12 @@ BOWTIE_PIN = "bowtie-json-schema==2026.6.1"
 BOWTIE_CMD = ["uvx", "--from", BOWTIE_PIN, "bowtie"]
 
 # Expected: every test in the dialect's suite directory runs and matches.
-PINS = {"draft2020-12": 1301}
+PINS = {
+    "draft2020-12": 1301,
+    "draft2019-09": 1261,
+    "draft7": 929,
+    "draft6": 841,
+}
 
 EXTRA_PATH_DIRS = ["/opt/podman/bin"]
 
