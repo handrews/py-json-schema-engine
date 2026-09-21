@@ -41,18 +41,18 @@ def path_of(*segments: str) -> PathNode | None:
         (("properties", ""), "/properties/"),
     ],
 )
-def test_path_node_materialize(segments, expected):
+def test_path_node_materialize(segments: tuple[str, ...], expected: str) -> None:
     node = path_of(*segments)
     assert materialize_path(node) == expected
     if node is not None:
         assert node.materialize() == expected
 
 
-def test_materialize_path_of_the_root_application_is_empty():
+def test_materialize_path_of_the_root_application_is_empty() -> None:
     assert materialize_path(None) == ""
 
 
-def test_path_nodes_are_shared_not_copied():
+def test_path_nodes_are_shared_not_copied() -> None:
     # Sibling keywords hang off one parent node; materialization walks up,
     # so a shared prefix is stored once however wide the schema is.
     parent = PathNode(None, "properties")
@@ -63,13 +63,13 @@ def test_path_nodes_are_shared_not_copied():
     assert right.materialize() == "/properties/b"
 
 
-def test_path_node_is_frozen_and_identity_keyed():
+def test_path_node_is_frozen_and_identity_keyed() -> None:
     node = PathNode(None, "properties")
     twin = PathNode(None, "properties")
     assert node != twin
     assert len({node, twin}) == 2
     with pytest.raises(AttributeError):
-        node.segment = "items"
+        setattr(node, "segment", "items")  # noqa: B010 -- pyright rejects `node.segment = ...` on a frozen field
 
 
 def make_annotation(
@@ -89,14 +89,14 @@ def make_annotation(
     )
 
 
-def test_annotation_record_holds_the_keywords_own_value():
+def test_annotation_record_holds_the_keywords_own_value() -> None:
     record = make_annotation()
     assert record.value == "A title"
     assert record.keyword_name == "title"
     assert record.schema_ref.location == "https://example.com/s#/$defs/a"
 
 
-def test_records_with_identical_fields_are_distinct():
+def test_records_with_identical_fields_are_distinct() -> None:
     # Records are identity-keyed (P7): the evaluator keeps them in lists and
     # filters by object identity, never by value.
     left = make_annotation()
@@ -106,12 +106,12 @@ def test_records_with_identical_fields_are_distinct():
     assert left == left
 
 
-def test_unknown_keyword_annotation_has_no_vocabulary():
+def test_unknown_keyword_annotation_has_no_vocabulary() -> None:
     record = make_annotation(vocabulary_uri=None, keyword_name="x-vendor")
     assert record.vocabulary_uri is None
 
 
-def test_dependency_record_carries_arbitrary_python_data():
+def test_dependency_record_carries_arbitrary_python_data() -> None:
     # Dependency data is internal and never rendered, so it is not a
     # JsonValue: `unevaluatedProperties` consumes a set of names.
     cursor = root_cursor({"a": 1})
@@ -128,7 +128,7 @@ def test_dependency_record_carries_arbitrary_python_data():
     assert record.cursor is cursor
 
 
-def test_dependency_records_are_filtered_by_cursor_identity():
+def test_dependency_records_are_filtered_by_cursor_identity() -> None:
     # A stand-in for channel rule 4: the real filter lives in the evaluator,
     # but it can only work if equal-looking cursors stay distinct keys.
     parent = root_cursor({"a": 1, "b": 2})
@@ -150,7 +150,7 @@ def test_dependency_records_are_filtered_by_cursor_identity():
     assert [r.data for r in visible] == ["mine"]
 
 
-def test_error_record_names_no_keyword_for_a_boolean_false_schema():
+def test_error_record_names_no_keyword_for_a_boolean_false_schema() -> None:
     record = ErrorRecord(
         behavior_id=None,
         keyword_name=None,
@@ -164,7 +164,7 @@ def test_error_record_names_no_keyword_for_a_boolean_false_schema():
     assert record.params is None
 
 
-def test_error_record_params_are_separate_from_the_message():
+def test_error_record_params_are_separate_from_the_message() -> None:
     record = ErrorRecord(
         behavior_id="https://json-schema.org/keyword/maxLength",
         keyword_name="maxLength",
@@ -178,7 +178,7 @@ def test_error_record_params_are_separate_from_the_message():
     assert record.params == {"limit": 3, "length": 4}
 
 
-def test_frame_starts_empty_and_each_frame_gets_its_own_lists():
+def test_frame_starts_empty_and_each_frame_gets_its_own_lists() -> None:
     first = Frame()
     second = Frame()
     assert first.annotations == []
@@ -187,7 +187,7 @@ def test_frame_starts_empty_and_each_frame_gets_its_own_lists():
     assert second.annotations == []
 
 
-def test_frame_merge_is_a_list_extension():
+def test_frame_merge_is_a_list_extension() -> None:
     # Rule 3 in miniature: on success a frame's records move to its parent.
     parent = Frame()
     child = Frame()
@@ -197,7 +197,7 @@ def test_frame_merge_is_a_list_extension():
     assert parent.annotations[0] is child.annotations[0]
 
 
-def test_trace_node_stub():
+def test_trace_node_stub() -> None:
     cursor = root_cursor({"a": 1})
     node = TraceNode(schema_ref=SCHEMA_REF, path_node=None, cursor=cursor)
     child = TraceNode(

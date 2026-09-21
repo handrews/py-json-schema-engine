@@ -1,11 +1,19 @@
 """Record rendering (records.py), output demand, and result assembly (D5, D6, D13)."""
 
+from collections.abc import Sequence
+
 import pytest
 
 from json_schema_engine.core.channel import AnnotationRecord, ErrorRecord, PathNode
 from json_schema_engine.core.cursor import child_cursor, root_cursor
 from json_schema_engine.core.errors import OutputOptionsError
-from json_schema_engine.core.output import AnnotationSelection, RenderInput
+from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.output import (
+    AnnotationSelection,
+    AnnotationUnit,
+    ErrorUnit,
+    RenderInput,
+)
 from json_schema_engine.core.records import (
     render_annotation,
     render_error,
@@ -27,7 +35,7 @@ FALSE_SCHEMA_REF = SchemaRef(False, "https://example.com/s", "/$defs/never")
 # --- records.py: render_error / render_annotation / render_selected ----
 
 
-def test_render_error_basic_fields():
+def test_render_error_basic_fields() -> None:
     record = ErrorRecord(
         behavior_id="https://json-schema.org/keyword/type",
         keyword_name="type",
@@ -49,7 +57,7 @@ def test_render_error_basic_fields():
     assert "params" not in unit
 
 
-def test_render_error_with_error_params_adds_keyword_vocabulary_and_params():
+def test_render_error_with_error_params_adds_keyword_vocabulary_and_params() -> None:
     record = ErrorRecord(
         behavior_id="https://json-schema.org/keyword/maxLength",
         keyword_name="maxLength",
@@ -66,7 +74,7 @@ def test_render_error_with_error_params_adds_keyword_vocabulary_and_params():
     assert unit.get("params") == {"limit": 3, "length": 4}
 
 
-def test_render_error_with_error_params_defaults_missing_params_to_empty_dict():
+def test_render_error_with_error_params_defaults_missing_params_to_empty_dict() -> None:
     record = ErrorRecord(
         behavior_id="https://json-schema.org/keyword/not",
         keyword_name="not",
@@ -77,10 +85,10 @@ def test_render_error_with_error_params_defaults_missing_params_to_empty_dict():
         message="matched the 'not' subschema",
     )
     unit = render_error(record, error_params=True)
-    assert unit["params"] == {}
+    assert unit.get("params") == {}
 
 
-def test_render_error_boolean_false_schema_omits_keyword_and_vocab_with_error_params():
+def test_render_error_false_schema_omits_keyword_vocab_with_error_params() -> None:
     record = ErrorRecord(
         behavior_id=None,
         keyword_name=None,
@@ -95,10 +103,10 @@ def test_render_error_boolean_false_schema_omits_keyword_and_vocab_with_error_pa
     assert unit["schemaLocation"] == "https://example.com/s#/$defs/never"
     assert "keyword" not in unit
     assert "vocabulary" not in unit
-    assert unit["params"] == {}
+    assert unit.get("params") == {}
 
 
-def test_render_annotation_basic_fields():
+def test_render_annotation_basic_fields() -> None:
     record = AnnotationRecord(
         behavior_id="https://json-schema.org/keyword/title",
         keyword_name="title",
@@ -119,7 +127,7 @@ def test_render_annotation_basic_fields():
     }
 
 
-def test_render_annotation_unknown_keyword_has_no_vocabulary_key():
+def test_render_annotation_unknown_keyword_has_no_vocabulary_key() -> None:
     record = AnnotationRecord(
         behavior_id="x-vendor",
         keyword_name="x-vendor",
@@ -135,7 +143,7 @@ def test_render_annotation_unknown_keyword_has_no_vocabulary_key():
 
 
 def _annotation(
-    keyword: str, vocabulary: str | None, value: object
+    keyword: str, vocabulary: str | None, value: JsonValue
 ) -> AnnotationRecord:
     return AnnotationRecord(
         behavior_id=f"id:{keyword}",
@@ -148,12 +156,12 @@ def _annotation(
     )
 
 
-def test_render_selected_false_selection_yields_nothing():
+def test_render_selected_false_selection_yields_nothing() -> None:
     records = [_annotation("title", "urn:v1", "T")]
     assert render_selected(records, False) == []
 
 
-def test_render_selected_applies_allow_list_and_keep():
+def test_render_selected_applies_allow_list_and_keep() -> None:
     records = [
         _annotation("title", "urn:v1", "shown"),
         _annotation("description", "urn:v1", "hidden"),
@@ -168,7 +176,7 @@ def test_render_selected_applies_allow_list_and_keep():
     assert units[0]["annotation"] == "shown"
 
 
-def test_render_selected_true_renders_every_record_once():
+def test_render_selected_true_renders_every_record_once() -> None:
     records = [_annotation("title", "urn:v1", "T"), _annotation("x-vendor", None, 1)]
     units = render_selected(records, True)
     assert [u["keyword"] for u in units] == ["title", "x-vendor"]
@@ -178,7 +186,7 @@ def test_render_selected_true_renders_every_record_once():
 # --- resolve_output_demand: the option-combination matrix (D6) ---------
 
 
-def test_default_demand_is_flag_with_nothing_recorded():
+def test_default_demand_is_flag_with_nothing_recorded() -> None:
     demand = resolve_output_demand()
     assert demand == OutputDemand(
         format=OutputFormat.FLAG,
@@ -189,20 +197,20 @@ def test_default_demand_is_flag_with_nothing_recorded():
     )
 
 
-def test_basic_demand_builds_a_recording_predicate():
+def test_basic_demand_builds_a_recording_predicate() -> None:
     demand = resolve_output_demand(output="basic", annotations=True)
     assert demand.format is OutputFormat.BASIC
     assert demand.annotations is not None
     assert demand.annotations("anything", None) is True
 
 
-def test_list_demand_default_annotations_records_nothing():
+def test_list_demand_default_annotations_records_nothing() -> None:
     demand = resolve_output_demand(output="list")
     assert demand.format is OutputFormat.LIST
     assert demand.annotations is None
 
 
-def test_unknown_format_string_raises():
+def test_unknown_format_string_raises() -> None:
     with pytest.raises(OutputOptionsError, match="unknown output format"):
         resolve_output_demand(output="bogus")
 
@@ -217,12 +225,12 @@ def test_unknown_format_string_raises():
         {"positions": True},
     ],
 )
-def test_flag_rejects_every_control(kwargs):
+def test_flag_rejects_every_control(kwargs: dict[str, bool]) -> None:
     with pytest.raises(OutputOptionsError, match='output "flag"'):
         resolve_output_demand(output="flag", **kwargs)
 
 
-def test_verbose_on_basic_is_rejected_as_never_supported_not_deferred():
+def test_verbose_on_basic_is_rejected_as_never_supported_not_deferred() -> None:
     with pytest.raises(OutputOptionsError) as excinfo:
         resolve_output_demand(output="basic", verbose=True)
     message = str(excinfo.value)
@@ -230,30 +238,32 @@ def test_verbose_on_basic_is_rejected_as_never_supported_not_deferred():
     assert "basic" in message
 
 
-def test_verbose_on_list_is_rejected_as_deferred_to_m5():
+def test_verbose_on_list_is_rejected_as_deferred_to_m5() -> None:
     with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
         resolve_output_demand(output="list", verbose=True)
 
 
 @pytest.mark.parametrize("output_format", ["detailed", "verbose", "hierarchical"])
-def test_m5_formats_are_rejected_as_deferred(output_format):
+def test_m5_formats_are_rejected_as_deferred(output_format: str) -> None:
     with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
         resolve_output_demand(output=output_format)
 
 
 @pytest.mark.parametrize("output_format", ["basic", "list"])
-def test_trace_is_rejected_as_deferred_regardless_of_format(output_format):
+def test_trace_is_rejected_as_deferred_regardless_of_format(output_format: str) -> None:
     with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
         resolve_output_demand(output=output_format, trace=True)
 
 
 @pytest.mark.parametrize("output_format", ["basic", "list"])
-def test_positions_is_rejected_as_deferred_regardless_of_format(output_format):
+def test_positions_is_rejected_as_deferred_regardless_of_format(
+    output_format: str,
+) -> None:
     with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
         resolve_output_demand(output=output_format, positions=True)
 
 
-def test_output_format_enum_accepts_an_existing_output_format_value():
+def test_output_format_enum_accepts_an_existing_output_format_value() -> None:
     demand = resolve_output_demand(output=OutputFormat.BASIC)
     assert demand.format is OutputFormat.BASIC
 
@@ -261,7 +271,12 @@ def test_output_format_enum_accepts_an_existing_output_format_value():
 # --- assemble_result: presence rules (D6) -------------------------------
 
 
-def _render_input(*, valid: bool, errors=(), annotations=()) -> RenderInput:
+def _render_input(
+    *,
+    valid: bool,
+    errors: Sequence[ErrorUnit] = (),
+    annotations: Sequence[AnnotationUnit] = (),
+) -> RenderInput:
     return RenderInput(
         valid=valid,
         errors=list(errors),
@@ -270,7 +285,7 @@ def _render_input(*, valid: bool, errors=(), annotations=()) -> RenderInput:
     )
 
 
-def test_assemble_result_flag_carries_nothing():
+def test_assemble_result_flag_carries_nothing() -> None:
     demand = resolve_output_demand()
     result = assemble_result(demand, _render_input(valid=True), False)
     assert result == Result(True, None, None, None)
@@ -278,7 +293,7 @@ def test_assemble_result_flag_carries_nothing():
     assert result == Result(False, None, None, None)
 
 
-def test_assemble_result_basic_invalid_has_errors_no_annotations():
+def test_assemble_result_basic_invalid_has_errors_no_annotations() -> None:
     error = render_error(
         ErrorRecord(
             behavior_id="id",
@@ -301,7 +316,7 @@ def test_assemble_result_basic_invalid_has_errors_no_annotations():
     assert "errors" in result.output_document
 
 
-def test_assemble_result_basic_valid_with_selection_has_annotations_no_errors():
+def test_assemble_result_basic_valid_with_selection_has_annotations_no_errors() -> None:
     annotation = render_annotation(_annotation("title", "urn:v1", "T"))
     demand = resolve_output_demand(output="basic", annotations=True)
     result = assemble_result(
@@ -314,7 +329,7 @@ def test_assemble_result_basic_valid_with_selection_has_annotations_no_errors():
     assert "annotations" in result.output_document
 
 
-def test_assemble_result_basic_valid_without_selection_has_neither():
+def test_assemble_result_basic_valid_without_selection_has_neither() -> None:
     demand = resolve_output_demand(output="basic")
     result = assemble_result(demand, _render_input(valid=True), False)
     assert result.errors is None
@@ -323,7 +338,7 @@ def test_assemble_result_basic_valid_without_selection_has_neither():
     assert "annotations" not in result.output_document
 
 
-def test_assemble_result_selection_truthy_but_empty_result_still_present():
+def test_assemble_result_selection_truthy_but_empty_result_still_present() -> None:
     # A selection was requested (selection is not False) but nothing
     # survived it: annotations is `[]`, not `None` (D6: presence tracks
     # whether selection was requested, not whether anything matched).
@@ -338,7 +353,7 @@ def test_assemble_result_selection_truthy_but_empty_result_still_present():
     assert "annotations" not in result.output_document
 
 
-def test_assemble_result_list_document_mirrors_flat_surface():
+def test_assemble_result_list_document_mirrors_flat_surface() -> None:
     error = render_error(
         ErrorRecord(
             behavior_id="id",
@@ -357,7 +372,7 @@ def test_assemble_result_list_document_mirrors_flat_surface():
     assert result.output_document.get("details") is not None
 
 
-def test_assemble_result_applies_keep_that_make_record_predicate_ignored():
+def test_assemble_result_applies_keep_that_make_record_predicate_ignored() -> None:
     # The annotation was "recorded" (it is present in render_input, as if
     # make_record_predicate had allowed it); assemble_result must still
     # apply `keep` at render time.
