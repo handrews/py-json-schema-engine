@@ -11,10 +11,9 @@ record channel, and the IETF draft-03 relevance model.
 Produced by Henry Andrews via Claude Code.
 
 **Status: pre-release.** The published `0.0.1` is a name reservation with no
-functionality. The `main` branch holds the interpreter core with the full
-2020-12 keyword set (M2), green on every official draft2020-12 test-suite
-file except those needing `$dynamicRef`, `$vocabulary`, or the bundled
-metaschema, which land in M3. [DESIGN.md](DESIGN.md) is the design contract and
+functionality. The `main` branch holds the interpreter core for 2020-12, 2019-09,
+draft-07, and draft-06 (M4), green on every official test-suite file for
+those drafts and on Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
 carries the milestone status.
 
 The regular-expression translator lives in its own package,
@@ -48,6 +47,12 @@ assert engine.evaluate(uri, {"name": "Ada"}).valid
 result = engine.evaluate(uri, {}, output="list")
 assert result.errors is not None and result.errors[0]["evaluationPath"] == "/required"
 ```
+
+Four drafts are built in: 2020-12 (the default), 2019-09, draft-07, and
+draft-06. A document's `$schema` selects its dialect; `create_engine(
+default_dialect=DIALECT_DRAFT_07)` sets the dialect for documents without
+one. Each keeps its own semantics, so a draft-07 `$ref` ignores its
+siblings while a 2019-09 one does not.
 
 `create_engine(validate_schemas=True)` checks every registered document
 against its metaschema and raises `SchemaValidationError` with the errors.
