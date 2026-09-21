@@ -12,8 +12,9 @@ Produced by Henry Andrews via Claude Code.
 
 **Status: pre-release.** The published `0.0.1` is a name reservation with no
 functionality. The `main` branch holds the interpreter core for 2020-12, 2019-09,
-draft-07, and draft-06 (M4), green on every official test-suite file for
-those drafts and on Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
+draft-07, and draft-06 with every standard output format (M5), green on
+every official test-suite file for those drafts, on the official
+output-tests, and on Bowtie. [DESIGN.md](DESIGN.md) is the design contract and
 carries the milestone status.
 
 The regular-expression translator lives in its own package,
@@ -53,6 +54,33 @@ draft-06. A document's `$schema` selects its dialect; `create_engine(
 default_dialect=DIALECT_DRAFT_07)` sets the dialect for documents without
 one. Each keeps its own semantics, so a draft-07 `$ref` ignores its
 siblings while a 2019-09 one does not.
+
+Every standard output format is available by name: `flag` (the default),
+`basic`, `detailed`, and `verbose` from the IETF draft-03 output spec, and
+`list` and `hierarchical` from the machines-oriented proposal. Annotations
+are a separate control (`annotations=True`, or an `AnnotationSelection`),
+`verbose=True` asks `list`/`hierarchical` for the verbose level with
+irrelevant records marked as dropped, and `trace=True` adds the application
+tree with error indexes into `result.errors`.
+
+```python
+result = engine.evaluate(uri, {"name": 3}, output="hierarchical")
+assert result.output_document == {
+    "valid": False,
+    "evaluationPath": "",
+    "schemaLocation": "https://example.com/person#",
+    "instanceLocation": "",
+    "details": [
+        {
+            "valid": False,
+            "evaluationPath": "/properties/name",
+            "schemaLocation": "https://example.com/person#/properties/name",
+            "instanceLocation": "/name",
+            "errors": {"type": "expected string"},
+        }
+    ],
+}
+```
 
 `create_engine(validate_schemas=True)` checks every registered document
 against its metaschema and raises `SchemaValidationError` with the errors.
