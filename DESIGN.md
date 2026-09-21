@@ -1,6 +1,6 @@
 # json-schema-engine (Python): engineering design
 
-**Status:** living design contract. M0–M6 complete (2026-09-21); M7 next. Derived from the
+**Status:** living design contract. M0–M7 complete (2026-09-21); M8 next. Derived from the
 TypeScript engine's design record
 ([handrews/json-schema-engine `DESIGN.md`](https://github.com/handrews/json-schema-engine/blob/main/DESIGN.md)),
 whose decisions were validated by a complete implementation (all official
@@ -485,6 +485,33 @@ report-only, 250 ms per task on this machine): compiled flag mode 80–300×
 the interpreter and 1.6–5.9× fastjsonschema; fastjsonschema excluded on
 `event` for disagreeing with the oracle on `unevaluatedProperties`.
 
+
+**Status note (M7, completed 2026-09-21):** the formats package.
+`json_schema_engine.formats` implements the nineteen defined formats from
+their RFCs (ABNF transcriptions anchored `\A…\Z`; `ipaddress` for the
+IP formats; `ecma_regex.parse` for `regex`; the `idna` extra for
+IDNA2008, executed through its public API); tables per dialect (2020-12
+= 2019-09 19, draft-07 17, draft-06 9). Core gained the
+`FormatDefinition`/`FormatTable` contract, `asserting_format` in two
+postures (the 2020-12 format-assertion vocabulary refusing unknown
+names; `assert_formats=True` best effort in every standard dialect),
+`create_engine(formats=..., assert_formats=...)`, `FormatsRequiredError`
+for a table-less engine meeting the format-assertion vocabulary or
+`assert_formats`, `FormatUnavailableError` for an entry whose extra is
+missing, and the bundled `meta/format-assertion`. The compiler gained
+`FormatTest`, `plan.formats`, hoisted `fmtN` predicates, and standalone
+modules import predicates by the table entry's import path. `optional/
+format` legs, on the interpreter, both compiled settings, and standalone:
+draft2020-12 **866**, draft2019-09 **866**, draft7 **785**, draft6 **407**,
+`format-assertion` **4**; the mandatory `format.json` legs unchanged
+(annotation-only default); the plan census unchanged under
+`assert_formats`. Without the extra: `idn-hostname` is unavailable
+(loud at registration) and `hostname` accepts a well-formed `xn--` label
+unchecked. The differential fuzz gained a corpus over every
+`optional/format` case (**2928** entries, one per suite instance; the
+`deep` profile's 20 000 examples clean in 17 s), and a 217-row
+edge-case matrix pins the leap-second, digit, newline, and IDNA traps on
+the interpreter, both compiled settings, and standalone together.
 
 ## 7. Open items (owner decisions)
 

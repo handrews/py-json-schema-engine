@@ -31,6 +31,7 @@ from json_schema_engine.core import (
     JsonValue,
     create_engine,
 )
+from json_schema_engine.formats import FORMATS_2020_12, format_table_for
 from json_schema_engine.test_kit import load_suite_file, suite_remotes_loader
 
 from .fuzz_support import is_json_shaped, mutated
@@ -119,6 +120,92 @@ for _group in CORPUS:
 assert set(CORPUS_BY_DIR) == set(DIALECT_DIRS)
 
 
+# --- the format-directory corpus (M7 Step 3) --------------------------
+#
+# Every group in `optional/format/*.json` across the four dialect
+# directories, with the standard format table asserted (best-effort, every
+# dialect); draft2020-12's `optional/format-assertion.json` is added too,
+# with `formats=` alone (assertion there comes from the schema's own
+# `$vocabulary`, not the engine option). A suite group's schema is
+# registered once and shared; the corpus records one `CorpusGroup` per
+# (group, individual seed instance) rather than one per group, since the
+# format directories hold few groups (a `date`/`email`/... file is
+# typically a single group with many `tests` entries) — group-level
+# records alone can't clear the size floor below, and per-seed records
+# also give every suite instance its own uniform sampling weight instead
+# of diluting rare cases inside a large shared seed pool.
+
+_FORMAT_SUITE_SUBDIR = "optional/format"
+
+
+def _build_format_corpus() -> tuple[list[CorpusGroup], int]:
+    groups: list[CorpusGroup] = []
+    skipped = 0
+    for dialect_dir, dialect_uri in DIALECT_DIRS.items():
+        format_dir = SUITE_ROOT / dialect_dir / "optional" / "format"
+        for path in sorted(format_dir.glob("*.json")):
+            for index, (group_desc, (schema, seeds)) in enumerate(
+                _file_groups(path).items()
+            ):
+                engine = create_engine(
+                    default_dialect=dialect_uri,
+                    formats=format_table_for(dialect_uri),
+                    assert_formats=True,
+                    loaders=[suite_remotes_loader(REMOTES_DIR)],
+                )
+                try:
+                    uri = engine.load_schema(schema, RETRIEVAL_URI)
+                except JsonSchemaEngineError:
+                    skipped += len(seeds)
+                    continue
+                for seed_index, seed in enumerate(seeds):
+                    groups.append(
+                        CorpusGroup(
+                            key=(
+                                f"{dialect_dir}/{_FORMAT_SUITE_SUBDIR}/{path.stem}/"
+                                f"{group_desc}#{index}.{seed_index}"
+                            ),
+                            dialect_dir=dialect_dir,
+                            dialect_uri=dialect_uri,
+                            engine=engine,
+                            uri=uri,
+                            seeds=(seed,),
+                        )
+                    )
+    fa_path = SUITE_ROOT / "draft2020-12" / "optional" / "format-assertion.json"
+    fa_groups = enumerate(_file_groups(fa_path).items())
+    for index, (group_desc, (schema, seeds)) in fa_groups:
+        engine = create_engine(
+            default_dialect=DIALECT_2020_12,
+            formats=FORMATS_2020_12,
+            loaders=[suite_remotes_loader(REMOTES_DIR)],
+        )
+        try:
+            uri = engine.load_schema(schema, RETRIEVAL_URI)
+        except JsonSchemaEngineError:
+            skipped += len(seeds)
+            continue
+        for seed_index, seed in enumerate(seeds):
+            groups.append(
+                CorpusGroup(
+                    key=(
+                        "draft2020-12/optional/format-assertion/"
+                        f"{group_desc}#{index}.{seed_index}"
+                    ),
+                    dialect_dir="draft2020-12",
+                    dialect_uri=DIALECT_2020_12,
+                    engine=engine,
+                    uri=uri,
+                    seeds=(seed,),
+                )
+            )
+    return groups, skipped
+
+
+FORMAT_CORPUS, FORMAT_SKIPPED_GROUPS = _build_format_corpus()
+assert len(FORMAT_CORPUS) > 100, (len(FORMAT_CORPUS), FORMAT_SKIPPED_GROUPS)
+
+
 _ARTIFACT_CACHE: dict[str, tuple[CompiledValidator, CompiledValidator]] = {}
 
 
@@ -180,6 +267,23 @@ def test_differential_draft7(case: tuple[CorpusGroup, JsonValue]) -> None:
 
 @given(case=_cases_for("draft6"))
 def test_differential_draft6(case: tuple[CorpusGroup, JsonValue]) -> None:
+    _check_case(case)
+
+
+# --- one property over the format-directory corpus, across all four
+# dialects at once (its own Hypothesis budget, same as the properties
+# above) -----------------------------------------------------------------
+
+
+def _cases_for_formats() -> st.SearchStrategy[tuple[CorpusGroup, JsonValue]]:
+    groups = st.sampled_from(FORMAT_CORPUS)
+    return groups.flatmap(
+        lambda group: st.tuples(st.just(group), _instances_for(group))
+    )
+
+
+@given(case=_cases_for_formats())
+def test_differential_formats(case: tuple[CorpusGroup, JsonValue]) -> None:
     _check_case(case)
 
 
