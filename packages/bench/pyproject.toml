@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "json-schema-engine-bench"
+version = "0.0.0"
+description = "Internal benchmark harness for json-schema-engine (M6 Step 5). Not for external use."
+requires-python = ">=3.12"
+dependencies = ["json-schema-engine", "fastjsonschema", "jsonschema"]
+classifiers = [
+    "Private :: Do Not Upload",
+]
+
+[tool.uv.sources]
+json-schema-engine = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/json_schema_engine"]

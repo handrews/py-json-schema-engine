@@ -159,6 +159,22 @@ Bowtie through `uvx`:
 uv run python scripts/bowtie_check.py
 ```
 
+### Benchmarks
+
+```sh
+uv run python scripts/bench.py --budget-ms 250 --filter user
+```
+
+`scripts/bench.py` times the compiler tier's flag and standalone artifacts
+against the interpreter and two competitors (fastjsonschema, jsonschema)
+over the corpora in `packages/bench`. It is report-only — it enforces no
+performance threshold — and, per the IP policy below, runs the
+competitors only, never reading or porting their source. `--filter` takes
+a regex over corpus/subject/partition names; omit `--out` to skip writing
+JSON. The committed run lives at `packages/bench/results/results.json`
+(`--budget-ms 250`). The interpreter is the reference semantics, so ratios
+are informational, not a compatibility claim.
+
 ## IP policy
 
 The implementation is written from the JSON Schema specifications and the

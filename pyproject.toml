@@ -53,6 +53,7 @@ dev = [
     "pyright",
     "import-linter",
     "json-schema-engine-test-kit",
+    "json-schema-engine-bench",
     "regex>=2026.9.10",
     "hypothesis>=6.168.0",
 ]
@@ -63,9 +64,15 @@ members = ["packages/*"]
 [tool.uv.sources]
 ecma-regex = { workspace = true }
 json-schema-engine-test-kit = { workspace = true }
+json-schema-engine-bench = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/test-kit/tests", "packages/ecma-regex/tests"]
+testpaths = [
+    "tests",
+    "packages/test-kit/tests",
+    "packages/ecma-regex/tests",
+    "packages/bench/tests",
+]
 addopts = "--import-mode=importlib"
 
 [tool.ruff]
@@ -90,7 +97,12 @@ ignore = ["ANN401"]
 [tool.pyright]
 include = ["src", "packages", "tests", "bowtie", "scripts"]
 exclude = ["tests/compiler/goldens"]
-extraPaths = ["src", "packages/test-kit/src", "packages/ecma-regex/src"]
+extraPaths = [
+    "src",
+    "packages/test-kit/src",
+    "packages/ecma-regex/src",
+    "packages/bench/src",
+]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
 venvPath = "."
