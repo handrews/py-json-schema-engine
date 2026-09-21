@@ -9,7 +9,7 @@
 # Dependency direction: imports keyword modules and `dialect`. Called by
 # `dialects.register_standard_dialects`.
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from json_schema_engine.core.dialect import (
     DialectRegistry,
@@ -90,9 +90,12 @@ META_DATA_VOCABULARY_07: Mapping[str, KeywordBehavior] = {
     for name in ("title", "description", "default", "readOnly", "writeOnly", "examples")
 }
 
+FORMAT_07_ID = keyword_id(VOCAB_FORMAT_07, "format")
 FORMAT_VOCABULARY_07: Mapping[str, KeywordBehavior] = {
-    "format": annotation_only(keyword_id(VOCAB_FORMAT_07, "format"))
+    "format": annotation_only(FORMAT_07_ID)
 }
+
+type FormatBehaviorFactory = Callable[[str], KeywordBehavior]
 
 CONTENT_VOCABULARY_07: Mapping[str, KeywordBehavior] = {
     name: annotation_only(keyword_id(VOCAB_CONTENT_07, name))
@@ -120,8 +123,9 @@ META_DATA_VOCABULARY_06: Mapping[str, KeywordBehavior] = {
     for name in ("title", "description", "default", "examples")
 }
 
+FORMAT_06_ID = keyword_id(VOCAB_FORMAT_06, "format")
 FORMAT_VOCABULARY_06: Mapping[str, KeywordBehavior] = {
-    "format": annotation_only(keyword_id(VOCAB_FORMAT_06, "format"))
+    "format": annotation_only(FORMAT_06_ID)
 }
 
 VOCABULARIES_DRAFT_07: tuple[str, ...] = (
@@ -142,12 +146,19 @@ VOCABULARIES_DRAFT_06: tuple[str, ...] = (
 )
 
 
-def register_dialect_draft_07(dialects: DialectRegistry) -> None:
+def register_dialect_draft_07(
+    dialects: DialectRegistry, *, format_behavior: FormatBehaviorFactory | None = None
+) -> None:
     dialects.register_vocabulary(VOCAB_CORE_07, CORE_VOCABULARY_07)
     dialects.register_vocabulary(VOCAB_APPLICATOR_07, APPLICATOR_VOCABULARY_07)
     dialects.register_vocabulary(VOCAB_VALIDATION_07, VALIDATION_VOCABULARY_07)
     dialects.register_vocabulary(VOCAB_META_DATA_07, META_DATA_VOCABULARY_07)
-    dialects.register_vocabulary(VOCAB_FORMAT_07, FORMAT_VOCABULARY_07)
+    dialects.register_vocabulary(
+        VOCAB_FORMAT_07,
+        FORMAT_VOCABULARY_07
+        if format_behavior is None
+        else {"format": format_behavior(FORMAT_07_ID)},
+    )
     dialects.register_vocabulary(VOCAB_CONTENT_07, CONTENT_VOCABULARY_07)
     dialects.register_dialect(
         DIALECT_DRAFT_07,
@@ -157,12 +168,19 @@ def register_dialect_draft_07(dialects: DialectRegistry) -> None:
     )
 
 
-def register_dialect_draft_06(dialects: DialectRegistry) -> None:
+def register_dialect_draft_06(
+    dialects: DialectRegistry, *, format_behavior: FormatBehaviorFactory | None = None
+) -> None:
     dialects.register_vocabulary(VOCAB_CORE_06, CORE_VOCABULARY_06)
     dialects.register_vocabulary(VOCAB_APPLICATOR_06, APPLICATOR_VOCABULARY_06)
     dialects.register_vocabulary(VOCAB_VALIDATION_06, VALIDATION_VOCABULARY_07)
     dialects.register_vocabulary(VOCAB_META_DATA_06, META_DATA_VOCABULARY_06)
-    dialects.register_vocabulary(VOCAB_FORMAT_06, FORMAT_VOCABULARY_06)
+    dialects.register_vocabulary(
+        VOCAB_FORMAT_06,
+        FORMAT_VOCABULARY_06
+        if format_behavior is None
+        else {"format": format_behavior(FORMAT_06_ID)},
+    )
     dialects.register_dialect(
         DIALECT_DRAFT_06,
         VOCABULARIES_DRAFT_06,

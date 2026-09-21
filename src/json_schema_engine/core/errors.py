@@ -136,6 +136,22 @@ class UnknownVocabularyError(JsonSchemaEngineError):
     """
 
 
+class UnknownFormatError(JsonSchemaEngineError):
+    """A `format` names a format the engine's table lacks, under the
+    format-assertion vocabulary (which promised assertion for every name)."""
+
+
+class FormatUnavailableError(JsonSchemaEngineError):
+    """A `format` names a table entry that cannot run in this environment
+    (an optional extra is missing); asserting it is refused at registration."""
+
+
+class FormatsRequiredError(JsonSchemaEngineError):
+    """A format table is needed but none was configured: `assert_formats`
+    without `formats=`, or a metaschema declaring the format-assertion
+    vocabulary on an engine without a table."""
+
+
 class SchemaValidationError(JsonSchemaEngineError):
     """A registered document fails its own metaschema (`validate_schemas`).
 

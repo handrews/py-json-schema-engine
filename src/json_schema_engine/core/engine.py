@@ -10,19 +10,30 @@ from collections.abc import Sequence
 from json_schema_engine.core.channel import AnnotationRecord
 from json_schema_engine.core.dialect import (
     DialectRegistry,
+    KeywordBehavior,
     identifiers_2019,
     identifiers_2020,
 )
 from json_schema_engine.core.errors import (
+    FormatsRequiredError,
     MaxDepthExceededError,
     SchemaValidationError,
     UnknownDialectError,
     UnknownVocabularyError,
 )
 from json_schema_engine.core.evaluator import run_evaluation
+from json_schema_engine.core.formats import FormatTable
 from json_schema_engine.core.json_model import JsonValue, is_object
-from json_schema_engine.core.keywords._ids import DIALECT_2020_12, VOCAB_CORE_2019
+from json_schema_engine.core.keywords._ids import (
+    DIALECT_2020_12,
+    VOCAB_CORE_2019,
+    VOCAB_FORMAT_ASSERTION,
+)
 from json_schema_engine.core.keywords.dialects import register_standard_dialects
+from json_schema_engine.core.keywords.format import (
+    asserting_format,
+    format_assertion_vocabulary,
+)
 from json_schema_engine.core.loader import Loader, RangeLookup, SourceLocation
 from json_schema_engine.core.metaschemas import bundled_metaschemas
 from json_schema_engine.core.output import (
@@ -79,9 +90,31 @@ class Engine:
         reject_unsafe_regex: bool = False,
         max_depth: int = DEFAULT_MAX_DEPTH,
         validate_schemas: bool = False,
+        formats: FormatTable | None = None,
+        assert_formats: bool = False,
     ) -> None:
+        if assert_formats and formats is None:
+            raise FormatsRequiredError(
+                "assert_formats=True requires a format table: "
+                "create_engine(formats=FORMATS_2020_12, assert_formats=True)"
+            )
+        self._formats = formats
         self.dialects = DialectRegistry()
-        register_standard_dialects(self.dialects)
+        if assert_formats and formats is not None:
+            table = formats
+
+            def best_effort(behavior_id: str) -> KeywordBehavior:
+                return asserting_format(behavior_id, table, refuse_unknown=False)
+
+            register_standard_dialects(self.dialects, format_behavior=best_effort)
+        else:
+            register_standard_dialects(self.dialects)
+        if formats is not None:
+            # A table makes the 2020-12 format-assertion vocabulary available
+            # to `$vocabulary`-assembled dialects (M7).
+            self.dialects.register_vocabulary(
+                VOCAB_FORMAT_ASSERTION, format_assertion_vocabulary(formats)
+            )
         self.schemas = SchemaRegistry(
             self.dialects,
             default_dialect,
@@ -119,6 +152,11 @@ class Engine:
     def max_depth(self) -> int:
         """The schema-application depth budget (P3)."""
         return self._max_depth
+
+    @property
+    def formats(self) -> FormatTable | None:
+        """The format table this engine asserts through, if any (M7)."""
+        return self._formats
 
     # --- registration ----------------------------------------------------
 
@@ -264,6 +302,15 @@ class Engine:
         for vocabulary_uri, required in declared.items():
             if self.dialects.has_vocabulary(vocabulary_uri):
                 uris.append(vocabulary_uri)
+            elif vocabulary_uri == VOCAB_FORMAT_ASSERTION:
+                # Present only when a table was given; with or without the
+                # boolean, a caller using this vocabulary expects assertion.
+                raise FormatsRequiredError(
+                    f"metaschema '{uri}' declares the format-assertion "
+                    "vocabulary but the engine has no format table; pass "
+                    "formats= (e.g. create_engine(formats=FORMATS_2020_12))",
+                    schema_location=uri,
+                )
             elif required is True:
                 raise UnknownVocabularyError(
                     f"dialect '{uri}' requires unknown vocabulary '{vocabulary_uri}'",
@@ -414,8 +461,16 @@ def create_engine(
     reject_unsafe_regex: bool = False,
     max_depth: int = DEFAULT_MAX_DEPTH,
     validate_schemas: bool = False,
+    formats: FormatTable | None = None,
+    assert_formats: bool = False,
 ) -> Engine:
-    """Create an engine with the built-in dialects registered."""
+    """Create an engine with the built-in dialects registered.
+
+    `formats` (a `FormatTable`, e.g. `json_schema_engine.formats.FORMATS_2020_12`)
+    enables the 2020-12 format-assertion vocabulary; `assert_formats=True`
+    additionally makes `format` assert, best effort, in every standard
+    dialect. Without either, `format` only annotates.
+    """
     return Engine(
         default_dialect=default_dialect,
         loaders=loaders,
@@ -424,4 +479,6 @@ def create_engine(
         reject_unsafe_regex=reject_unsafe_regex,
         max_depth=max_depth,
         validate_schemas=validate_schemas,
+        formats=formats,
+        assert_formats=assert_formats,
     )

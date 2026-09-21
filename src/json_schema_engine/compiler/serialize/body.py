@@ -35,6 +35,7 @@ from json_schema_engine.core.lowering import (
     Fail,
     ForEachIndex,
     ForEachKey,
+    FormatTest,
     HasKey,
     Helper,
     HelperName,
@@ -176,6 +177,9 @@ def expression(body: BodyContext, expr: Expr) -> ast.expr:
                 e.call(e.attr(pattern, "search"), expression(body, target)),
                 ast.Constant(value=None),
             )
+        case FormatTest(name, target):
+            predicate = e.load(body.fn.module.format_name(name))
+            return e.call(predicate, expression(body, target))
         case Not(inner):
             return e.not_(expression(body, inner))
         case Logic(op, parts):

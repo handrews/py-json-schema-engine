@@ -102,7 +102,7 @@ MINTED_VOCABULARY = {
     "H_MAXD",
     "MaxDepthExceededError",
 } | BUILTINS_USED
-_MINTED_PATTERN = re.compile(r"[ubtgcrk]\d+$")
+_MINTED_PATTERN = re.compile(r"(?:[ubtgcrk]|fmt)\d+$")
 
 
 def _is_minted(name: str) -> bool:

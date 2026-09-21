@@ -3,6 +3,7 @@
 # correct, so a static→interpreted regression passes every other gate;
 # only exact pins notice. A deliberate lowering change re-pins here.
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,10 @@ from json_schema_engine.core import (
     DIALECT_2020_12,
     DIALECT_DRAFT_06,
     DIALECT_DRAFT_07,
+    Engine,
     create_engine,
 )
+from json_schema_engine.formats import FORMATS_2020_12
 from json_schema_engine.test_kit import load_suite_file, suite_remotes_loader
 
 ROOT = Path(__file__).resolve().parents[2] / "test-suite"
@@ -39,7 +42,18 @@ PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int]]]] = {
 }
 
 
-def census(directory: str, dialect: str) -> tuple[int, int, int, dict[str, int]]:
+def _default_engine(dialect: str) -> Engine:
+    return create_engine(
+        default_dialect=dialect, loaders=[suite_remotes_loader(REMOTES_DIR)]
+    )
+
+
+def census(
+    directory: str,
+    dialect: str,
+    *,
+    engine_factory: Callable[[str], Engine] = _default_engine,
+) -> tuple[int, int, int, dict[str, int]]:
     groups = total = interpreted = 0
     causes: dict[str, int] = {}
     for path in sorted((ROOT / "tests" / directory).glob("*.json")):
@@ -48,9 +62,7 @@ def census(directory: str, dialect: str) -> tuple[int, int, int, dict[str, int]]
             if case.group in seen:
                 continue
             seen.add(case.group)
-            engine = create_engine(
-                default_dialect=dialect, loaders=[suite_remotes_loader(REMOTES_DIR)]
-            )
+            engine = engine_factory(dialect)
             uri = engine.load_schema(case.schema, "https://census.example/schema")
             explanation = explain_compilation(build_plan(engine, uri))
             groups += 1
@@ -65,3 +77,24 @@ def census(directory: str, dialect: str) -> tuple[int, int, int, dict[str, int]]
 def test_census_is_pinned(directory: str) -> None:
     dialect, expected = PINS[directory]
     assert census(directory, dialect) == expected
+
+
+def test_assert_formats_changes_no_classification() -> None:
+    """Asserting formats (best effort, every standard dialect) never demotes
+    a unit to interpreted: the draft2020-12 census built with an engine that
+    has the standard 2020-12 table and `assert_formats=True` classifies
+    every unit exactly as the plain census does."""
+
+    def with_asserted_formats(dialect: str) -> Engine:
+        return create_engine(
+            default_dialect=dialect,
+            loaders=[suite_remotes_loader(REMOTES_DIR)],
+            formats=FORMATS_2020_12,
+            assert_formats=True,
+        )
+
+    dialect, expected = PINS["draft2020-12"]
+    assert (
+        census("draft2020-12", dialect, engine_factory=with_asserted_formats)
+        == expected
+    )

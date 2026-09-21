@@ -17,7 +17,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from json_schema_engine.compiler import emit as e
-from json_schema_engine.compiler.errors import StandaloneUnsupportedError
+from json_schema_engine.compiler.errors import (
+    FormatTableError,
+    StandaloneUnsupportedError,
+)
 from json_schema_engine.compiler.plan import (
     CompilationExplanation,
     CompilationPlan,
@@ -40,6 +43,7 @@ __all__ = [
     "CompilationPlan",
     "CompiledValidator",
     "FallbackCause",
+    "FormatTableError",
     "PlannedApplication",
     "PlannedUnit",
     "StandaloneUnsupportedError",
@@ -86,9 +90,23 @@ def compile_validator(
         )
         for name, source in serialized.regexes
     ]
+    prologue.extend(
+        e.assign(
+            name,
+            e.subscript(e.attr(e.load(e.RUNTIME), "formats"), e.const(format_name)),
+        )
+        for name, format_name in serialized.formats
+    )
     module = assemble(prologue, serialized)
     budget = engine.max_depth if max_depth is None else max_depth
-    runtime = make_runtime(registry, engine.regex_cache, plan.patterns, budget)
+    runtime = make_runtime(
+        registry,
+        engine.regex_cache,
+        plan.patterns,
+        budget,
+        formats=plan.formats,
+        format_table=engine.formats,
+    )
     validate = instantiate(
         module, make_namespace(runtime, [t.ref for t in plan.targets])
     )

@@ -564,12 +564,11 @@ def test_format_never_asserts_in_m1() -> None:
     assert run({"format": "date"}, "not-a-date")[0]
 
 
-def test_format_declares_formats_fact() -> None:
-    assert format_annotation.analyze is not None
-    facts = format_annotation.analyze("date", AnalyzeContext({}))
-    assert facts.formats == ("date",)
-    facts_non_string = format_annotation.analyze(5, AnalyzeContext({}))
-    assert facts_non_string.formats == ()
+def test_annotation_only_format_declares_no_formats_fact() -> None:
+    # A `formats` fact means "tested against the engine's table" (M7); the
+    # annotation-only behavior tests nothing.
+    assert format_annotation.analyze is None
+    assert format_annotation.facts("date", {}).formats == ()
 
 
 # --- content* (annotation-only) -----------------------------------------

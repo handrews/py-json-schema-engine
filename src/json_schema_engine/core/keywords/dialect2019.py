@@ -8,7 +8,13 @@
 # Dependency direction: imports keyword modules and `dialect`. Called by
 # `dialects.register_standard_dialects`.
 
-from json_schema_engine.core.dialect import DialectRegistry, identifiers_2019
+from collections.abc import Callable
+
+from json_schema_engine.core.dialect import (
+    DialectRegistry,
+    KeywordBehavior,
+    identifiers_2019,
+)
 from json_schema_engine.core.keywords._ids import (
     DIALECT_2019_09,
     VOCAB_APPLICATOR_2019,
@@ -117,9 +123,10 @@ META_DATA_VOCABULARY_2019 = {
     )
 }
 
-FORMAT_VOCABULARY_2019 = {
-    "format": annotation_only(keyword_id(VOCAB_FORMAT_2019, "format"))
-}
+FORMAT_2019_ID = keyword_id(VOCAB_FORMAT_2019, "format")
+FORMAT_VOCABULARY_2019 = {"format": annotation_only(FORMAT_2019_ID)}
+
+type FormatBehaviorFactory = Callable[[str], KeywordBehavior]
 
 CONTENT_VOCABULARY_2019 = {
     name: annotation_only(keyword_id(VOCAB_CONTENT_2019, name))
@@ -136,13 +143,20 @@ VOCABULARIES_2019_09: tuple[str, ...] = (
 )
 
 
-def register_dialect_2019_09(dialects: DialectRegistry) -> None:
+def register_dialect_2019_09(
+    dialects: DialectRegistry, *, format_behavior: FormatBehaviorFactory | None = None
+) -> None:
     """Register the 2019-09 vocabularies and assemble the dialect."""
     dialects.register_vocabulary(VOCAB_CORE_2019, CORE_VOCABULARY_2019)
     dialects.register_vocabulary(VOCAB_APPLICATOR_2019, APPLICATOR_VOCABULARY_2019)
     dialects.register_vocabulary(VOCAB_VALIDATION_2019, VALIDATION_VOCABULARY)
     dialects.register_vocabulary(VOCAB_META_DATA_2019, META_DATA_VOCABULARY_2019)
-    dialects.register_vocabulary(VOCAB_FORMAT_2019, FORMAT_VOCABULARY_2019)
+    dialects.register_vocabulary(
+        VOCAB_FORMAT_2019,
+        FORMAT_VOCABULARY_2019
+        if format_behavior is None
+        else {"format": format_behavior(FORMAT_2019_ID)},
+    )
     dialects.register_vocabulary(VOCAB_CONTENT_2019, CONTENT_VOCABULARY_2019)
     dialects.register_dialect(
         DIALECT_2019_09, VOCABULARIES_2019_09, identifiers=identifiers_2019

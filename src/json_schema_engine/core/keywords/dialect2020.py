@@ -6,7 +6,13 @@
 # `dialects.register_standard_dialects` calls this; keyword modules never
 # import this.
 
-from json_schema_engine.core.dialect import DialectRegistry, identifiers_2020
+from collections.abc import Callable
+
+from json_schema_engine.core.dialect import (
+    DialectRegistry,
+    KeywordBehavior,
+    identifiers_2020,
+)
 from json_schema_engine.core.keywords._ids import (
     DIALECT_2020_12,
     VOCAB_APPLICATOR,
@@ -26,7 +32,10 @@ from json_schema_engine.core.keywords.applicator_object import (
 )
 from json_schema_engine.core.keywords.content import CONTENT_VOCABULARY
 from json_schema_engine.core.keywords.core import CORE_VOCABULARY
-from json_schema_engine.core.keywords.format import FORMAT_ANNOTATION_VOCABULARY
+from json_schema_engine.core.keywords.format import (
+    FORMAT_ANNOTATION_VOCABULARY,
+    format_annotation,
+)
 from json_schema_engine.core.keywords.meta_data import META_DATA_VOCABULARY
 from json_schema_engine.core.keywords.unevaluated import UNEVALUATED_VOCABULARY
 from json_schema_engine.core.keywords.validation import VALIDATION_VOCABULARY
@@ -46,7 +55,12 @@ VOCABULARIES_2020_12: tuple[str, ...] = (
 )
 
 
-def register_dialect_2020_12(dialects: DialectRegistry) -> None:
+type FormatBehaviorFactory = Callable[[str], KeywordBehavior]
+
+
+def register_dialect_2020_12(
+    dialects: DialectRegistry, *, format_behavior: FormatBehaviorFactory | None = None
+) -> None:
     """Register the 2020-12 vocabularies and assemble the dialect."""
     dialects.register_vocabulary(VOCAB_CORE, CORE_VOCABULARY)
     # One vocabulary, three modules: in-place, object, and array applicators
@@ -62,7 +76,12 @@ def register_dialect_2020_12(dialects: DialectRegistry) -> None:
     dialects.register_vocabulary(VOCAB_VALIDATION, VALIDATION_VOCABULARY)
     dialects.register_vocabulary(VOCAB_UNEVALUATED, UNEVALUATED_VOCABULARY)
     dialects.register_vocabulary(VOCAB_META_DATA, META_DATA_VOCABULARY)
-    dialects.register_vocabulary(VOCAB_FORMAT_ANNOTATION, FORMAT_ANNOTATION_VOCABULARY)
+    dialects.register_vocabulary(
+        VOCAB_FORMAT_ANNOTATION,
+        FORMAT_ANNOTATION_VOCABULARY
+        if format_behavior is None
+        else {"format": format_behavior(format_annotation.id)},
+    )
     dialects.register_vocabulary(VOCAB_CONTENT, CONTENT_VOCABULARY)
     dialects.register_dialect(
         DIALECT_2020_12, VOCABULARIES_2020_12, identifiers=identifiers_2020

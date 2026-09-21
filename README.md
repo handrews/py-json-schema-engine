@@ -120,6 +120,49 @@ interpreter at evaluation time. Compiled code assumes plain data as
 annotations, and the output formats are interpreter features today;
 compiled output beyond the verdict is a later milestone.
 
+## Formats
+
+`format` annotates by default in every dialect (the specs' default, and
+what the official `format.json` legs require). Assertion is opt-in, from a
+format table implemented from each format's RFC and verified against the
+official `optional/format` suite:
+
+```python
+from json_schema_engine.core import create_engine
+from json_schema_engine.formats import FORMATS_2020_12, format_table_for
+
+# The 2020-12 format-assertion vocabulary: a metaschema declaring it makes
+# `format` assert; names the table lacks are refused at registration.
+engine = create_engine(formats=FORMATS_2020_12)
+# Best effort in every standard dialect: known names assert, unknown names
+# annotate only.
+engine = create_engine(formats=FORMATS_2020_12, assert_formats=True)
+uri = engine.register_schema({"format": "date-time"}, "https://example.com/dt")
+assert engine.evaluate(uri, "1998-12-31T23:59:60Z").valid
+assert not engine.evaluate(uri, "1998-12-31T22:59:60Z").valid
+```
+
+`FORMATS_2020_12` (also 2019-09) carries the nineteen defined formats;
+`FORMATS_DRAFT_07` and `FORMATS_DRAFT_06` carry each draft's list, and
+`format_table_for(dialect_uri)` picks one. A metaschema that declares the
+format-assertion vocabulary on an engine without a table raises
+`FormatsRequiredError`, and `assert_formats=True` without a table does too.
+A custom table is any mapping of names to `FormatDefinition(test, types)`;
+`types` scopes a format to instance types other than strings.
+
+`idn-hostname` and the A-label checks inside `hostname` need IDNA2008,
+provided by the `idna` extra:
+
+```sh
+pip install 'json-schema-engine[idna]'
+```
+
+Without it, asserting `idn-hostname` raises `FormatUnavailableError` at
+registration, and `hostname` accepts a well-formed `xn--` label without
+decoding it. Compiled validators assert formats too; a standalone module
+imports the predicates it needs from `json_schema_engine.formats`, so the
+extra must be installed wherever such a module runs.
+
 ## Security
 
 Schemas and instances are both often untrusted input. The interpreter

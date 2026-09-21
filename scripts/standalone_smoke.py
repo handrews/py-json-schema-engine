@@ -12,6 +12,7 @@ from pathlib import Path
 
 from json_schema_engine.compiler import emit_standalone
 from json_schema_engine.core import JsonValue, create_engine
+from json_schema_engine.formats import FORMATS_2020_12
 
 SCHEMA: JsonValue = {
     "type": "object",
@@ -20,6 +21,7 @@ SCHEMA: JsonValue = {
         "id": {"type": "integer", "minimum": 1},
         "name": {"type": "string", "pattern": "^[a-z]+$"},
         "tags": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+        "email": {"format": "email"},
     },
     "additionalProperties": False,
 }
@@ -30,6 +32,8 @@ INSTANCES: list[JsonValue] = [
     {"id": 1, "name": "ada", "tags": ["a", "b", "c", "d"]},
     {"id": 1, "name": "ada", "extra": True},
     [],
+    {"id": 1, "name": "ada", "email": "ada@example.com"},
+    {"id": 1, "name": "ada", "email": "nope"},
 ]
 
 PROBE = """
@@ -46,7 +50,7 @@ print("STANDALONE SMOKE PASS", len(expected), "verdicts")
 
 
 def main() -> int:
-    engine = create_engine()
+    engine = create_engine(formats=FORMATS_2020_12, assert_formats=True)
     uri = engine.register_schema(SCHEMA, "https://smoke.example/schema")
     expected = [(i, engine.evaluate(uri, i).valid) for i in INSTANCES]
     with tempfile.TemporaryDirectory() as directory:

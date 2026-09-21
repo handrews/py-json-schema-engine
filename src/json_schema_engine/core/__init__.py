@@ -23,6 +23,8 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.engine import Engine, create_engine
 from json_schema_engine.core.errors import (
+    FormatsRequiredError,
+    FormatUnavailableError,
     InfiniteLoopError,
     InvalidSchemaError,
     JsonSchemaEngineError,
@@ -34,11 +36,17 @@ from json_schema_engine.core.errors import (
     UndeclaredConsumptionError,
     UndeclaredProductionError,
     UnknownDialectError,
+    UnknownFormatError,
     UnknownKeywordError,
     UnknownVocabularyError,
     UnresolvableReferenceError,
     UnsafeRegexError,
     UnsupportedPatternError,
+)
+from json_schema_engine.core.formats import (
+    FormatDefinition,
+    FormatPredicate,
+    FormatTable,
 )
 from json_schema_engine.core.json_model import JsonType, JsonValue, json_equal
 from json_schema_engine.core.keywords._ids import (
@@ -46,6 +54,7 @@ from json_schema_engine.core.keywords._ids import (
     DIALECT_2020_12,
     DIALECT_DRAFT_06,
     DIALECT_DRAFT_07,
+    VOCAB_FORMAT_ASSERTION,
 )
 from json_schema_engine.core.loader import (
     LoadedDocument,
@@ -81,6 +90,7 @@ __all__ = [
     "DIALECT_2020_12",
     "DIALECT_DRAFT_06",
     "DIALECT_DRAFT_07",
+    "VOCAB_FORMAT_ASSERTION",
     "AnalyzeContext",
     "AnnotationSelection",
     "AnnotationUnit",
@@ -92,6 +102,11 @@ __all__ = [
     "DialectRegistry",
     "Engine",
     "ErrorUnit",
+    "FormatDefinition",
+    "FormatPredicate",
+    "FormatTable",
+    "FormatUnavailableError",
+    "FormatsRequiredError",
     "InfiniteLoopError",
     "InvalidSchemaError",
     "JsonSchemaEngineError",
@@ -125,6 +140,7 @@ __all__ = [
     "UndeclaredConsumptionError",
     "UndeclaredProductionError",
     "UnknownDialectError",
+    "UnknownFormatError",
     "UnknownKeywordError",
     "UnknownVocabularyError",
     "UnresolvableReferenceError",

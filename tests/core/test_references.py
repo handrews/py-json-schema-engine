@@ -238,7 +238,7 @@ def test_bundled_metaschemas_are_complete() -> None:
     from json_schema_engine.core.metaschemas import bundled_metaschemas
 
     documents = bundled_metaschemas()
-    assert len(documents) == 17
+    assert len(documents) == 18
     for uri, document in documents.items():
         # draft-07/06 spell their `$id` with a trailing `#`; resources are
         # keyed fragment-free.
