@@ -11,9 +11,10 @@ record channel, and the IETF draft-03 relevance model.
 Produced by Henry Andrews via Claude Code.
 
 **Status: pre-release.** The published `0.0.1` is a name reservation with no
-functionality. The `main` branch holds the M0/M1 build: the interpreter core
-with the exemplar keywords, green on a pinned subset of the official
-draft2020-12 test suite. [DESIGN.md](DESIGN.md) is the design contract and
+functionality. The `main` branch holds the interpreter core with the full
+2020-12 keyword set (M2), green on every official draft2020-12 test-suite
+file except those needing `$dynamicRef`, `$vocabulary`, or the bundled
+metaschema, which land in M3. [DESIGN.md](DESIGN.md) is the design contract and
 carries the milestone status.
 
 The regular-expression translator lives in its own package,

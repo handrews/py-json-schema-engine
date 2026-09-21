@@ -11,7 +11,9 @@
 
 import json
 from collections.abc import Sequence
+from decimal import Decimal
 from enum import StrEnum
+from fractions import Fraction
 from typing import TypeGuard
 
 # `None` is written last because ruff (RUF036) requires it there; member
@@ -158,6 +160,58 @@ def canonical_key(value: JsonValue) -> str:
         for k in sorted(value)
     )
     return "{" + ",".join(members) + "}"
+
+
+def _exact(number: int | float) -> Fraction:
+    """The decimal a schema author wrote, as an exact rational.
+
+    `repr(float)` is the shortest string that round-trips, so
+    `Decimal(repr(0.0075))` is exactly 75/10000 rather than the binary
+    neighbour the float actually holds; `Fraction` arithmetic on it is exact
+    and unbounded. Ints convert directly.
+    """
+    if isinstance(number, int):
+        return Fraction(number)
+    return Fraction(Decimal(repr(number)))
+
+
+def is_multiple_of(instance: int | float, divisor: int | float) -> bool:
+    """`multipleOf` with decimal rather than binary semantics (P2).
+
+    `0.0075` is a multiple of `0.0001` because the author meant the decimal
+    values, not their binary approximations; `1e308` is not a multiple of
+    `0.123456789` because the exact quotient is simply not an integer, with
+    no overflow to reason about. Callers exclude bools and non-finite
+    floats before calling; a zero divisor is the metaschema's problem and
+    reads as "not a multiple".
+    """
+    if divisor == 0:
+        return False
+    return (_exact(instance) / _exact(divisor)).denominator == 1
+
+
+def first_duplicate_pair(items: Sequence[JsonValue]) -> tuple[int, int] | None:
+    """The first `(j, i)` with `j < i` and `json_equal(items[j], items[i])`.
+
+    Buckets by `canonical_key` for near-linear detection and confirms each
+    collision with `json_equal`, the spec-exact equality (D20 `uniqueItems`).
+    """
+    buckets: dict[str, list[int]] = {}
+    for i, item in enumerate(items):
+        key = canonical_key(item)
+        bucket = buckets.get(key)
+        if bucket is None:
+            buckets[key] = [i]
+            continue
+        for j in bucket:
+            if json_equal(items[j], item):
+                return (j, i)
+        bucket.append(i)
+    return None
+
+
+def has_duplicate_items(items: Sequence[JsonValue]) -> bool:
+    return first_duplicate_pair(items) is not None
 
 
 def code_point_length(s: str) -> int:

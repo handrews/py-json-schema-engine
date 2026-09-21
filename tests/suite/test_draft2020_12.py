@@ -1,21 +1,13 @@
-# The official draft2020-12 suite leg for the M1 keyword set (DESIGN.md D12,
-# §6 M1 done-signal). Groups whose schemas use a keyword the dialect does
-# not bind yet are skipped by the schema-position scan and counted; the
-# exact-count pins make a submodule bump or a keyword landing a deliberate
-# two-number edit.
+# The official draft2020-12 suite leg (DESIGN.md D12, §6 done-signals).
+# Groups whose schemas use a keyword the dialect does not bind yet are
+# skipped by the schema-position scan and counted; the exact-count pins make
+# a submodule bump or a keyword landing a deliberate two-number edit.
 
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from json_schema_engine.core import (
-    DIALECT_2020_12,
-    LoadedDocument,
-    Loader,
-    create_engine,
-)
-from json_schema_engine.test_kit import LoadedDocument as SuiteLoadedDocument
+from json_schema_engine.core import DIALECT_2020_12, create_engine
 from json_schema_engine.test_kit import (
     SuiteCase,
     collect_suite_params,
@@ -30,22 +22,54 @@ SUITE_DIR = SUITE_ROOT / "tests" / "draft2020-12"
 REMOTES_DIR = SUITE_ROOT / "remotes"
 RETRIEVAL_URI = "https://suite.example/schema"
 
-# Fully green with the M1 keywords, then files the skip scan trims to the
-# groups M1 can run. `additionalProperties`, `default`, `dynamicRef`, and
-# `vocabulary` would contribute one or two cases each and are left for M2;
-# `defs` validates against the 2020-12 metaschema, which M3 bundles.
+# Every draft2020-12 file except: `refRemote` (its own leg, below);
+# `dynamicRef` and `vocabulary` (M3 — and `vocabulary.json` drives
+# `$vocabulary` through `$schema`, which the keyword scan cannot see, so it
+# is excluded by name rather than by scan); `defs` (validates against the
+# 2020-12 metaschema, which M3 bundles).
 FILES = [
+    "additionalProperties",
+    "allOf",
+    "anchor",
+    "anyOf",
     "boolean_schema",
+    "const",
+    "contains",
     "content",
+    "default",
+    "dependentRequired",
+    "dependentSchemas",
+    "enum",
+    "exclusiveMaximum",
+    "exclusiveMinimum",
     "format",
+    "if-then-else",
+    "infinite-loop-detection",
+    "items",
+    "maxContains",
+    "maxItems",
+    "maxLength",
+    "maxProperties",
+    "maximum",
+    "minContains",
+    "minItems",
+    "minLength",
+    "minProperties",
+    "minimum",
+    "multipleOf",
+    "not",
+    "oneOf",
     "pattern",
+    "patternProperties",
+    "prefixItems",
+    "properties",
+    "propertyNames",
+    "ref",
     "required",
     "type",
-    "ref",
+    "unevaluatedItems",
     "unevaluatedProperties",
-    "properties",
-    "anyOf",
-    "anchor",
+    "uniqueItems",
 ]
 
 IMPLEMENTED = frozenset(create_engine().dialects.get_dialect(DIALECT_2020_12).keywords)
@@ -61,8 +85,8 @@ REMOTE_PARAMS = collect_suite_params(SUITE_DIR, ["refRemote"], UNSUPPORTED)
 
 # Pinned from the first green run, after checking every skip reason names
 # an unimplemented keyword (test_every_skip_names_an_unimplemented_keyword).
-EXPECTED_RUN, EXPECTED_SKIPPED = 418, 123
-EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED = 25, 6
+EXPECTED_RUN, EXPECTED_SKIPPED = 1213, 6
+EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED = 31, 0
 
 
 def test_census_covers_the_dialect() -> None:
@@ -78,23 +102,9 @@ def test_suite_case(case: SuiteCase) -> None:
     assert engine.evaluate(uri, case.data).valid is case.valid
 
 
-def _as_core_loader(loader: Callable[[str], object]) -> Loader:
-    # `suite_remotes_loader` returns its own `LoadedDocument`, structurally
-    # identical to core's but a distinct class (test-kit must not depend on
-    # core: see remotes.py). Adapt it to the engine's `Loader` contract.
-    def load(uri: str) -> LoadedDocument | None:
-        doc = loader(uri)
-        if doc is None:
-            return None
-        assert isinstance(doc, SuiteLoadedDocument)
-        return LoadedDocument(value=doc.value, uri=doc.uri)
-
-    return load
-
-
 @pytest.mark.parametrize("case", REMOTE_PARAMS)
 def test_ref_remote_case(case: SuiteCase) -> None:
-    engine = create_engine(loaders=[_as_core_loader(suite_remotes_loader(REMOTES_DIR))])
+    engine = create_engine(loaders=[suite_remotes_loader(REMOTES_DIR)])
     uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
 
