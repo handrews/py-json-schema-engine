@@ -228,9 +228,13 @@ class LowerApply:
     `path=()` with the binding in the cursor). `sibling` names a sibling
     keyword whose value is applied (`if` → `then`/`else`); `ref` is a
     reference value resolved at plan time against the unit's lexical base
-    (then `path` is ignored). `fold` says how the verdict folds into the
-    keyword's verdict; `message`/`params` accompany folds that report
-    their own failure (`negate`).
+    (then `path` is ignored); `resolution` marks a reference the plan
+    resolved against the dynamic scope (`"dynamic"`/`"recursive"`, D8),
+    which the lowered apply carries only so the serializer can find the
+    planner's edge — the target is the plan's decision, never the IR's.
+    `fold` says how the verdict folds into the keyword's verdict;
+    `message`/`params` accompany folds that report their own failure
+    (`negate`).
     """
 
     path: tuple[str | int, ...]
@@ -240,6 +244,7 @@ class LowerApply:
     ref: str | None = None
     message: LowerMessage | None = None
     params: LowerParams | None = None
+    resolution: Literal["dynamic", "recursive"] | None = None
 
 
 # --- statements ------------------------------------------------------------
@@ -442,8 +447,11 @@ def apply(
     ref: str | None = None,
     message: LowerMessage | None = None,
     params: LowerParams | None = None,
+    resolution: Literal["dynamic", "recursive"] | None = None,
 ) -> Apply:
-    return Apply(LowerApply(path, cursor, fold, sibling, ref, message, params))
+    return Apply(
+        LowerApply(path, cursor, fold, sibling, ref, message, params, resolution)
+    )
 
 
 def apply_expr(

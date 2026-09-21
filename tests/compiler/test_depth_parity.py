@@ -9,7 +9,12 @@ from typing import cast
 
 import pytest
 
-from json_schema_engine.compiler import compile_validator, emit_standalone
+from json_schema_engine.compiler import (
+    build_plan,
+    compile_validator,
+    emit_standalone,
+    explain_compilation,
+)
 from json_schema_engine.core import (
     Engine,
     JsonValue,
@@ -57,19 +62,39 @@ def test_recursive_ref_chain_trips_the_budget_on_every_surface() -> None:
 
 
 def test_island_shares_the_budget() -> None:
+    # Two declarers of `node` keep the site an island (M9), so the recursion
+    # runs through the trampoline and the interpreter's own depth counter.
     engine = create_engine(max_depth=20)
     uri = engine.register_schema(
         {
             "$defs": {
-                "node": {
-                    "$dynamicAnchor": "node",
+                "tree": {
+                    "$id": "tree",
+                    "$defs": {"node": {"$dynamicAnchor": "node", "type": "object"}},
                     "properties": {"child": {"$dynamicRef": "#node"}},
-                }
+                },
+                "strict": {
+                    "$id": "strict",
+                    "$defs": {
+                        "node": {
+                            "$dynamicAnchor": "node",
+                            "$ref": "tree",
+                            "required": ["child"],
+                        }
+                    },
+                    "$ref": "tree",
+                },
+                "loose": {
+                    "$id": "loose",
+                    "$defs": {"node": {"$dynamicAnchor": "node", "$ref": "tree"}},
+                    "$ref": "tree",
+                },
             },
-            "properties": {"child": {"$ref": "#/$defs/node"}},
+            "anyOf": [{"$ref": "#/$defs/strict"}, {"$ref": "#/$defs/loose"}],
         },
         "https://depth.example/island",
     )
+    assert explain_compilation(build_plan(engine, uri)).causes == {"dynamic": 1}
     compiled = compile_validator(engine, uri).validate
     assert compiled(_nest(5)) is True
     with pytest.raises(MaxDepthExceededError):

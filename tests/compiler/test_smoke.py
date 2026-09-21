@@ -106,12 +106,12 @@ def test_island_plan_reports_the_dynamic_unit() -> None:
     uri = engine.register_schema(load_fixture("island"), "https://spike.example/island")
     compiled = compile_validator(engine, uri)
     explanation = explain_compilation(compiled.plan)
+    # The fixture's site has two possible declarers (M9): it stays an island.
     assert explanation.causes == {"dynamic": 1}
-    assert explanation.interpreted_keys == (
-        "https://spike.example/island#/properties/p",
-    )
+    assert explanation.interpreted_keys == ("https://spike.example/genericList#/items",)
+    assert explanation.resolved_dynamic_sites == ()
     assert "H_FRAG(T[0]" in compiled.source
-    assert "s = (*s, 'https://spike.example/island')" in compiled.source
+    assert "s = (*s, 'https://spike.example/genericList')" in compiled.source
 
 
 # --- suite subset -----------------------------------------------------------

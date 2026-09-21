@@ -28,17 +28,58 @@ def test_static_root_with_child_edges() -> None:
     assert explain_compilation(plan).causes == {}
 
 
-def test_dynamic_ref_islands_the_unit_and_marks_reachers() -> None:
+def test_stable_dynamic_ref_resolves_to_a_static_edge() -> None:
     plan, uri = plan_for(
         {
             "properties": {"p": {"$dynamicRef": "#node"}},
             "$defs": {"node": {"$dynamicAnchor": "node", "type": "string"}},
         }
     )
-    island = plan.units[uri + "#/properties/p"]
+    site = plan.units[uri + "#/properties/p"]
+    assert site.kind == "static"
+    (edge,) = site.edges
+    assert edge.target_key == uri + "#/$defs/node"
+    assert edge.dynamic is not None and edge.dynamic.winner == uri
+    assert plan.targets == ()
+    explanation = explain_compilation(plan)
+    (resolved,) = explanation.resolved_dynamic_sites
+    assert (resolved.keyword, resolved.ref, resolved.winner) == (
+        "$dynamicRef",
+        "#node",
+        uri,
+    )
+
+
+def test_unstable_dynamic_ref_islands_the_unit_and_marks_reachers() -> None:
+    # Two declarers of `item` reach one site through different paths.
+    plan, uri = plan_for(
+        {
+            "$defs": {
+                "generic": {
+                    "$id": "generic",
+                    "$defs": {"d": {"$dynamicAnchor": "item", "type": "null"}},
+                    "items": {"$dynamicRef": "#item"},
+                },
+                "numbers": {
+                    "$id": "numbers",
+                    "$defs": {"i": {"$dynamicAnchor": "item", "type": "number"}},
+                    "$ref": "generic",
+                },
+                "strings": {
+                    "$id": "strings",
+                    "$defs": {"i": {"$dynamicAnchor": "item", "type": "string"}},
+                    "$ref": "generic",
+                },
+            },
+            "anyOf": [{"$ref": "#/$defs/numbers"}, {"$ref": "#/$defs/strings"}],
+        }
+    )
+    base = uri.rsplit("/", 1)[0]
+    island = plan.units[f"{base}/generic#/items"]
     assert island.kind == "interpreted" and island.cause == "dynamic"
     assert plan.units[plan.root_key].reaches_interpreted
     assert [t.key for t in plan.targets] == [island.key]
+    assert explain_compilation(plan).resolved_dynamic_sites == ()
 
 
 def test_unlowerable_keyword_islands() -> None:
@@ -137,7 +178,8 @@ def test_explanation_counts() -> None:
         }
     )
     explanation = explain_compilation(plan)
-    assert explanation.total_units == 3
-    assert explanation.static_units == 1
-    assert explanation.causes == {"dynamic": 1, "unlowerable": 1}
+    assert explanation.total_units == 4
+    assert explanation.static_units == 3
+    assert explanation.causes == {"unlowerable": 1}
     assert explanation.reaches_interpreted == 1
+    assert len(explanation.resolved_dynamic_sites) == 1

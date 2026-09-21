@@ -45,7 +45,10 @@ class Flags:
     loop_cap: int = 16
 
 
-type EdgeKey = tuple[str, str | None, str | None, tuple[str | int, ...]]
+# (keyword, sibling, ref, resolution, path): the join between a keyword's
+# `analyze()` applications and its lowered applies. `resolution` keeps a
+# `$dynamicRef` and a `$ref` with the same string apart.
+type EdgeKey = tuple[str, str | None, str | None, str | None, tuple[str | int, ...]]
 
 
 @dataclass(slots=True)

@@ -214,7 +214,7 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
 
 
 def edge_key(keyword: str, apply: LowerApply) -> EdgeKey:
-    return (keyword, apply.sibling, apply.ref, apply.path)
+    return (keyword, apply.sibling, apply.ref, apply.resolution, apply.path)
 
 
 def cursor_value(body: BodyContext, cursor: LowerCursor) -> ast.expr:
@@ -351,7 +351,13 @@ def inline_body(
 
 def edges_of(unit: PlannedUnit) -> dict[EdgeKey, str]:
     return {
-        (edge.keyword, edge.app.sibling, edge.app.ref, edge.app.path): edge.target_key
+        (
+            edge.keyword,
+            edge.app.sibling,
+            edge.app.ref,
+            edge.app.resolution,
+            edge.app.path,
+        ): edge.target_key
         for edge in unit.edges
     }
 

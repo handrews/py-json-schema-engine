@@ -17,7 +17,8 @@ from json_schema_engine.core import create_engine
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDENS = Path(__file__).parent / "goldens"
-NAMES = ["user", "event", "profile", "static-consumer", "island"]
+# `island` keeps an unstable dynamic site (M9); `dynamic-static` a resolved one.
+NAMES = ["user", "event", "profile", "static-consumer", "island", "dynamic-static"]
 
 
 def compile_fixture(name: str) -> str:

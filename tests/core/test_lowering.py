@@ -52,4 +52,5 @@ def test_behaviors_default_to_no_lowering_and_no_applications() -> None:
     # forcing interpretation.
     assert CORE_VOCABULARY["$id"].lower is lower_nothing
     assert annotation_only("urn:t").lower is lower_nothing
-    assert CORE_VOCABULARY["$dynamicRef"].lower is None
+    # `$dynamicRef` lowers like `$ref` since M9: the plan decides its target.
+    assert CORE_VOCABULARY["$dynamicRef"].lower is not None

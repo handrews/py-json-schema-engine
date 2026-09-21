@@ -1,13 +1,57 @@
 {
-  "properties": {
-    "p": {
-      "$dynamicRef": "#node"
+  "$defs": {
+    "genericList": {
+      "$id": "genericList",
+      "$defs": {
+        "defaultItem": {
+          "$dynamicAnchor": "item",
+          "type": "null"
+        }
+      },
+      "items": {
+        "$dynamicRef": "#item"
+      }
+    },
+    "numberList": {
+      "$id": "numberList",
+      "$defs": {
+        "item": {
+          "$dynamicAnchor": "item",
+          "type": "number"
+        }
+      },
+      "$ref": "genericList"
+    },
+    "stringList": {
+      "$id": "stringList",
+      "$defs": {
+        "item": {
+          "$dynamicAnchor": "item",
+          "type": "string"
+        }
+      },
+      "$ref": "genericList"
     }
   },
-  "$defs": {
-    "node": {
-      "$dynamicAnchor": "node",
-      "type": "string"
+  "if": {
+    "properties": {
+      "kind": {
+        "const": "numbers"
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "list": {
+        "$ref": "#/$defs/numberList"
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "list": {
+        "$ref": "#/$defs/stringList"
+      }
     }
   }
 }

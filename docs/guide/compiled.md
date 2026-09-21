@@ -82,26 +82,67 @@ or a coverage consumer whose evaluated set is only known at runtime),
 `"cycle"` (an in-place `$ref` cycle at the same cursor), or `"non_schema"`
 (a reference into a position that is not a schema at all).
 
+A `$dynamicRef` whose target is the same on every path that can reach it
+is resolved at compile time and compiled as an ordinary static edge; the
+explanation lists such sites in `resolved_dynamic_sites`:
+
 ```python
 from json_schema_engine.compiler import explain_compilation
 
-island_engine = create_engine()
-island_uri = island_engine.register_schema(
+resolved_engine = create_engine()
+resolved_uri = resolved_engine.register_schema(
     {
         "properties": {"p": {"$dynamicRef": "#node"}},
         "$defs": {"node": {"$dynamicAnchor": "node", "type": "string"}},
+    },
+    "https://example.com/resolved",
+)
+explanation = explain_compilation(compile_validator(resolved_engine, resolved_uri).plan)
+assert explanation.interpreted_units == 0
+(site,) = explanation.resolved_dynamic_sites
+assert site.target == "https://example.com/resolved#/$defs/node"
+assert site.winner == "https://example.com/resolved"
+```
+
+A site whose target differs by path stays an island: here `#item` resolves
+to a number under one branch and a string under the other.
+
+```python
+island_engine = create_engine()
+island_uri = island_engine.register_schema(
+    {
+        "$defs": {
+            "generic": {
+                "$id": "generic",
+                "$defs": {"d": {"$dynamicAnchor": "item", "type": "null"}},
+                "items": {"$dynamicRef": "#item"},
+            },
+            "numbers": {
+                "$id": "numbers",
+                "$defs": {"i": {"$dynamicAnchor": "item", "type": "number"}},
+                "$ref": "generic",
+            },
+            "strings": {
+                "$id": "strings",
+                "$defs": {"i": {"$dynamicAnchor": "item", "type": "string"}},
+                "$ref": "generic",
+            },
+        },
+        "if": {"properties": {"kind": {"const": "numbers"}}},
+        "then": {"properties": {"list": {"$ref": "#/$defs/numbers"}}},
+        "else": {"properties": {"list": {"$ref": "#/$defs/strings"}}},
     },
     "https://example.com/island",
 )
 island_compiled = compile_validator(island_engine, island_uri)
 explanation = explain_compilation(island_compiled.plan)
 assert explanation.causes == {"dynamic": 1}
-assert explanation.interpreted_keys == ("https://example.com/island#/properties/p",)
-assert explanation.static_units == 1
+assert explanation.interpreted_keys == ("https://example.com/generic#/items",)
 
 # The trampoline still returns the interpreter's answer for that subschema.
-assert island_compiled.validate({"p": "x"}) is True
-assert island_compiled.validate({"p": 1}) is False
+assert island_compiled.validate({"kind": "numbers", "list": [1]}) is True
+assert island_compiled.validate({"kind": "numbers", "list": ["x"]}) is False
+assert island_compiled.validate({"kind": "strings", "list": ["x"]}) is True
 ```
 
 Islands are a performance characteristic, not a correctness one. Use

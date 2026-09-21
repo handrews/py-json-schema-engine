@@ -1,0 +1,13 @@
+{
+  "properties": {
+    "p": {
+      "$dynamicRef": "#node"
+    }
+  },
+  "$defs": {
+    "node": {
+      "$dynamicAnchor": "node",
+      "type": "string"
+    }
+  }
+}

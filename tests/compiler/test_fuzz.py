@@ -34,6 +34,7 @@ from json_schema_engine.core import (
 from json_schema_engine.formats import FORMATS_2020_12, format_table_for
 from json_schema_engine.test_kit import load_suite_file, suite_remotes_loader
 
+from .dynamic_seeds import DYNAMIC_SEEDS
 from .fuzz_support import is_json_shaped, mutated
 from .test_smoke import outcome
 
@@ -206,6 +207,34 @@ FORMAT_CORPUS, FORMAT_SKIPPED_GROUPS = _build_format_corpus()
 assert len(FORMAT_CORPUS) > 100, (len(FORMAT_CORPUS), FORMAT_SKIPPED_GROUPS)
 
 
+# --- the dynamic-reference seed corpus (M9) --------------------------------
+#
+# Every seed shape in full, never subsetted: plan-time resolution of
+# `$dynamicRef`/`$recursiveRef` sites is exactly the kind of change whose
+# regressions the suite's few dynamic groups would under-sample.
+
+
+def _build_seed_corpus() -> list[CorpusGroup]:
+    groups: list[CorpusGroup] = []
+    for seed in DYNAMIC_SEEDS:
+        engine = create_engine(default_dialect=seed.dialect)
+        uri = engine.register_schema(seed.schema, RETRIEVAL_URI)
+        groups.append(
+            CorpusGroup(
+                key=f"seeds/{seed.key}",
+                dialect_dir="seeds",
+                dialect_uri=seed.dialect,
+                engine=engine,
+                uri=uri,
+                seeds=tuple(instance for instance, _ in seed.tests),
+            )
+        )
+    return groups
+
+
+SEED_CORPUS = _build_seed_corpus()
+
+
 _ARTIFACT_CACHE: dict[str, tuple[CompiledValidator, CompiledValidator]] = {}
 
 
@@ -267,6 +296,15 @@ def test_differential_draft7(case: tuple[CorpusGroup, JsonValue]) -> None:
 
 @given(case=_cases_for("draft6"))
 def test_differential_draft6(case: tuple[CorpusGroup, JsonValue]) -> None:
+    _check_case(case)
+
+
+@given(
+    case=st.sampled_from(SEED_CORPUS).flatmap(
+        lambda group: st.tuples(st.just(group), _instances_for(group))
+    )
+)
+def test_differential_dynamic_seeds(case: tuple[CorpusGroup, JsonValue]) -> None:
     _check_case(case)
 
 

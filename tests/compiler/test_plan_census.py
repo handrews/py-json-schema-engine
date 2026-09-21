@@ -23,22 +23,24 @@ from json_schema_engine.test_kit import load_suite_file, suite_remotes_loader
 ROOT = Path(__file__).resolve().parents[2] / "test-suite"
 REMOTES_DIR = ROOT / "remotes"
 
-# (groups, total units, interpreted units, causes) per dialect directory,
-# pinned from the first green run of the full lowering fan-out. In M6 the
-# only fallback causes are dynamic references and `unevaluated*` consumers
-# whose coverage is runtime-conditional (no runtime tracking until M9).
-PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int]]]] = {
+# (groups, total units, interpreted units, causes, resolved dynamic sites)
+# per dialect directory. M9 resolves every dynamic-reference site whose
+# target is the same on every path (the suite's "multiple dynamic paths"
+# groups are the ones that stay islands; a resolved site plans its target's
+# subtree, hence the unit totals grow); the `unlowerable` counts are the
+# `unevaluated*` consumers whose coverage is runtime-conditional.
+PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int], int]]] = {
     "draft2020-12": (
         DIALECT_2020_12,
-        (384, 1206, 79, {"dynamic": 59, "unlowerable": 20}),
+        (384, 1238, 21, {"dynamic": 1, "unlowerable": 20}, 58),
     ),
     "draft2019-09": (
         DIALECT_2019_09,
-        (373, 1184, 65, {"dynamic": 49, "unlowerable": 16}),
+        (373, 1186, 18, {"dynamic": 2, "unlowerable": 16}, 47),
     ),
     # No dynamic references and no unevaluated* keywords: fully static.
-    "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {})),
-    "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {})),
+    "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0)),
+    "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0)),
 }
 
 
@@ -53,8 +55,8 @@ def census(
     dialect: str,
     *,
     engine_factory: Callable[[str], Engine] = _default_engine,
-) -> tuple[int, int, int, dict[str, int]]:
-    groups = total = interpreted = 0
+) -> tuple[int, int, int, dict[str, int], int]:
+    groups = total = interpreted = resolved = 0
     causes: dict[str, int] = {}
     for path in sorted((ROOT / "tests" / directory).glob("*.json")):
         seen: set[str] = set()
@@ -68,9 +70,10 @@ def census(
             groups += 1
             total += explanation.total_units
             interpreted += explanation.interpreted_units
+            resolved += len(explanation.resolved_dynamic_sites)
             for cause, count in explanation.causes.items():
                 causes[cause] = causes.get(cause, 0) + count
-    return groups, total, interpreted, dict(sorted(causes.items()))
+    return groups, total, interpreted, dict(sorted(causes.items())), resolved
 
 
 @pytest.mark.parametrize("directory", list(PINS))

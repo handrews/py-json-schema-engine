@@ -553,16 +553,29 @@ marks the unit interpreted with the given `FallbackCause` and clears its edges.
 
 `PlannedApplication`: a frozen dataclass: one application edge out of a unit,
 resolved at plan time. Fields: `keyword: str`, `app: SubschemaApplication`
-(from `json_schema_engine.core.dialect`), `target_key: str`.
+(from `json_schema_engine.core.dialect`), `target_key: str`, `dynamic:
+DynamicResolution | None = None` (set on a dynamic-reference edge the plan
+resolved).
+
+`DynamicResolution`: a frozen dataclass: how a `$dynamicRef`/`$recursiveRef`
+edge was resolved at plan time. Field: `winner: str | None`, the resource
+whose anchor won, or `None` when the reference behaved like `$ref`.
 
 `FallbackCause`: a type alias, `Literal["dynamic", "unlowerable", "cycle",
-"non_schema"]`: why a unit is interpreted: a `$dynamicRef`-class keyword; a
+"non_schema"]`: why a unit is interpreted: a dynamic-reference site whose
+target differs by path (or a dynamic keyword without a resolution fact); a
 keyword without `lower()`, an unresolvable edge, or a consumer without static
 coverage; a possible in-place cycle; or a reference into non-schema data.
 
 `CompilationExplanation`: a frozen dataclass: `total_units: int`,
 `static_units: int`, `interpreted_units: int`, `causes: Mapping[FallbackCause,
-int]`, `interpreted_keys: tuple[str, ...]`, `reaches_interpreted: int`.
+int]`, `interpreted_keys: tuple[str, ...]`, `reaches_interpreted: int`,
+`resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...]`.
+
+`ResolvedDynamicSite`: a frozen dataclass: a dynamic-reference site the plan
+compiled as a static edge. Fields: `unit: str` (the site's unit key),
+`keyword: str`, `ref: str`, `target: str` (the target's unit key), `winner:
+str | None`.
 
 ### Errors
 

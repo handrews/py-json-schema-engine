@@ -66,7 +66,6 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.registry import DEFAULT_MAX_DEPTH, SchemaRegistry
-from json_schema_engine.core.uri import resolve, split_fragment
 
 # Annotation elision (D5): when set, an annotation is recorded only if this
 # returns true for (keyword name, vocabulary URI), and dependency records are
@@ -246,32 +245,26 @@ class _KeywordContext:
         # Lexical resolution first: the initial target must exist. Rebinding
         # applies only to plain-name fragments minted by a dynamic anchor;
         # pointer fragments behave exactly like `$ref`.
-        target = registry.resolve_ref(ref, self._schema_ref.base_uri)
-        resource, fragment = split_fragment(resolve(self._schema_ref.base_uri, ref))
-        if not fragment or fragment.startswith("/"):
-            return target
-        if registry.dynamic_anchor(resource, fragment) is None:
-            return target
+        reference = registry.dynamic_reference(ref, self._schema_ref.base_uri)
+        if reference.anchor is None:
+            return reference.lexical
         for scope_uri in self._state.dynamic_scope:
-            hit = registry.dynamic_anchor(scope_uri, fragment)
+            hit = registry.dynamic_anchor(scope_uri, reference.anchor)
             if hit is not None:
                 return hit
-        return target
+        return reference.lexical
 
     def resolve_recursive(self, ref: str) -> SchemaRef:
         registry = self._state.registry
         # 2019-09: the reference is "#"; a non-empty fragment behaves like
         # `$ref`. Rebinding is all-or-nothing on the root `$recursiveAnchor`.
-        target = registry.resolve_ref(ref, self._schema_ref.base_uri)
-        resource, fragment = split_fragment(resolve(self._schema_ref.base_uri, ref))
-        if fragment:
-            return target
-        if not registry.has_recursive_root(resource):
-            return target
+        reference = registry.recursive_reference(ref, self._schema_ref.base_uri)
+        if not reference.recursive:
+            return reference.lexical
         for scope_uri in self._state.dynamic_scope:
             if registry.has_recursive_root(scope_uri):
                 return registry.root_ref(scope_uri)
-        return target
+        return reference.lexical
 
     def apply_resolved(self, target: SchemaRef) -> bool:
         path_node = PathNode(self._path_node, escape_segment(self._name))

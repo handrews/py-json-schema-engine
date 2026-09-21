@@ -42,6 +42,24 @@ type RegexHook = Callable[[str, str], None]
 
 
 @dataclass(frozen=True, slots=True)
+class DynamicReference:
+    """A `$dynamicRef` split into its lexical target and, when the
+    reference is scope-dependent, the anchor name it rebinds through."""
+
+    lexical: SchemaRef
+    anchor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RecursiveReference:
+    """A `$recursiveRef` split into its lexical target and whether the
+    2019-09 all-or-nothing rebinding applies."""
+
+    lexical: SchemaRef
+    recursive: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentLocation:
     """Where a schema resource physically lives (D17 bridge).
 
@@ -128,6 +146,11 @@ class SchemaRegistry:
         # External resources seen in reference values, drained by the
         # engine's load loop (P4).
         self._pending_resources: set[str] = set()
+        # Scope-independent reference resolutions (D8), memoized per
+        # (kind, base, ref); cleared whenever a registration could change one.
+        self._reference_memo: dict[
+            tuple[str, str, str], DynamicReference | RecursiveReference
+        ] = {}
         # Called for every regex a keyword declares during a walk. The
         # engine installs this after its trusted metaschemas register, so
         # the D20 screen applies only to caller schemas.
@@ -193,6 +216,7 @@ class SchemaRegistry:
         dialect_uri: str | None,
         get_range: RangeLookup | None,
     ) -> str:
+        self._reference_memo.clear()
         effective_dialect = effective_dialect_uri(
             schema, retrieval_uri, dialect_uri, self._default_dialect_uri
         )
@@ -363,6 +387,52 @@ class SchemaRegistry:
 
     def has_recursive_root(self, resource_uri: str) -> bool:
         return self._canonical(resource_uri) in self._recursive_roots
+
+    def dynamic_reference(self, ref: str, current_base: str) -> DynamicReference:
+        """The scope-independent half of `$dynamicRef` resolution (D8).
+
+        The lexical target must exist (`UnresolvableReferenceError`
+        otherwise). `anchor` is the `$dynamicAnchor` name the reference
+        rebinds through, or `None` when the reference behaves exactly like
+        `$ref`: an empty or pointer fragment, or a lexical resource that
+        does not mint the anchor (the bookending rule). Shared by the
+        interpreter's scope walk and the planner's plan-time analysis so
+        the two tiers cannot drift.
+        """
+        key = ("dynamic", current_base, ref)
+        hit = self._reference_memo.get(key)
+        if hit is not None:
+            assert isinstance(hit, DynamicReference)
+            return hit
+        lexical = self.resolve_ref(ref, current_base)
+        resource, fragment = split_fragment(resolve(current_base, ref))
+        anchor: str | None = None
+        if (
+            fragment
+            and not fragment.startswith("/")
+            and self.dynamic_anchor(resource, fragment) is not None
+        ):
+            anchor = fragment
+        result = DynamicReference(lexical, anchor)
+        self._reference_memo[key] = result
+        return result
+
+    def recursive_reference(self, ref: str, current_base: str) -> RecursiveReference:
+        """The scope-independent half of `$recursiveRef` resolution (D8):
+        rebinding applies only to a fragment-free reference whose lexical
+        resource has `$recursiveAnchor: true` at its root."""
+        key = ("recursive", current_base, ref)
+        hit = self._reference_memo.get(key)
+        if hit is not None:
+            assert isinstance(hit, RecursiveReference)
+            return hit
+        lexical = self.resolve_ref(ref, current_base)
+        resource, fragment = split_fragment(resolve(current_base, ref))
+        result = RecursiveReference(
+            lexical, not fragment and self.has_recursive_root(resource)
+        )
+        self._reference_memo[key] = result
+        return result
 
     def produced_ids(self) -> frozenset[str]:
         """Behavior ids some registered keyword declares it produces under."""
