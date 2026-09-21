@@ -211,7 +211,15 @@ class SchemaRegistry:
         if ids.recursive_anchor and pointer == "":
             self._recursive_roots.add(base_uri)
 
+        # draft-07/06 (D18, owner ruling): a `$ref` makes every sibling act
+        # as if absent — at registration as much as at evaluation, so no
+        # identifier, subschema, or pattern inside a sibling is ever seen.
+        # Pointer references into a sibling still resolve, since pointer
+        # navigation reads the document rather than this index.
+        ref_only = dialect.ref_ignores_siblings and "$ref" in node
         for name, value in node.items():
+            if ref_only and name != "$ref":
+                continue
             entry = dialect.keywords.get(name)
             if entry is None:
                 continue

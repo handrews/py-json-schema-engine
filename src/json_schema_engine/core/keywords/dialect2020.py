@@ -3,7 +3,7 @@
 # nothing about the built-in drafts is privileged.
 #
 # Dependency direction: imports every keyword module and `dialect`. The
-# engine façade calls `register_standard_dialects`; keyword modules never
+# `dialects.register_standard_dialects` calls this; keyword modules never
 # import this.
 
 from json_schema_engine.core.dialect import DialectRegistry, identifiers_2020
@@ -46,8 +46,8 @@ VOCABULARIES_2020_12: tuple[str, ...] = (
 )
 
 
-def register_standard_dialects(dialects: DialectRegistry) -> None:
-    """Register the built-in vocabularies and assemble the 2020-12 dialect."""
+def register_dialect_2020_12(dialects: DialectRegistry) -> None:
+    """Register the 2020-12 vocabularies and assemble the dialect."""
     dialects.register_vocabulary(VOCAB_CORE, CORE_VOCABULARY)
     # One vocabulary, three modules: in-place, object, and array applicators
     # are split by keyword class so each can grow on its own.
