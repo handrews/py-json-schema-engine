@@ -480,7 +480,7 @@ def test_flat_surface_is_populated_on_every_non_flag_format() -> None:
 
 
 def test_positions_decorate_all_four_unit_lists() -> None:
-    from json_schema_engine.test_kit.positions import parse_json_with_ranges
+    from json_schema_engine.core import parse_json_with_ranges
 
     text = '{"anyOf": [{"type": "string", "title": "a"}, {"minimum": 3, "title": "b"}]}'
     doc = parse_json_with_ranges(text, uri="https://output.example/pos")

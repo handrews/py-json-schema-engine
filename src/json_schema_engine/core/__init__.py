@@ -28,6 +28,7 @@ from json_schema_engine.core.errors import (
     InfiniteLoopError,
     InvalidSchemaError,
     JsonSchemaEngineError,
+    JsonSyntaxError,
     KeywordContractError,
     MaxDepthExceededError,
     OutputOptionsError,
@@ -77,6 +78,7 @@ from json_schema_engine.core.output import (
     OutputUnit,
     TraceUnit,
 )
+from json_schema_engine.core.positions import ParsedDocument, parse_json_with_ranges
 from json_schema_engine.core.regex import (
     RegexBackend,
     RegexDialect,
@@ -110,6 +112,7 @@ __all__ = [
     "InfiniteLoopError",
     "InvalidSchemaError",
     "JsonSchemaEngineError",
+    "JsonSyntaxError",
     "JsonType",
     "JsonValue",
     "KeywordBehavior",
@@ -124,6 +127,7 @@ __all__ = [
     "OutputFormat",
     "OutputOptionsError",
     "OutputUnit",
+    "ParsedDocument",
     "Phase",
     "RangeLookup",
     "ReadOnlyRegistryError",
@@ -150,4 +154,5 @@ __all__ = [
     "create_engine",
     "detect_unsafe_regex",
     "json_equal",
+    "parse_json_with_ranges",
 ]

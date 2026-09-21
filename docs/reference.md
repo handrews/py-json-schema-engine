@@ -1,0 +1,131 @@
+# API reference
+
+Every public name, by package. Skeleton generated at M8 Step 0; each
+entry gains its signature and a sentence in Step 1.
+
+## `json_schema_engine.core`
+
+- `DIALECT_2019_09`
+- `DIALECT_2020_12`
+- `DIALECT_DRAFT_06`
+- `DIALECT_DRAFT_07`
+- `VOCAB_FORMAT_ASSERTION`
+- `AnalyzeContext`
+- `AnnotationSelection`
+- `AnnotationUnit`
+- `AnnotationsOption`
+- `BasicOutputDocument`
+- `DependencyView`
+- `DetailedOutputUnit`
+- `Dialect`
+- `DialectRegistry`
+- `Engine`
+- `ErrorUnit`
+- `FormatDefinition`
+- `FormatPredicate`
+- `FormatTable`
+- `FormatUnavailableError`
+- `FormatsRequiredError`
+- `InfiniteLoopError`
+- `InvalidSchemaError`
+- `JsonSchemaEngineError`
+- `JsonSyntaxError`
+- `JsonType`
+- `JsonValue`
+- `KeywordBehavior`
+- `KeywordContext`
+- `KeywordContractError`
+- `ListOutputDocument`
+- `LoadedDocument`
+- `LoadedResource`
+- `Loader`
+- `MaxDepthExceededError`
+- `OutputDocument`
+- `OutputFormat`
+- `OutputOptionsError`
+- `OutputUnit`
+- `ParsedDocument`
+- `Phase`
+- `RangeLookup`
+- `ReadOnlyRegistryError`
+- `RegexBackend`
+- `RegexDialect`
+- `Result`
+- `SchemaValidationError`
+- `SourceLocation`
+- `SourcePosition`
+- `SourceRange`
+- `SourceSpan`
+- `StaticFacts`
+- `TraceUnit`
+- `UndeclaredConsumptionError`
+- `UndeclaredProductionError`
+- `UnknownDialectError`
+- `UnknownFormatError`
+- `UnknownKeywordError`
+- `UnknownVocabularyError`
+- `UnresolvableReferenceError`
+- `UnsafeRegexError`
+- `UnsafeRegexReport`
+- `UnsupportedPatternError`
+- `create_engine`
+- `detect_unsafe_regex`
+- `json_equal`
+- `parse_json_with_ranges`
+
+## `json_schema_engine.compiler`
+
+- `CompilationExplanation`
+- `CompilationPlan`
+- `CompiledValidator`
+- `FallbackCause`
+- `FormatTableError`
+- `PlannedApplication`
+- `PlannedUnit`
+- `StandaloneUnsupportedError`
+- `build_plan`
+- `compile_validator`
+- `emit_standalone`
+- `explain_compilation`
+
+## `json_schema_engine.formats`
+
+- `FORMATS_2019_09`
+- `FORMATS_2020_12`
+- `FORMATS_DRAFT_06`
+- `FORMATS_DRAFT_07`
+- `anchored`
+- `format_table_for`
+
+## `ecma_regex`
+
+- `Alternation`
+- `Anchor`
+- `BackendName`
+- `Backreference`
+- `CharClass`
+- `ClassEscape`
+- `ClassItem`
+- `ClassRange`
+- `CompiledPattern`
+- `Concatenation`
+- `Dot`
+- `EcmaRegex`
+- `EcmaRegexError`
+- `EcmaRegexSyntaxError`
+- `Flags`
+- `Group`
+- `Literal`
+- `Lookaround`
+- `Node`
+- `Pattern`
+- `PropertyEscape`
+- `Quantifier`
+- `UnsupportedPatternError`
+- `WordBoundary`
+- `compile`
+- `parse`
+- `star_height`
+- `translate`
+- `translate_flags`
+- `width`

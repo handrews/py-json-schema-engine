@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "json-schema-engine"
-version = "0.0.1"
-description = "Name reservation for json-schema-engine, a forthcoming spec-complete, annotation-first JSON Schema engine for Python. This release provides no functionality."
+version = "0.0.2"
+description = "A spec-complete, annotation-first JSON Schema engine for Python: interpreter, compiler, formats, every standard output format."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -13,10 +13,10 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Henry Andrews" },
 ]
-dependencies = ["ecma-regex"]
+dependencies = ["ecma-regex>=0.1,<0.2"]
 keywords = ["json", "json-schema", "validation"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -43,8 +43,8 @@ packages = ["src/json_schema_engine"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/src/",
-    "/tests/",
     "/README.md",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/pyproject.toml",
 ]
@@ -157,6 +157,16 @@ name = "compiler never imports test-kit"
 type = "forbidden"
 source_modules = ["json_schema_engine.compiler"]
 forbidden_modules = ["json_schema_engine.test_kit"]
+
+[[tool.importlinter.contracts]]
+name = "test-kit never imports the engine"
+type = "forbidden"
+source_modules = ["json_schema_engine.test_kit"]
+forbidden_modules = [
+    "json_schema_engine.core",
+    "json_schema_engine.compiler",
+    "json_schema_engine.formats",
+]
 
 [[tool.importlinter.contracts]]
 name = "ecma-regex is standalone"

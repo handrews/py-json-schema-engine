@@ -26,6 +26,25 @@ class JsonSchemaEngineError(Exception):
         self.schema_location = schema_location
 
 
+class JsonSyntaxError(JsonSchemaEngineError, ValueError):
+    """`parse_json_with_ranges` met text that is not an RFC 8259 document.
+
+    Carries the 1-based `line` and `column` and the 0-based `offset` of
+    the first offending character. Also a `ValueError`, so callers that
+    treat any bad input alike need no engine-specific clause.
+    """
+
+    line: int
+    column: int
+    offset: int
+
+    def __init__(self, message: str, *, line: int, column: int, offset: int) -> None:
+        super().__init__(message)
+        self.line = line
+        self.column = column
+        self.offset = offset
+
+
 class InvalidSchemaError(JsonSchemaEngineError):
     """A keyword-claimed schema position holds neither an object nor a boolean.
 

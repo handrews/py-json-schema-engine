@@ -1,4 +1,5 @@
-"""Tests for json_schema_engine.test_kit.positions (DESIGN.md D17)."""
+# The positions-reporting JSON parser (DESIGN.md D17): value, spans,
+# pointers, and the typed syntax error.
 
 from __future__ import annotations
 
@@ -6,7 +7,8 @@ import json
 
 import pytest
 
-from json_schema_engine.test_kit.positions import (
+from json_schema_engine.core import (
+    JsonSyntaxError,
     ParsedDocument,
     SourceSpan,
     parse_json_with_ranges,
@@ -128,18 +130,21 @@ def test_astral_character_offsets_are_code_point_based() -> None:
     ],
 )
 def test_truncated_input_raises_value_error_with_position(text: str) -> None:
-    with pytest.raises(ValueError, match=r"line \d+, column \d+"):
+    with pytest.raises(JsonSyntaxError, match=r"line \d+, column \d+"):
         parse_json_with_ranges(text, uri="urn:test:doc")
 
 
 def test_trailing_garbage_raises_value_error_with_position() -> None:
-    with pytest.raises(ValueError, match=r"line \d+, column \d+"):
+    with pytest.raises(JsonSyntaxError, match=r"line \d+, column \d+") as excinfo:
         parse_json_with_ranges("{}garbage", uri="urn:test:doc")
+    error = excinfo.value
+    assert isinstance(error, ValueError)
+    assert (error.line, error.column, error.offset) == (1, 3, 2)
 
 
 @pytest.mark.parametrize("text", ["NaN", "Infinity", "-Infinity", "[NaN]"])
 def test_non_finite_constants_are_rejected(text: str) -> None:
-    with pytest.raises(ValueError, match=r"line \d+, column \d+"):
+    with pytest.raises(JsonSyntaxError, match=r"line \d+, column \d+"):
         parse_json_with_ranges(text, uri="urn:test:doc")
 
 
