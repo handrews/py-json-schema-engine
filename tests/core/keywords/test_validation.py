@@ -218,6 +218,335 @@ def test_pattern_analyze_declares_regexes_fact() -> None:
     assert facts_non_string.regexes == ()
 
 
+# --- enum (M2) -----------------------------------------------------------
+
+
+def test_enum_matches_any_candidate_by_json_equal() -> None:
+    schema: JsonValue = {"enum": [1, "two", None, [3], {"a": 4}]}
+    assert run(schema, 1)[0]
+    assert run(schema, "two")[0]
+    assert run(schema, None)[0]
+    assert run(schema, [3])[0]
+    assert run(schema, {"a": 4})[0]
+    # json_equal, not identity: 1.0 matches the enumerated 1.
+    assert run(schema, 1.0)[0]
+
+
+def test_enum_no_match_reports_error() -> None:
+    valid, state = run({"enum": [1, 2]}, 3)
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "not one of the allowed values"
+    assert error.params == {"allowedValues": [1, 2]}
+    assert error.keyword_name == "enum"
+
+
+def test_enum_bool_does_not_match_numeric_candidate() -> None:
+    # P2: bool is never a number, so `1` in the enum does not match `True`.
+    assert not run({"enum": [1]}, True)[0]
+    assert run({"enum": [True]}, True)[0]
+
+
+def test_enum_empty_never_matches() -> None:
+    assert not run({"enum": []}, "anything")[0]
+
+
+# --- const (M2) ------------------------------------------------------------
+
+
+def test_const_matches_via_json_equal() -> None:
+    assert run({"const": {"a": [1, 2.0]}}, {"a": [1.0, 2]})[0]
+    assert not run({"const": 1}, True)[0]
+
+
+def test_const_mismatch_reports_error() -> None:
+    valid, state = run({"const": 5}, 6)
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "does not equal the required constant"
+    assert error.params == {"allowedValue": 5}
+    assert error.keyword_name == "const"
+
+
+# --- multipleOf (M2) --------------------------------------------------------
+
+
+def test_multiple_of_matrix() -> None:
+    assert run({"multipleOf": 2}, 4)[0]
+    assert not run({"multipleOf": 2}, 5)[0]
+    assert run({"multipleOf": 0.0001}, 0.0075)[0]
+    assert run({"multipleOf": 1}, 10**30)[0]
+    assert not run({"multipleOf": 3}, 10**30 + 1)[0]
+
+
+def test_multiple_of_type_guard_vacuity() -> None:
+    assert run({"multipleOf": 2}, "not a number")[0]
+    assert run({"multipleOf": 2}, None)[0]
+    assert run({"multipleOf": 2}, [1, 2])[0]
+
+
+def test_multiple_of_excludes_bool() -> None:
+    # P2: bool is never a number, on either side of the test.
+    assert run({"multipleOf": 1}, True)[0]
+    assert run({"multipleOf": True}, 4)[0]
+
+
+def test_multiple_of_error_params() -> None:
+    valid, state = run({"multipleOf": 2}, 5)
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "must be a multiple of 2"
+    assert error.params == {"multipleOf": 2}
+    assert error.keyword_name == "multipleOf"
+
+
+# --- maximum / exclusiveMaximum / minimum / exclusiveMinimum (M2) ----------
+
+NUMERIC_BOUNDS: list[tuple[str, JsonValue, bool]] = [
+    ("maximum", 5, True),
+    ("maximum", 6, False),
+    ("maximum", 4, True),
+    ("exclusiveMaximum", 5, False),
+    ("exclusiveMaximum", 6, False),
+    ("exclusiveMaximum", 4, True),
+    ("minimum", 5, True),
+    ("minimum", 4, False),
+    ("minimum", 6, True),
+    ("exclusiveMinimum", 5, False),
+    ("exclusiveMinimum", 4, False),
+    ("exclusiveMinimum", 6, True),
+]
+
+
+@pytest.mark.parametrize(("keyword", "instance", "expected"), NUMERIC_BOUNDS)
+def test_numeric_bounds_matrix(
+    keyword: str, instance: JsonValue, expected: bool
+) -> None:
+    assert run({keyword: 5}, instance)[0] is expected
+
+
+@pytest.mark.parametrize(
+    "keyword", ["maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"]
+)
+def test_numeric_bounds_type_guard_vacuity(keyword: str) -> None:
+    assert run({keyword: 5}, "not a number")[0]
+    assert run({keyword: 5}, None)[0]
+    assert run({keyword: 5}, [1])[0]
+    assert run({keyword: 5}, {"a": 1})[0]
+
+
+@pytest.mark.parametrize(
+    "keyword", ["maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum"]
+)
+def test_numeric_bounds_exclude_bool(keyword: str) -> None:
+    # P2: bool is never a number, so True/False never trip a numeric bound.
+    assert run({keyword: 5}, True)[0]
+    assert run({keyword: True}, 5)[0]
+
+
+def test_numeric_bounds_1_0_vs_1_compare_exactly() -> None:
+    assert run({"maximum": 1}, 1.0)[0]
+    assert not run({"exclusiveMaximum": 1}, 1.0)[0]
+    assert run({"minimum": 1.0}, 1)[0]
+    assert not run({"exclusiveMinimum": 1.0}, 1)[0]
+
+
+@pytest.mark.parametrize(
+    ("keyword", "message"),
+    [
+        ("maximum", "must be <= 5"),
+        ("exclusiveMaximum", "must be < 5"),
+        ("minimum", "must be >= 5"),
+        ("exclusiveMinimum", "must be > 5"),
+    ],
+)
+def test_numeric_bounds_error_message_and_params(keyword: str, message: str) -> None:
+    instance = 10 if keyword in ("maximum", "exclusiveMaximum") else 0
+    valid, state = run({keyword: 5}, instance)
+    assert not valid
+    error = state.errors[0]
+    assert error.message == message
+    assert error.params == {"limit": 5}
+    assert error.keyword_name == keyword
+
+
+# --- maxLength / minLength (M2) --------------------------------------------
+
+
+def test_length_bounds_matrix() -> None:
+    assert run({"maxLength": 3}, "abc")[0]
+    assert not run({"maxLength": 3}, "abcd")[0]
+    assert run({"minLength": 3}, "abc")[0]
+    assert not run({"minLength": 3}, "ab")[0]
+
+
+def test_length_bounds_count_code_points_not_code_units() -> None:
+    # U+1F600 is one code point, two UTF-16 code units; an implementation
+    # that counted units would reject this against maxLength 1.
+    assert run({"maxLength": 1}, "\U0001f600")[0]
+    assert run({"minLength": 1}, "\U0001f600")[0]
+
+
+def test_length_bounds_type_guard_vacuity() -> None:
+    assert run({"maxLength": 1}, 5)[0]
+    assert run({"minLength": 1}, None)[0]
+    assert run({"maxLength": 1}, [1, 2, 3])[0]
+
+
+def test_length_bounds_error_message_and_params() -> None:
+    valid, state = run({"maxLength": 3}, "abcd")
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "must be at most 3 characters"
+    assert error.params == {"limit": 3}
+    assert error.keyword_name == "maxLength"
+
+    valid, state = run({"minLength": 3}, "ab")
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "must be at least 3 characters"
+    assert error.params == {"limit": 3}
+
+
+# --- maxItems / minItems (M2) -----------------------------------------------
+
+
+def test_item_count_bounds_matrix() -> None:
+    assert run({"maxItems": 2}, [1, 2])[0]
+    assert not run({"maxItems": 2}, [1, 2, 3])[0]
+    assert run({"minItems": 2}, [1, 2])[0]
+    assert not run({"minItems": 2}, [1])[0]
+
+
+def test_item_count_bounds_type_guard_vacuity() -> None:
+    assert run({"maxItems": 1}, "ab")[0]
+    assert run({"minItems": 1}, {"a": 1})[0]
+    assert run({"maxItems": 1}, None)[0]
+
+
+def test_item_count_bounds_error_message_and_params() -> None:
+    valid, state = run({"maxItems": 2}, [1, 2, 3])
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "must have at most 2 items"
+    assert error.params == {"limit": 2}
+    assert error.keyword_name == "maxItems"
+
+
+# --- maxProperties / minProperties (M2) -------------------------------------
+
+
+def test_property_count_bounds_matrix() -> None:
+    assert run({"maxProperties": 2}, {"a": 1, "b": 2})[0]
+    assert not run({"maxProperties": 2}, {"a": 1, "b": 2, "c": 3})[0]
+    assert run({"minProperties": 2}, {"a": 1, "b": 2})[0]
+    assert not run({"minProperties": 2}, {"a": 1})[0]
+
+
+def test_property_count_bounds_type_guard_vacuity() -> None:
+    assert run({"maxProperties": 1}, [1, 2])[0]
+    assert run({"minProperties": 1}, "ab")[0]
+    assert run({"maxProperties": 1}, None)[0]
+
+
+def test_property_count_bounds_error_message_and_params() -> None:
+    valid, state = run({"maxProperties": 2}, {"a": 1, "b": 2, "c": 3})
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "must have at most 2 properties"
+    assert error.params == {"limit": 2}
+    assert error.keyword_name == "maxProperties"
+
+
+# --- uniqueItems (M2) --------------------------------------------------------
+
+
+def test_unique_items_rejects_1_and_1_0_as_duplicates() -> None:
+    # json_equal treats 1 and 1.0 as equal, so uniqueItems must too.
+    valid, state = run({"uniqueItems": True}, [1, 1.0])
+    assert not valid
+    error = state.errors[0]
+    assert error.message == "items at 0 and 1 are not unique"
+    assert error.params == {"duplicates": [0, 1]}
+    assert error.keyword_name == "uniqueItems"
+
+
+def test_unique_items_accepts_1_and_true_as_distinct() -> None:
+    # P2: bool is never a number, so 1 and True are not duplicates.
+    assert run({"uniqueItems": True}, [1, True])[0]
+
+
+def test_unique_items_false_is_inert() -> None:
+    assert run({"uniqueItems": False}, [1, 1, 1])[0]
+
+
+def test_unique_items_non_array_instance_is_vacuous() -> None:
+    assert run({"uniqueItems": True}, "not an array")[0]
+    assert run({"uniqueItems": True}, None)[0]
+
+
+def test_unique_items_reports_first_colliding_pair() -> None:
+    valid, state = run({"uniqueItems": True}, [1, 2, 1, 2])
+    assert not valid
+    assert state.errors[0].params == {"duplicates": [0, 2]}
+
+
+# --- dependentRequired (M2) --------------------------------------------------
+
+
+def test_dependent_required_all_present_passes() -> None:
+    assert run({"dependentRequired": {"a": ["b", "c"]}}, {"a": 1, "b": 2, "c": 3})[0]
+
+
+def test_dependent_required_trigger_absent_is_vacuous() -> None:
+    assert run({"dependentRequired": {"a": ["b"]}}, {"b": 2})[0]
+    assert run({"dependentRequired": {"a": ["b"]}}, {})[0]
+
+
+def test_dependent_required_non_object_instance_is_vacuous() -> None:
+    assert run({"dependentRequired": {"a": ["b"]}}, "not an object")[0]
+    assert run({"dependentRequired": {"a": ["b"]}}, [1, 2])[0]
+
+
+def test_dependent_required_reports_every_missing_dependency_in_order() -> None:
+    schema: JsonValue = {"dependentRequired": {"a": ["b", "c"], "x": ["y"]}}
+    valid, state = run(schema, {"a": 1, "x": 1})
+    assert not valid
+    assert len(state.errors) == 3
+    assert [
+        (e.params["property"], e.params["missingProperty"])
+        for e in state.errors
+        if e.params
+    ] == [("a", "b"), ("a", "c"), ("x", "y")]
+    for error in state.errors:
+        assert error.keyword_name == "dependentRequired"
+    assert state.errors[0].message == "'a' requires 'b' to be present"
+
+
+# --- minContains / maxContains (inert siblings, M2) --------------------------
+
+
+def test_min_max_contains_are_registered_but_never_assert_alone() -> None:
+    # No `contains` keyword in this schema, so minContains/maxContains have
+    # nothing to attach to; they must not fail or annotate on their own.
+    valid, state = run({"minContains": 5, "maxContains": 1}, [1, 2])
+    assert valid
+    assert state.errors == []
+    assert state.root_annotations == []
+
+
+def test_min_max_contains_have_no_analyze() -> None:
+    assert VALIDATION_VOCABULARY["minContains"].analyze is None
+    assert VALIDATION_VOCABULARY["maxContains"].analyze is None
+
+
+@pytest.mark.parametrize("instance", [[1, 2], "not an array", None, 0, {}])
+def test_min_max_contains_never_fail_regardless_of_instance(
+    instance: JsonValue,
+) -> None:
+    assert run({"minContains": 5, "maxContains": 0}, instance)[0]
+
+
 # --- format (annotation-only, M1) --------------------------------------
 
 
