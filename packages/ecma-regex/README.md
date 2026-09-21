@@ -15,6 +15,14 @@ it, and it is useful anywhere an ECMA-262 pattern has to run under Python.
 
 [engine]: https://github.com/handrews/py-json-schema-engine
 
+Produced by Henry Andrews via Claude Code.
+
+**Status: 0.0.x.** The implementation is functional and tested against every
+regular expression in the official JSON Schema test suite, but the
+documentation is AI-written and not yet audited against actual usage or
+human readability standards. `0.1.x` ships once the documentation is deemed
+suitable for general consumption.
+
 ## Install
 
 ```sh
