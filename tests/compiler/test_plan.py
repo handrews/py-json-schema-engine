@@ -150,11 +150,18 @@ def test_consumer_licensing_needs_static_coverage() -> None:
     )
     coverage = via_all_of.units[via_all_of.root_key].coverage
     assert coverage is not None and coverage.names == frozenset({"b"})
-    # A conditional contributor makes coverage dynamic: interpreted in M6.
-    unlicensed, _ = plan_for(
+    # A conditional contributor makes coverage dynamic: the consumer is
+    # tracked at runtime (M9) and its in-place closure forms the region.
+    unlicensed, uri2 = plan_for(
         {"anyOf": [{"properties": {"b": True}}], "unevaluatedProperties": False}
     )
-    assert unlicensed.units[unlicensed.root_key].cause == "unlowerable"
+    root = unlicensed.units[unlicensed.root_key]
+    assert root.kind == "static" and root.cause is None
+    assert root.tracked and root.coverage is None
+    assert unlicensed.units[uri2 + "#/anyOf/0"].in_region
+    assert unlicensed.coverage_ids >= {
+        "https://json-schema.org/draft/2020-12/vocab/applicator#properties"
+    }
 
 
 def test_draft7_ref_ignores_siblings_in_the_plan() -> None:

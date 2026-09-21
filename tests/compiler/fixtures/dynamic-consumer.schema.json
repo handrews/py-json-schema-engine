@@ -1,0 +1,25 @@
+{
+  "$defs": {
+    "base": {
+      "$dynamicAnchor": "base",
+      "properties": {
+        "a": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "$dynamicRef": "#base"
+    },
+    {
+      "properties": {
+        "b": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

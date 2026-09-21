@@ -41,8 +41,10 @@ from json_schema_engine.core.lowering import (
     apply_expr,
     child,
     cmp,
+    cond,
     const,
     helper,
+    produce,
     type_is,
     when,
 )
@@ -76,15 +78,38 @@ def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not isinstance(value, list):
         return
     instance = lctx.instance
+    length = helper("length_of", instance)
     lctx.emit(
         when(
             type_is(instance, "array"),
-            tuple(
-                when(
-                    cmp(">", helper("length_of", instance), const(index)),
-                    (apply((index,), child(HERE, index)),),
-                )
-                for index in range(len(value))
+            (
+                *(
+                    when(
+                        cmp(">", length, const(index)),
+                        (apply((index,), child(HERE, index)),),
+                    )
+                    for index in range(len(value))
+                ),
+                # `True` when every element was covered, else the largest
+                # applied index; nothing for an empty array (`evaluate`).
+                *(
+                    (
+                        when(
+                            cmp(">", length, const(0)),
+                            (
+                                produce(
+                                    cond(
+                                        cmp("<=", length, const(len(value))),
+                                        const(True),
+                                        const(len(value) - 1),
+                                    )
+                                ),
+                            ),
+                        ),
+                    )
+                    if value
+                    else ()
+                ),
             ),
         )
     )
@@ -152,6 +177,10 @@ def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
                     binding,
                     (apply((), child(HERE, Binding(binding))),),
                     start=start,
+                ),
+                when(
+                    cmp(">", helper("length_of", instance), const(start)),
+                    (produce(const(True)),),
                 ),
             ),
         )
@@ -245,6 +274,8 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             else {"minContains": Const(int(minimum))}
         )
         binding = lctx.binding()
+        matched = lctx.binding()
+        count = helper("length_of", Binding(matched))
         lctx.emit(
             when(
                 type_is(instance, "array"),
@@ -257,6 +288,21 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
                         int(maximum) if maximum is not None else None,
                         message=message,
                         params=params,
+                        matched=matched,
+                    ),
+                    # Matched indexes, or `True` when every element matched;
+                    # nothing when nothing matched (`evaluate`).
+                    when(
+                        cmp(">", count, const(0)),
+                        (
+                            produce(
+                                cond(
+                                    cmp("==", count, helper("length_of", instance)),
+                                    const(True),
+                                    Binding(matched),
+                                )
+                            ),
+                        ),
                     ),
                 ),
             )

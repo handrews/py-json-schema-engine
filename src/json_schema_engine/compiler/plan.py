@@ -87,6 +87,16 @@ class PlannedUnit:
     reaches_interpreted: bool = False
     # Planned edges targeting this unit (D9c inline licensing).
     use_count: int = 0
+    # M9 runtime coverage tracking: a tracked unit owns a coverage channel
+    # its consumers fold at runtime (no static licence); a region unit is
+    # reachable in place from a tracked unit and produces into the channel
+    # it is handed. Both take the channel as a parameter and never inline.
+    tracked: bool = False
+    in_region: bool = False
+
+    @property
+    def takes_channel(self) -> bool:
+        return self.tracked or self.in_region
 
     def interpret(self, cause: FallbackCause) -> None:
         self.kind = "interpreted"
@@ -105,6 +115,9 @@ class CompilationPlan:
     formats: tuple[str, ...]
     # Interpreted units in stable order; index = target-table slot.
     targets: tuple[PlannedUnit, ...]
+    # Producer ids some tracked consumer reads (M9): only their productions
+    # are recorded on a channel.
+    coverage_ids: frozenset[str] = frozenset()
 
 
 def unit_key(ref: SchemaRef) -> str:
@@ -371,6 +384,7 @@ class _Round:
     formats: dict[str, None]
     pending: dict[SiteKey, _PendingSite]
     root: PlannedUnit
+    coverage_ids: set[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,12 +396,16 @@ class _Edge:
 
 
 def _plan_round(
-    registry: SchemaRegistry, root_ref: SchemaRef, sites: SiteDecisions
+    registry: SchemaRegistry,
+    root_ref: SchemaRef,
+    sites: SiteDecisions,
+    track_all: bool,
 ) -> _Round:
     units: dict[str, PlannedUnit] = {}
     patterns: dict[str, None] = {}
     formats: dict[str, None] = {}
     pending: dict[SiteKey, _PendingSite] = {}
+    coverage_ids: set[str] = set()
 
     def plan(ref: SchemaRef, in_place_chain: tuple[str, ...]) -> PlannedUnit:
         key = unit_key(ref)
@@ -456,35 +474,39 @@ def _plan_round(
                         unit.interpret("unlowerable")
                         return unit
 
-        # Consumer licensing (D9a): a consumer lowers only when the coverage
-        # half it needs is statically known — from this object's own
-        # contributors plus, transitively, unconditional asserting in-place
-        # applications. Anything runtime-conditional makes the coverage
-        # dynamic and (in M6, without runtime tracking) the node interpreted.
+        # Consumer licensing (D9a): a consumer lowers against a static
+        # coverage when the half it needs is statically known — from this
+        # object's own contributors plus, transitively, unconditional
+        # asserting in-place applications. Anything runtime-conditional
+        # makes the coverage dynamic, and the unit is then tracked (M9):
+        # its consumers fold a runtime channel instead. A static licence
+        # models only the parent-success path, so a plan that must observe
+        # failed siblings (`track_all`, the evaluator) tracks every consumer.
         if consumer_present:
-            name_half, index_half = coverage_halves(registry, ref, set(), True, sites)
-            needs_names = any(
-                len(f.consumes) > 0 and f.evaluates_names is not None
-                for _, f in present
+            consumers = [f for _, f in present if _is_coverage_consumer(f)]
+            name_half, index_half = (
+                (None, None)
+                if track_all
+                else coverage_halves(registry, ref, set(), True, sites)
             )
-            needs_indexes = any(
-                len(f.consumes) > 0 and f.evaluates_indexes is not None
-                for _, f in present
-            )
+            needs_names = any(f.evaluates_names is not None for f in consumers)
+            needs_indexes = any(f.evaluates_indexes is not None for f in consumers)
             if (needs_names and name_half is None) or (
                 needs_indexes and index_half is None
             ):
-                unit.interpret("unlowerable")
-                return unit
-            unit.coverage = StaticCoverage(
-                names=frozenset(name_half.names) if name_half else frozenset(),
-                patterns=tuple(name_half.patterns) if name_half else (),
-                covers_all_names=name_half.all if name_half else False,
-                prefix_count=index_half.prefix if index_half else 0,
-                covers_all_indexes=index_half.all if index_half else False,
-            )
-            for regex in unit.coverage.patterns:
-                patterns[regex] = None
+                unit.tracked = True
+                for f in consumers:
+                    coverage_ids.update(f.consumes)
+            else:
+                unit.coverage = StaticCoverage(
+                    names=frozenset(name_half.names) if name_half else frozenset(),
+                    patterns=tuple(name_half.patterns) if name_half else (),
+                    covers_all_names=name_half.all if name_half else False,
+                    prefix_count=index_half.prefix if index_half else 0,
+                    covers_all_indexes=index_half.all if index_half else False,
+                )
+                for regex in unit.coverage.patterns:
+                    patterns[regex] = None
 
         # Plan children.
         for edge in edges:
@@ -511,7 +533,7 @@ def _plan_round(
         return unit
 
     root = plan(root_ref, ())
-    return _Round(units, patterns, formats, pending, root)
+    return _Round(units, patterns, formats, pending, root, coverage_ids)
 
 
 def _outermost_declarers(
@@ -605,14 +627,40 @@ def _settle_sites(
     return changed
 
 
-def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPlan:
+def build_plan_over(
+    registry: SchemaRegistry, schema_uri: str, *, track_all: bool = False
+) -> CompilationPlan:
+    """Plan over a registry (normally a snapshot). `track_all` tracks every
+    coverage consumer at runtime instead of licensing static coverage
+    (the evaluator's plans, whose units continue past a failed sibling)."""
     root_ref = registry.root_ref(schema_uri)
     sites: SiteDecisions = {}
     while True:
-        round_ = _plan_round(registry, root_ref, sites)
+        round_ = _plan_round(registry, root_ref, sites, track_all)
         if not _settle_sites(registry, round_, sites):
             break
     units = round_.units
+
+    # Region fixpoint (M9): every static, non-boolean unit reachable in
+    # place from a tracked unit produces into that unit's channel. Every
+    # in-place edge counts — inverted (`not`) and non-asserting (`if`'s
+    # condition) ones too, since a passing negated or conditional
+    # subschema's records are visible to the consumer — and a tracked unit
+    # inside a region nests through its own entry mark.
+    worklist = [u.key for u in units.values() if u.tracked]
+    while worklist:
+        unit = units[worklist.pop()]
+        for edge in unit.edges:
+            target = units[edge.target_key]
+            if (
+                edge.app.mode != "in_place"
+                or target.kind != "static"
+                or isinstance(target.ref.node, bool)
+                or target.in_region
+            ):
+                continue
+            target.in_region = True
+            worklist.append(target.key)
 
     # `reaches_interpreted` fixpoint over the edge graph.
     changed = True
@@ -636,7 +684,12 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
 
     targets = tuple(u for u in units.values() if u.kind == "interpreted")
     return CompilationPlan(
-        round_.root.key, units, tuple(round_.patterns), tuple(round_.formats), targets
+        round_.root.key,
+        units,
+        tuple(round_.patterns),
+        tuple(round_.formats),
+        targets,
+        frozenset(round_.coverage_ids),
     )
 
 
@@ -665,12 +718,15 @@ class CompilationExplanation:
     interpreted_keys: tuple[str, ...]
     reaches_interpreted: int
     resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...] = ()
+    # M9: consumers tracked at runtime, and the units in their regions.
+    tracked_units: int = 0
+    region_units: int = 0
 
 
 def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
     causes: dict[FallbackCause, int] = {}
     interpreted: list[str] = []
-    reaching = 0
+    reaching = tracked = region = 0
     resolved: list[ResolvedDynamicSite] = []
     for unit in plan.units.values():
         if unit.kind == "interpreted":
@@ -680,6 +736,8 @@ def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
             continue
         if unit.reaches_interpreted:
             reaching += 1
+        tracked += unit.tracked
+        region += unit.in_region
         for edge in unit.edges:
             if edge.dynamic is not None and edge.app.ref is not None:
                 resolved.append(
@@ -701,6 +759,8 @@ def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
         resolved_dynamic_sites=tuple(
             sorted(resolved, key=lambda s: (s.unit, s.keyword, s.ref))
         ),
+        tracked_units=tracked,
+        region_units=region,
     )
 
 

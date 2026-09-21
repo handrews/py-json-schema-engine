@@ -158,10 +158,14 @@ def test_openapi_schema_compiles_with_no_interpreted_unit() -> None:
     engine = create_engine()
     uri = engine.register_schema(schema, schema["$id"])
     explanation = explain_compilation(build_plan(engine, uri))
-    assert explanation.causes.get("dynamic", 0) == 0, explanation.interpreted_keys
-    # Step 2 (runtime coverage tracking) lifts the root's `unlowerable`
-    # island; until then the root is the plan and no site is reached.
-    assert explanation.causes == {"unlowerable": 1}
+    assert explanation.interpreted_units == 0, explanation.interpreted_keys
+    assert len(explanation.resolved_dynamic_sites) == 4
+    assert {site.winner for site in explanation.resolved_dynamic_sites} == {
+        schema["$id"]
+    }
+    # The root's `anyOf` beside `unevaluatedProperties` is tracked at runtime.
+    assert explanation.tracked_units >= 1 and explanation.region_units >= 1
+    assert "def validate" in emit_standalone(engine, uri)
 
 
 def test_metaschema_as_root_resolves_every_site() -> None:

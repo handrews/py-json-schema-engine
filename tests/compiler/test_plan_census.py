@@ -27,17 +27,12 @@ REMOTES_DIR = ROOT / "remotes"
 # per dialect directory. M9 resolves every dynamic-reference site whose
 # target is the same on every path (the suite's "multiple dynamic paths"
 # groups are the ones that stay islands; a resolved site plans its target's
-# subtree, hence the unit totals grow); the `unlowerable` counts are the
-# `unevaluated*` consumers whose coverage is runtime-conditional.
+# subtree, hence the unit totals grow) and tracks `unevaluated*` consumers
+# whose coverage is runtime-conditional instead of islanding them, so the
+# only fallback cause left is an unstable dynamic site.
 PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int], int]]] = {
-    "draft2020-12": (
-        DIALECT_2020_12,
-        (384, 1238, 21, {"dynamic": 1, "unlowerable": 20}, 58),
-    ),
-    "draft2019-09": (
-        DIALECT_2019_09,
-        (373, 1186, 18, {"dynamic": 2, "unlowerable": 16}, 47),
-    ),
+    "draft2020-12": (DIALECT_2020_12, (384, 1371, 1, {"dynamic": 1}, 58)),
+    "draft2019-09": (DIALECT_2019_09, (373, 1300, 2, {"dynamic": 2}, 47)),
     # No dynamic references and no unevaluated* keywords: fully static.
     "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0)),
     "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0)),

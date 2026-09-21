@@ -11,7 +11,7 @@
 #   - round-trips through `ast.unparse(ast.parse(source))`,
 #   - never turns a hostile string into an identifier: every `ast.Name`,
 #     `ast.arg`, and `ast.FunctionDef` in the module is one of the fixed
-#     helper names, the emitter's builtins, or a minted `[ubtgcrk]\d+`
+#     helper names, the emitter's builtins, or a minted `[ubtgcrkm]\d+`
 #     name — even when a hostile string is itself spelled exactly like one
 #     of those (e.g. the corpus includes literal "validate", "v", "u0"),
 #   - carries the hostile string only as a string `ast.Constant`, present
@@ -98,11 +98,15 @@ MINTED_VOCABULARY = {
     "H_MOF",
     "H_DUP",
     "H_FRAG",
+    "H_FRAGC",
+    "H_COVN",
+    "H_COVI",
+    "ev",
     "H_DEEP",
     "H_MAXD",
     "MaxDepthExceededError",
 } | BUILTINS_USED
-_MINTED_PATTERN = re.compile(r"(?:[ubtgcrk]|fmt)\d+$")
+_MINTED_PATTERN = re.compile(r"(?:[ubtgcrkm]|fmt)\d+$")
 
 
 def _is_minted(name: str) -> bool:
@@ -118,7 +122,7 @@ def _assert_only_minted_identifiers(module: ast.Module) -> list[str]:
         if isinstance(node, ast.Name):
             assert _is_minted(node.id), node.id
         elif isinstance(node, ast.arg):
-            assert node.arg in ("v", "d", "s"), node.arg
+            assert node.arg in ("v", "d", "s", "ev"), node.arg
         elif isinstance(node, ast.FunctionDef):
             assert node.name == "validate" or re.fullmatch(r"u\d+", node.name), (
                 node.name

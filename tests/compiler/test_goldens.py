@@ -17,8 +17,19 @@ from json_schema_engine.core import create_engine
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDENS = Path(__file__).parent / "goldens"
-# `island` keeps an unstable dynamic site (M9); `dynamic-static` a resolved one.
-NAMES = ["user", "event", "profile", "static-consumer", "island", "dynamic-static"]
+# `island` keeps an unstable dynamic site (M9); `dynamic-static` pins a
+# resolved one; `tracked-consumer` a consumer tracked at runtime with its
+# `anyOf` region; `dynamic-consumer` a region holding a resolved site.
+NAMES = [
+    "user",
+    "event",
+    "profile",
+    "static-consumer",
+    "island",
+    "dynamic-static",
+    "tracked-consumer",
+    "dynamic-consumer",
+]
 
 
 def compile_fixture(name: str) -> str:
@@ -56,6 +67,10 @@ def test_every_identifier_is_minted() -> None:
         "H_MOF",
         "H_DUP",
         "H_FRAG",
+        "H_FRAGC",
+        "H_COVN",
+        "H_COVI",
+        "ev",
         "H_DEEP",
         "H_MAXD",
         "MaxDepthExceededError",
@@ -63,10 +78,10 @@ def test_every_identifier_is_minted() -> None:
     for node in ast.walk(module):
         if isinstance(node, ast.Name):
             assert node.id in minted or (
-                node.id[0] in "ubtgcrk" and node.id[1:].isdigit()
+                node.id[0] in "ubtgcrkm" and node.id[1:].isdigit()
             ), node.id
         elif isinstance(node, ast.arg):
-            assert node.arg in ("v", "d", "s")
+            assert node.arg in ("v", "d", "s", "ev")
         elif isinstance(node, ast.FunctionDef):
             assert node.name == "validate" or (
                 node.name[0] == "u" and node.name[1:].isdigit()

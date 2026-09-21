@@ -21,6 +21,7 @@ class RecordingContext:
 
     _schema: Mapping[str, JsonValue]
     _coverage: StaticCoverage | None = None
+    _tracked: bool = False
     stmts: list[Stmt] = field(default_factory=list[Stmt])
     next_binding: int = 0
 
@@ -34,6 +35,9 @@ class RecordingContext:
 
     def static_coverage(self) -> StaticCoverage | None:
         return self._coverage
+
+    def runtime_coverage(self) -> bool:
+        return self._tracked
 
     def emit(self, *stmts: Stmt) -> None:
         self.stmts.extend(stmts)
@@ -49,9 +53,11 @@ def lower(
     value: JsonValue,
     schema: Mapping[str, JsonValue] | None = None,
     coverage: StaticCoverage | None = None,
+    tracked: bool = False,
 ) -> tuple[Stmt, ...]:
-    """The IR `behavior.lower` emits for `value` inside `schema`."""
+    """The IR `behavior.lower` emits for `value` inside `schema`; `tracked`
+    is the planner's runtime-coverage decision for a consumer (M9)."""
     assert behavior.lower is not None, "behavior has no lower()"
-    ctx = RecordingContext(schema if schema is not None else {}, coverage)
+    ctx = RecordingContext(schema if schema is not None else {}, coverage, tracked)
     behavior.lower(value, ctx)
     return tuple(ctx.stmts)

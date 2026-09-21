@@ -12,11 +12,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from json_schema_engine.compiler.emit import (
+    CHANNEL,
     DEPTH_ERROR,
+    H_COVI,
+    H_COVN,
     H_DEEP,
     H_DUP,
     H_EQ,
     H_FRAG,
+    H_FRAGC,
     H_MAXD,
     H_MOF,
     RUNTIME,
@@ -76,11 +80,15 @@ class ModuleContext:
             H_MOF,
             H_DUP,
             H_FRAG,
+            H_FRAGC,
+            H_COVN,
+            H_COVI,
             H_DEEP,
             H_MAXD,
             RUNTIME,
             TARGETS,
             DEPTH_ERROR,
+            CHANNEL,
         ):
             self.names.name(fixed)
 
@@ -149,6 +157,24 @@ class BodyContext:
     key_bindings: set[int] = field(default_factory=set[int])
     # The keyword whose statements are being serialized (edge lookup).
     keyword: str = ""
+    # Its behavior id: the producer identity a `Produce` records under.
+    behavior_id: str = ""
+    # The coverage channel variable when this body's function takes one
+    # (a tracked or region unit, M9); `None` elides every production.
+    channel: str | None = None
+    # A tracked unit's entry mark: it folds only what its own region
+    # produced (`ev[mark:]`), so nesting inside another region is sound.
+    channel_mark: str | None = None
+    # Coverage-fold bindings rendered so far -> which half they hold.
+    folds: dict[int, str] = field(default_factory=dict[int, str])
+
+    @property
+    def produce_live(self) -> bool:
+        """Whether the current keyword's productions reach a consumer."""
+        return (
+            self.channel is not None
+            and self.behavior_id in self.fn.module.plan.coverage_ids
+        )
 
     def binding_name(self, binding: int) -> str:
         name = self.bindings.get(binding)

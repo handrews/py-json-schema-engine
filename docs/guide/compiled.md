@@ -77,8 +77,7 @@ If you need an artifact to see a new schema, compile a new one.
 `explain_compilation(plan)` returns a `CompilationExplanation`: unit
 counts and, for every interpreted unit, a `FallbackCause` — `"dynamic"`
 (a `$dynamicRef`-class keyword whose target depends on dynamic scope),
-`"unlowerable"` (a keyword without `lower()`, an unresolvable reference,
-or a coverage consumer whose evaluated set is only known at runtime),
+`"unlowerable"` (a keyword without `lower()` or an unresolvable reference),
 `"cycle"` (an in-place `$ref` cycle at the same cursor), or `"non_schema"`
 (a reference into a position that is not a schema at all).
 

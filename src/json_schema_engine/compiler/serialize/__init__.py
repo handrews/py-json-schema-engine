@@ -68,6 +68,7 @@ def serialize_plan(
             e.load(e.VALUE),
             e.const(0),
             e.tuple_(()),
+            *((e.list_literal(),) if root.takes_channel else ()),
         )
     while module.pending:
         key = module.pending.pop(0)
@@ -142,6 +143,14 @@ def _emit_function(module: ModuleContext, unit: PlannedUnit) -> ast.FunctionDef:
         stmts.append(
             e.assign(e.SCOPE, e.starred_append(e.SCOPE, e.const(unit.ref.base_uri)))
         )
+    if unit.takes_channel:
+        body.channel = e.CHANNEL
+    if unit.tracked:
+        # The unit folds only what its own region produces (M9).
+        body.channel_mark = module.names.fresh("m")
+        stmts.append(
+            e.assign(body.channel_mark, e.call(e.load("len"), e.load(e.CHANNEL)))
+        )
     if uses_object_test(ir):
         body.guard = module.names.fresh("g")
         stmts.append(e.assign(body.guard, e.type_is(e.load(e.VALUE), "dict")))
@@ -157,7 +166,10 @@ def _emit_function(module: ModuleContext, unit: PlannedUnit) -> ast.FunctionDef:
             e.aug_add(e.DEPTH, e.const(1)),
             *stmts,
         ]
-    return e.function(module.functions[unit.key], [e.VALUE, e.DEPTH, e.SCOPE], stmts)
+    params = [e.VALUE, e.DEPTH, e.SCOPE]
+    if unit.takes_channel:
+        params.append(e.CHANNEL)
+    return e.function(module.functions[unit.key], params, stmts)
 
 
 def assemble(prologue: Sequence[ast.stmt], serialized: Serialized) -> ast.Module:

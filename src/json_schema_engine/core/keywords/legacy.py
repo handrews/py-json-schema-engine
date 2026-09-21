@@ -43,11 +43,13 @@ from json_schema_engine.core.lowering import (
     apply,
     child,
     cmp,
+    cond,
     const,
     fail,
     has_key,
     helper,
     not_,
+    produce,
     type_is,
     when,
 )
@@ -94,17 +96,40 @@ def _items_legacy_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts
 
 def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
+    length = helper("length_of", instance)
     if isinstance(value, list):
-        # Tuple form: same shape as 2020-12 `prefixItems`.
+        # Tuple form: same shape as 2020-12 `prefixItems`, dependency data
+        # included (`True` when every element was covered, else the
+        # largest applied index; nothing for an empty array).
         lctx.emit(
             when(
                 type_is(instance, "array"),
-                tuple(
-                    when(
-                        cmp(">", helper("length_of", instance), const(index)),
-                        (apply((index,), child(HERE, index)),),
-                    )
-                    for index in range(len(value))
+                (
+                    *(
+                        when(
+                            cmp(">", length, const(index)),
+                            (apply((index,), child(HERE, index)),),
+                        )
+                        for index in range(len(value))
+                    ),
+                    *(
+                        (
+                            when(
+                                cmp(">", length, const(0)),
+                                (
+                                    produce(
+                                        cond(
+                                            cmp("<=", length, const(len(value))),
+                                            const(True),
+                                            const(len(value) - 1),
+                                        )
+                                    ),
+                                ),
+                            ),
+                        )
+                        if value
+                        else ()
+                    ),
                 ),
             )
         )
@@ -124,6 +149,7 @@ def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
                     (apply((), child(HERE, Binding(binding))),),
                     start=0,
                 ),
+                when(cmp(">", length, const(0)), (produce(const(True)),)),
             ),
         )
     )
@@ -214,6 +240,10 @@ def _additional_items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
                     binding,
                     (apply((), child(HERE, Binding(binding))),),
                     start=start,
+                ),
+                when(
+                    cmp(">", helper("length_of", instance), const(start)),
+                    (produce(const(True)),),
                 ),
             ),
         )

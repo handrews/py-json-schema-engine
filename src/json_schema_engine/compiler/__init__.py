@@ -110,6 +110,7 @@ def compile_validator(
         budget,
         formats=plan.formats,
         format_table=engine.formats,
+        coverage_ids=plan.coverage_ids,
     )
     validate = instantiate(
         module, make_namespace(runtime, [t.ref for t in plan.targets])

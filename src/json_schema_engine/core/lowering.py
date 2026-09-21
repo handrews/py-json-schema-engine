@@ -20,13 +20,16 @@
 #    licensed emitter optimization in verdict-only regions (§4 rule 7),
 #    never an IR semantic.
 #
-# Scope (M6, the flag validator): the TS engine's `annotate`, `produce`,
-# `coverageFold`, `coverageCovers`, `tally`, and `tallyList` nodes serve
-# list/annotation output and runtime coverage tracking (M9) and are not
-# defined yet (`FormatTest` arrived with the formats package, M7). `Fail`
-# keeps its message and params although flag emission ignores them, so a
-# keyword shares one message builder between `evaluate` and `lower` from
-# the start and list-mode parity is mechanical later.
+# Runtime coverage tracking (M9): a producer keyword describes the
+# dependency data it would `ctx.produce()` with `Produce` (the same value
+# shapes: name lists, `True`, an index), collected on the way with
+# `Collect`/`Append`; a consumer that the planner tracks at runtime (no
+# static licence) folds the region's channel once with `CoverageFold` and
+# tests membership with `Covers`. Outside a tracked region the emitter
+# elides all of them, so flag code there is unchanged. `Fail` keeps its
+# message and params although flag emission ignores them, so a keyword
+# shares one message builder between `evaluate` and `lower` from the
+# start and evaluator-mode parity is mechanical.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -171,6 +174,24 @@ class ApplyExpr:
     apply: "LowerApply"
 
 
+@dataclass(frozen=True, slots=True)
+class Cond:
+    """A conditional expression: `then` when `test` holds, else `orelse`."""
+
+    test: "Expr"
+    then: "Expr"
+    orelse: "Expr"
+
+
+@dataclass(frozen=True, slots=True)
+class Covers:
+    """Whether the coverage bound by a `CoverageFold` covers `target` (a
+    swept name or index)."""
+
+    fold: int
+    target: "Expr"
+
+
 type Expr = (
     Instance
     | Const
@@ -187,6 +208,8 @@ type Expr = (
     | Not
     | Logic
     | ApplyExpr
+    | Cond
+    | Covers
 )
 
 # --- cursors and applications ------------------------------------------------
@@ -305,7 +328,9 @@ class CombineCheck:
 @dataclass(frozen=True, slots=True)
 class CountRange:
     """`contains`' shape: probe every index, count the matches, fail when
-    the count falls outside `[minimum, maximum]` (`None` = unbounded)."""
+    the count falls outside `[minimum, maximum]` (`None` = unbounded).
+    `matched`, when set, is a list binding that collects the matching
+    indexes (the keyword's dependency data)."""
 
     target: Expr
     binding: int
@@ -314,9 +339,60 @@ class CountRange:
     maximum: int | None
     message: LowerMessage
     params: LowerParams | None = None
+    matched: int | None = None
 
 
-type Stmt = If | ForEachKey | ForEachIndex | Fail | Apply | CombineCheck | CountRange
+@dataclass(frozen=True, slots=True)
+class Collect:
+    """Bind an empty list to accumulate dependency data."""
+
+    binding: int
+
+
+@dataclass(frozen=True, slots=True)
+class Append:
+    """Append `value` to a `Collect` binding (`unique`: only when absent)."""
+
+    binding: int
+    value: Expr
+    unique: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Produce:
+    """The keyword's dependency data at the current cursor (§4 rule 2):
+    the value `ctx.produce()` would carry. Reached only along the keyword's
+    accepting path (rule 6). Elided unless a tracked consumer reads it."""
+
+    value: Expr
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageFold:
+    """Bind the runtime evaluated coverage a tracked consumer reads: the
+    region channel's productions from the producers in `consumes`, folded
+    by core's coverage folds (`half` selects names or indexes)."""
+
+    binding: int
+    half: Literal["names", "indexes"]
+    consumes: tuple[str, ...]
+    contains_id: str | None = None
+    prefix_id: str | None = None
+
+
+type Stmt = (
+    If
+    | ForEachKey
+    | ForEachIndex
+    | Fail
+    | Apply
+    | CombineCheck
+    | CountRange
+    | Collect
+    | Append
+    | Produce
+    | CoverageFold
+)
 
 # --- the lowering service --------------------------------------------------
 
@@ -351,8 +427,15 @@ class LoweringContext(Protocol):
 
     def static_coverage(self) -> StaticCoverage | None:
         """The planner's static coverage for this schema object; `None`
-        means the planner did not license a static consumer here, which a
-        lowered consumer treats as a planner bug."""
+        means the planner did not license a static consumer here (it is
+        then tracked at runtime, `runtime_coverage()`)."""
+        ...
+
+    def runtime_coverage(self) -> bool:
+        """Whether the planner tracks this schema object's consumers at
+        runtime (M9): the consumer folds the region channel instead of a
+        static coverage. Exactly one of this and `static_coverage()` is
+        available to a consumer; neither means a planner bug."""
         ...
 
     def emit(self, *stmts: Stmt) -> None:
@@ -469,3 +552,34 @@ def combine_check(
     message: LowerMessage, params: LowerParams | None = None
 ) -> CombineCheck:
     return CombineCheck(message, params)
+
+
+def cond(test: Expr, then: Expr, orelse: Expr) -> Cond:
+    return Cond(test, then, orelse)
+
+
+def covers(fold: int, target: Expr) -> Covers:
+    return Covers(fold, target)
+
+
+def collect(binding: int) -> Collect:
+    return Collect(binding)
+
+
+def append(binding: int, value: Expr, *, unique: bool = False) -> Append:
+    return Append(binding, value, unique)
+
+
+def produce(value: Expr) -> Produce:
+    return Produce(value)
+
+
+def coverage_fold(
+    binding: int,
+    half: Literal["names", "indexes"],
+    consumes: tuple[str, ...],
+    *,
+    contains_id: str | None = None,
+    prefix_id: str | None = None,
+) -> CoverageFold:
+    return CoverageFold(binding, half, consumes, contains_id, prefix_id)

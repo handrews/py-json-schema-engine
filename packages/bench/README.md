@@ -134,14 +134,6 @@ only in before:
 
 - **`fastjsonschema` on `event`**: disagrees with the oracle on
   `unevaluatedProperties` — a documented divergence, not a bench bug.
-- **`jse standalone` on `oas-document`**: `emit_standalone` refuses any
-  schema with an interpreted unit. The root's `anyOf` + `unevaluatedProperties`
-  combination makes its evaluated-property coverage statically
-  unknowable (an `anyOf` branch is conditional, so it can never license a
-  static coverage half), so the plan reports the root as needing the
-  interpreter before it descends far enough to reach the schema's
-  `$dynamicRef` sites. The interpreter and compiled flag tiers are
-  unaffected and are always timed for this corpus.
 - **`fastjsonschema` on `oas-document`**: disagrees with the oracle,
   accepting a document this bench's oracle (and `jsonschema`) reject.
 

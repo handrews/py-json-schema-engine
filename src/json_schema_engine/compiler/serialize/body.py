@@ -23,14 +23,19 @@ from json_schema_engine.compiler.serialize.units import (
 )
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.lowering import (
+    Append,
     Apply,
     ApplyExpr,
     Binding,
     Child,
     Cmp,
+    Collect,
     CombineCheck,
+    Cond,
     Const,
     CountRange,
+    CoverageFold,
+    Covers,
     Expr,
     Fail,
     ForEachIndex,
@@ -50,6 +55,7 @@ from json_schema_engine.core.lowering import (
     LowerCursor,
     Member,
     Not,
+    Produce,
     RegexTest,
     Stmt,
     TypeIs,
@@ -186,7 +192,26 @@ def expression(body: BodyContext, expr: Expr) -> ast.expr:
             rendered = [expression(body, p) for p in parts]
             return e.and_(*rendered) if op == "and" else e.or_(*rendered)
         case ApplyExpr(apply):
+            if body.channel is not None and isinstance(apply.cursor, Here):
+                # An in-place application inside a tracked region needs a
+                # channel mark around it; only `If` conditions are hoisted.
+                raise SerializeError(
+                    "in-place application inside an expression in a tracked region"
+                )
             return apply_expression(body, apply)
+        case Cond(test, then, orelse):
+            return e.if_expr(
+                expression(body, test), expression(body, then), expression(body, orelse)
+            )
+        case Covers(fold, target):
+            coverage = e.load(body.binding_name(fold))
+            x = expression(body, target)
+            if body.folds[fold] == "names":
+                return e.in_(x, coverage)
+            return e.or_(
+                e.compare(x, ast.Lt(), e.subscript(coverage, e.const(0))),
+                e.in_(x, e.subscript(coverage, e.const(1))),
+            )
 
 
 def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.expr:
@@ -242,34 +267,52 @@ def _target_of(body: BodyContext, apply: LowerApply) -> PlannedUnit:
     return body.fn.module.plan.units[key]
 
 
-def _call(body: BodyContext, target: PlannedUnit, value: ast.expr) -> ast.expr:
+def _call(
+    body: BodyContext, target: PlannedUnit, value: ast.expr, in_place: bool
+) -> ast.expr:
     """The verdict of applying `target` to `value` as an expression: a
-    boolean literal, a unit call, or the trampoline."""
+    boolean literal, a unit call, or the trampoline.
+
+    A target that takes a coverage channel (M9) receives this body's
+    channel when applied in place inside a region, and a fresh list
+    otherwise (coverage is per instance location, §4 rule 4).
+    """
     module = body.fn.module
     node = target.ref.node
+    shares_channel = in_place and body.channel is not None
     if target.kind == "interpreted":
         body.fn.called_unit = True
         slot = module.target_slot(target.key)
-        return e.call(
-            e.load(e.H_FRAG),
+        args = [
             e.subscript(e.load(e.TARGETS), e.const(slot)),
             value,
             e.load(e.SCOPE),
             e.load(e.DEPTH),
-        )
+        ]
+        if shares_channel:
+            assert body.channel is not None
+            return e.call(e.load(e.H_FRAGC), *args, e.load(body.channel))
+        return e.call(e.load(e.H_FRAG), *args)
     if isinstance(node, bool):
         return ast.Constant(value=node)
     body.fn.called_unit = True
-    return e.call(
-        e.load(module.function_name(target.key)),
-        value,
-        e.load(e.DEPTH),
-        e.load(e.SCOPE),
-    )
+    args = [value, e.load(e.DEPTH), e.load(e.SCOPE)]
+    if target.takes_channel:
+        if shares_channel:
+            assert body.channel is not None
+            args.append(e.load(body.channel))
+        else:
+            args.append(e.list_literal())
+    return e.call(e.load(module.function_name(target.key)), *args)
 
 
 def apply_expression(body: BodyContext, apply: LowerApply) -> ast.expr:
-    return _call(body, _target_of(body, apply), cursor_value(body, apply.cursor))
+    return _call(
+        body,
+        _target_of(body, apply),
+        cursor_value(body, apply.cursor),
+        isinstance(apply.cursor, Here),
+    )
 
 
 def _can_inline(body: BodyContext, target: PlannedUnit) -> UnitIR | None:
@@ -282,6 +325,7 @@ def _can_inline(body: BodyContext, target: PlannedUnit) -> UnitIR | None:
         or isinstance(target.ref.node, bool)
         or target.use_count != 1
         or target.reaches_interpreted
+        or target.takes_channel
         or target.key in fn.inline_stack
         or len(fn.inline_stack) >= flags.inline_stack_cap
         or target.key in fn.module.functions
@@ -293,25 +337,55 @@ def _can_inline(body: BodyContext, target: PlannedUnit) -> UnitIR | None:
     return ir
 
 
+def _mark(body: BodyContext) -> tuple[str, ast.stmt]:
+    """`mN = len(ev)`: where a region's in-place application starts writing,
+    so a failed application's productions can be discarded (§4 rule 3)."""
+    assert body.channel is not None
+    name = body.fn.module.names.fresh("m")
+    return name, e.assign(name, e.call(e.load("len"), e.load(body.channel)))
+
+
+def _truncate(body: BodyContext, mark: str) -> ast.stmt:
+    assert body.channel is not None
+    return e.del_slice_from(body.channel, e.load(mark))
+
+
+def _in_region(body: BodyContext, apply: LowerApply) -> bool:
+    return body.channel is not None and isinstance(apply.cursor, Here)
+
+
 def apply_statements(body: BodyContext, apply: LowerApply) -> list[ast.stmt]:
     """An `Apply` statement: fold the verdict into the keyword's verdict."""
     target = _target_of(body, apply)
     value = cursor_value(body, apply.cursor)
+    in_place = isinstance(apply.cursor, Here)
+    false = ast.Constant(value=False)
     if apply.fold == "all_must_pass":
         ir = _can_inline(body, target)
         if ir is not None:
             return inline_body(body, target, ir, apply.cursor, value)
-        verdict = _call(body, target, value)
+        verdict = _call(body, target, value, in_place)
         if isinstance(verdict, ast.Constant):
-            return [] if verdict.value else [e.return_(ast.Constant(value=False))]
-        return [e.if_(e.not_(verdict), [e.return_(ast.Constant(value=False))])]
-    verdict = _call(body, target, value)
+            return [] if verdict.value else [e.return_(false)]
+        # A failure fails this unit, and the caller discards the channel
+        # span, so no mark is needed here.
+        return [e.if_(e.not_(verdict), [e.return_(false)])]
+    verdict = _call(body, target, value, in_place)
     if apply.fold == "negate":
         if isinstance(verdict, ast.Constant):
-            return [e.return_(ast.Constant(value=False))] if verdict.value else []
-        return [e.if_(verdict, [e.return_(ast.Constant(value=False))])]
+            return [e.return_(false)] if verdict.value else []
+        if _in_region(body, apply):
+            # A failing negated subschema's productions must not survive.
+            mark, marked = _mark(body)
+            return [marked, e.if_(verdict, [e.return_(false)]), _truncate(body, mark)]
+        return [e.if_(verdict, [e.return_(false)])]
     if apply.fold == "discard":
-        return [] if isinstance(verdict, ast.Constant) else [e.expr_stmt(verdict)]
+        if isinstance(verdict, ast.Constant):
+            return []
+        if _in_region(body, apply):
+            mark, marked = _mark(body)
+            return [marked, e.if_(e.not_(verdict), [_truncate(body, mark)])]
+        return [e.expr_stmt(verdict)]
     raise SerializeError(f"a {apply.fold} apply must be closed by a combine check")
 
 
@@ -367,9 +441,40 @@ def edges_of(unit: PlannedUnit) -> dict[EdgeKey, str]:
 
 def unit_statements(body: BodyContext, ir: UnitIR) -> list[ast.stmt]:
     out: list[ast.stmt] = []
-    for keyword, stmts in ir.keywords:
-        body.keyword = keyword
-        out.extend(statements(body, stmts))
+    for keyword in ir.keywords:
+        body.keyword = keyword.name
+        body.behavior_id = keyword.behavior_id
+        out.extend(statements(body, keyword.stmts))
+    return out
+
+
+def _if_statement(
+    body: BodyContext, cond: Expr, then: tuple[Stmt, ...], orelse: tuple[Stmt, ...]
+) -> list[ast.stmt]:
+    # A branch whose applications folded to `True` is empty; Python has no
+    # empty block, and none is needed.
+    then_stmts = statements(body, then)
+    else_stmts = statements(body, orelse)
+    out: list[ast.stmt] = []
+    if (
+        isinstance(cond, ApplyExpr)
+        and _in_region(body, cond.apply)
+        and (then_stmts or else_stmts)
+    ):
+        # `if`'s condition in a tracked region: hoist the application so a
+        # failing condition's productions are discarded before the branch.
+        mark, marked = _mark(body)
+        temp = body.fn.module.names.fresh("t")
+        out.append(marked)
+        out.append(e.assign(temp, apply_expression(body, cond.apply)))
+        out.append(e.if_(e.not_(e.load(temp)), [_truncate(body, mark)]))
+        test: ast.expr = e.load(temp)
+    else:
+        test = expression(body, cond)
+    if then_stmts:
+        out.append(e.if_(test, then_stmts, else_stmts))
+    elif else_stmts:
+        out.append(e.if_(e.not_(test), else_stmts))
     return out
 
 
@@ -396,14 +501,7 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
             raise SerializeError("a combine run must be closed before other statements")
         match stmt:
             case If(cond, then, orelse):
-                # A branch whose applications folded to `True` is empty;
-                # Python has no empty block, and none is needed.
-                then_stmts = statements(body, then)
-                else_stmts = statements(body, orelse)
-                if then_stmts:
-                    out.append(e.if_(expression(body, cond), then_stmts, else_stmts))
-                elif else_stmts:
-                    out.append(e.if_(e.not_(expression(body, cond)), else_stmts))
+                out.extend(_if_statement(body, cond, then, orelse))
             case ForEachKey(target, binding, loop_body):
                 name = body.binding_name(binding)
                 body.key_bindings.add(binding)
@@ -424,15 +522,85 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
                 out.append(e.return_(false))
             case Apply(apply):
                 out.extend(apply_statements(body, apply))
-            case CountRange(target, binding, count_when, minimum, maximum, _, _):
-                out.extend(
-                    _count_range(body, target, binding, count_when, minimum, maximum)
+            case CountRange():
+                out.extend(_count_range(body, stmt))
+            case Collect(binding):
+                if body.produce_live:
+                    out.append(e.assign(body.binding_name(binding), e.list_literal()))
+            case Append(binding, value, unique):
+                if body.produce_live:
+                    out.extend(_append(body, binding, value, unique))
+            case Produce(value):
+                if body.produce_live:
+                    assert body.channel is not None
+                    out.append(
+                        e.expr_stmt(
+                            e.method_call(
+                                e.load(body.channel),
+                                "append",
+                                e.tuple_(
+                                    (e.const(body.behavior_id), expression(body, value))
+                                ),
+                            )
+                        )
+                    )
+            case CoverageFold(binding, half, consumes, contains_id, prefix_id):
+                out.append(
+                    _coverage_fold(
+                        body, binding, half, consumes, contains_id, prefix_id
+                    )
                 )
             case _:  # pragma: no cover - the match above is exhaustive
                 raise SerializeError(f"unknown statement {stmt!r}")
     if run:
         raise SerializeError("a combine run must be closed by a combine check")
     return out
+
+
+def _append(
+    body: BodyContext, binding: int, value: Expr, unique: bool
+) -> list[ast.stmt]:
+    target = e.load(body.binding_name(binding))
+    rendered = expression(body, value)
+    call = e.expr_stmt(e.method_call(target, "append", rendered))
+    if unique:
+        return [e.if_(e.not_in(rendered, target), [call])]
+    return [call]
+
+
+def _coverage_fold(
+    body: BodyContext,
+    binding: int,
+    half: str,
+    consumes: tuple[str, ...],
+    contains_id: str | None,
+    prefix_id: str | None,
+) -> ast.stmt:
+    """`bN = H_COVN(ev[mark:], kC)` / `H_COVI(ev[mark:], len(v), kC, ...)`:
+    the region channel folded once, by core's own folds."""
+    if body.channel is None:
+        raise SerializeError("a coverage fold outside a tracked unit")
+    body.folds[binding] = half
+    entries: ast.expr = e.load(body.channel)
+    if body.channel_mark is not None:
+        entries = ast.Subscript(
+            value=entries,
+            slice=ast.Slice(lower=e.load(body.channel_mark), upper=None, step=None),
+            ctx=ast.Load(),
+        )
+    table = e.load(body.fn.module.hoist(e.frozenset_literal(sorted(consumes))))
+    if half == "names":
+        fold = e.call(e.load(e.H_COVN), entries, table)
+    else:
+        fold = e.call(
+            e.load(e.H_COVI),
+            entries,
+            e.call(e.load("len"), e.load(body.value)),
+            table,
+            e.const(contains_id),
+            e.const(prefix_id),
+        )
+    return e.assign(body.binding_name(binding), fold)
 
 
 def _loop(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
@@ -451,79 +619,109 @@ def _flush_run(
     if fold is None or not run:
         # An empty `anyOf`/`oneOf` matches nothing.
         return [e.return_(false)]
+    region = body.channel is not None and any(isinstance(a.cursor, Here) for a in run)
     verdicts = [apply_expression(body, a) for a in run]
-    if fold == "any_may_pass":
+    if fold == "any_may_pass" and not region:
         # Licensed short-circuit (§4 rule 7): the planner islands every
         # consumer whose channel could observe these branches.
         return [e.if_(e.not_(e.or_(*verdicts)), [e.return_(false)])]
+    names = body.fn.module.names
+    counter = names.fresh("c")
+    out: list[ast.stmt] = []
+    if fold == "any_may_pass":
+        # Inside a tracked region every branch runs (§4 rule 7 lifted): a
+        # passing branch's productions stay, a failing branch's are cut.
+        out.append(e.assign(counter, ast.Constant(value=False)))
+        mark = names.fresh("m")
+        for verdict in verdicts:
+            if isinstance(verdict, ast.Constant):
+                if verdict.value:
+                    out.append(e.assign(counter, ast.Constant(value=True)))
+                continue
+            out.append(e.assign(mark, e.call(e.load("len"), e.load(e.CHANNEL))))
+            out.append(
+                e.if_(
+                    verdict,
+                    [e.assign(counter, ast.Constant(value=True))],
+                    [_truncate(body, mark)],
+                )
+            )
+        out.append(e.if_(e.not_(e.load(counter)), [e.return_(false)]))
+        return out
     # `exactly_one`: every branch runs until a second success, which
-    # settles the verdict (a licensed early exit, §4 rule 7: the planner
-    # islands any consumer that could observe these branches).
-    counter = body.fn.module.names.fresh("c")
-    out: list[ast.stmt] = [e.assign(counter, e.const(0))]
+    # settles the verdict (a licensed early exit, §4 rule 7); inside a
+    # tracked region every branch runs and failed ones are cut.
+    out.append(e.assign(counter, e.const(0)))
     too_many = e.if_(
         e.compare(e.load(counter), ast.Gt(), e.const(1)), [e.return_(false)]
     )
+    mark = names.fresh("m") if region else None
     for position, verdict in enumerate(verdicts):
         increment: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
-        if position > 0:
+        if position > 0 and not region:
             increment.append(too_many)
         if isinstance(verdict, ast.Constant):
             if verdict.value:
                 out.extend(increment)
             continue
-        out.append(e.if_(verdict, increment))
+        if mark is not None:
+            out.append(e.assign(mark, e.call(e.load("len"), e.load(e.CHANNEL))))
+            out.append(e.if_(verdict, increment, [_truncate(body, mark)]))
+        else:
+            out.append(e.if_(verdict, increment))
     out.append(
         e.if_(e.compare(e.load(counter), ast.NotEq(), e.const(1)), [e.return_(false)])
     )
     return out
 
 
-def _count_range(
-    body: BodyContext,
-    target: Expr,
-    binding: int,
-    count_when: Expr,
-    minimum: int,
-    maximum: int | None,
-) -> list[ast.stmt]:
+def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
     false = ast.Constant(value=False)
     counter = body.fn.module.names.fresh("c")
-    name = body.binding_name(binding)
+    name = body.binding_name(stmt.binding)
     fn = body.fn
     fn.loop_depth += 1
     try:
-        probe = expression(body, count_when)
+        probe = expression(body, stmt.count_when)
     finally:
         fn.loop_depth -= 1
-    iterable = e.call(e.load("range"), e.call(e.load("len"), expression(body, target)))
+    iterable = e.call(
+        e.load("range"), e.call(e.load("len"), expression(body, stmt.target))
+    )
+    # The matched indexes are dependency data: collected only when a
+    # tracked consumer reads them.
+    matched = (
+        body.binding_name(stmt.matched)
+        if stmt.matched is not None and body.produce_live
+        else None
+    )
     hit: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
-    if maximum is None and minimum > 0:
-        # Unbounded above: reaching the minimum settles the verdict, so the
-        # sweep stops there (licensed as above; `contains`' matched indexes
-        # are dependency data only a runtime-tracked consumer could read,
-        # and M6 islands those).
+    if matched is not None:
+        hit.append(e.expr_stmt(e.method_call(e.load(matched), "append", e.load(name))))
+    elif stmt.maximum is None and stmt.minimum > 0:
+        # Unbounded above and nobody reads the matches: reaching the
+        # minimum settles the verdict, so the sweep stops there (§4 rule 7).
         hit.append(
             e.if_(
-                e.compare(e.load(counter), ast.GtE(), e.const(minimum)),
+                e.compare(e.load(counter), ast.GtE(), e.const(stmt.minimum)),
                 [ast.Break()],
             )
         )
-    out: list[ast.stmt] = [
-        e.assign(counter, e.const(0)),
-        e.for_(name, iterable, [e.if_(probe, hit)]),
-    ]
-    if minimum > 0:
+    out: list[ast.stmt] = [e.assign(counter, e.const(0))]
+    if matched is not None:
+        out.append(e.assign(matched, e.list_literal()))
+    out.append(e.for_(name, iterable, [e.if_(probe, hit)]))
+    if stmt.minimum > 0:
         out.append(
             e.if_(
-                e.compare(e.load(counter), ast.Lt(), e.const(minimum)),
+                e.compare(e.load(counter), ast.Lt(), e.const(stmt.minimum)),
                 [e.return_(false)],
             )
         )
-    if maximum is not None:
+    if stmt.maximum is not None:
         out.append(
             e.if_(
-                e.compare(e.load(counter), ast.Gt(), e.const(maximum)),
+                e.compare(e.load(counter), ast.Gt(), e.const(stmt.maximum)),
                 [e.return_(false)],
             )
         )
