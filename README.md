@@ -61,6 +61,54 @@ A loader that reports source positions (see the test-kit's
 `source` location to every error and annotation, and `engine.locate()`
 answers the same question for any schema location.
 
+## Security
+
+Schemas and instances are both often untrusted input. The interpreter
+generates no code — there is no `compile()` or `exec()` on its path — so
+code-injection concerns do not apply to it; a denial-of-service bound is
+best effort, not a guarantee, so treat wildly untrusted schemas with the
+same care as any other untrusted program input. Three specific vectors have
+a bound or an opt-out.
+
+**Regular expressions (ReDoS).** `pattern` and `patternProperties` compile
+untrusted regexes and run them against untrusted strings; Python's `re` can
+backtrack catastrophically on a pattern like `(a+)+$`. `reject_unsafe_regex`
+screens for nested unbounded quantifiers at registration:
+
+```python
+from json_schema_engine.core import create_engine, UnsafeRegexError
+
+engine = create_engine(reject_unsafe_regex=True)
+try:
+    engine.register_schema({"pattern": "(a+)+$"}, "https://ex/redos")
+except UnsafeRegexError:
+    pass  # rejected before it ever runs
+```
+
+Patterns are ECMA-262 by default, translated by the `ecma-regex` package to
+the `re` backend (a `regex` backend is available via the `regex` extra);
+neither backend is linear-time, so the screen is a heuristic, not a proof.
+`regex_dialect="python"` hands patterns to `re` untouched, for schemas
+written for Python only.
+
+**Recursion depth.** `max_depth` (default 512) bounds both registration
+nesting and evaluation nesting, raising the typed `MaxDepthExceededError`
+before CPython's own stack limit can produce an untyped `RecursionError`; a
+stray `RecursionError` that does slip through is still converted to the
+same typed error. The engine stays usable afterward — each `evaluate` or
+`register_schema` call runs in fresh state, so a rejected document does not
+poison later calls.
+
+**Array uniqueness.** `uniqueItems` compares elements in O(n) by bucketing
+on a canonical key and confirming collisions with full JSON equality, so
+large arrays of distinct values do not incur quadratic cost, while genuine
+duplicates — including numbers equal across `int`/`float` and objects that
+differ only in member order — are still reported.
+
+**No prototype hazard.** Python dicts have no prototype chain, so there is
+nothing for a hostile property name to pollute: `__proto__`, `constructor`,
+and similar reserved-looking names evaluate as ordinary properties.
+
 ## Development
 
 ```sh
