@@ -1,24 +1,51 @@
 # Publishes to PyPI using PyPI's Trusted Publishing (OpenID Connect): no
-# stored PyPI token lives in this repository or its secrets. For this to
-# work, the PyPI project must be configured (or created) with a trusted
+# stored PyPI token lives in this repository or its secrets. Each PyPI
+# project (json-schema-engine, ecma-regex) is configured with a trusted
 # publisher that names:
 #   - this repository (handrews/py-json-schema-engine)
 #   - this workflow file (.github/workflows/publish.yml)
 #   - the "pypi" GitHub Environment
-# as the trusted publisher. See https://docs.pypi.org/trusted-publishers/
-# for setup details.
+# See https://docs.pypi.org/trusted-publishers/ for setup details.
+#
+# The tag selects the package: `v1.2.3` publishes json-schema-engine,
+# `ecma-regex-v1.2.3` publishes ecma-regex. Each job refuses to run when the
+# tag's version does not match the package's pyproject.toml, so a release is
+# always the version the tree says it is.
 name: Publish
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "ecma-regex-v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  publish:
+  engine:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --all-packages --all-groups
+      - name: Check the tag against pyproject.toml
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(uv version --short)"
+          test "$expected" = "$actual" || { echo "tag v$expected != pyproject $actual"; exit 1; }
+      - run: uv run pytest -q
+      - run: uv build --package json-schema-engine
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  ecma-regex:
+    if: startsWith(github.ref, 'refs/tags/ecma-regex-v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -28,6 +55,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked --all-packages --all-groups
-      - run: uv run pytest -q
-      - run: uv build
+      - name: Check the tag against pyproject.toml
+        run: |
+          expected="${GITHUB_REF_NAME#ecma-regex-v}"
+          actual="$(uv version --short --package ecma-regex)"
+          test "$expected" = "$actual" || { echo "tag ecma-regex-v$expected != pyproject $actual"; exit 1; }
+      - run: uv run pytest -q packages/ecma-regex
+      - run: uv build --package ecma-regex
       - uses: pypa/gh-action-pypi-publish@release/v1
