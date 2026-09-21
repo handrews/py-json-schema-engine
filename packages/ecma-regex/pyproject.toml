@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ecma-regex"
-version = "0.0.1"
+version = "0.1.0"
 description = "ECMA-262 regular expressions for Python: parse, translate to re, and search with JavaScript semantics"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -43,6 +43,7 @@ include = [
     "/src/",
     "/tests/",
     "/README.md",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/pyproject.toml",
 ]

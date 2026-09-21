@@ -1,0 +1,738 @@
+# API reference
+
+This page lists every name each public package exports through `__all__`, with
+its exact signature and a short description. `tests/test_reference.py` checks
+that every export of every package below appears here, so the page cannot
+silently fall behind a new export.
+
+Import paths:
+
+- `json_schema_engine.core`: the interpreter tier: `Engine`, `create_engine`,
+  results, output units, the keyword extension surface.
+- `json_schema_engine.compiler`: the ahead-of-time compiler: plans a registered
+  schema into a Python `ast` module, either run in-process
+  (`compile_validator`) or emitted as a standalone file (`emit_standalone`).
+- `json_schema_engine.formats`: the standard `format` predicate tables for the
+  built-in dialects.
+- `ecma_regex`: a standalone package (no dependency on the engine) that parses,
+  translates, and matches ECMA-262 regular expressions.
+
+Any name not listed on this page, including everything under a package's
+private submodules, is an implementation detail and may change without notice.
+
+## `json_schema_engine.core`
+
+### Engine and creation
+
+`create_engine(*, default_dialect=DIALECT_2020_12, loaders=(),
+regex_dialect="ecma262", regex_backend="re", reject_unsafe_regex=False,
+max_depth=512, validate_schemas=False, formats=None, assert_formats=False) ->
+Engine`: builds an `Engine` with the built-in dialects (2020-12, 2019-09,
+draft-07, draft-06) registered. `formats` (e.g.
+`json_schema_engine.formats.FORMATS_2020_12`) enables the 2020-12
+format-assertion vocabulary; `assert_formats=True` additionally makes `format`
+assert, best effort, in every standard dialect. Without either, `format` only
+annotates. This is the normal entry point; `Engine()` is equivalent but less
+discoverable.
+
+`Engine`: a JSON Schema engine: dialect registry, schema registry, regex cache,
+and evaluation. Construct through `create_engine`; the constructor takes the
+same keyword-only parameters. Registration is synchronous and local;
+`load_schema` additionally drains external references through the loaders (P4).
+
+- `Engine.dialects`: the engine's `DialectRegistry`: every registered
+  vocabulary and assembled dialect.
+- `Engine.schemas`: the engine's schema registry (internal type; registration,
+  reference resolution, and dialect lookup for registered documents all go
+  through it).
+- `Engine.formats -> FormatTable | None`: the format table this engine asserts
+  through, if any (M7).
+- `Engine.max_depth -> int`: the schema-application depth budget (P3).
+- `Engine.regex_cache -> RegexCache`: the engine's pattern cache (dialect,
+  backend, compiled patterns; internal type, exposed read-only).
+- `Engine.register_schema(schema, retrieval_uri, dialect_uri=None,
+  get_range=None) -> str`: registers a schema document locally and returns its
+  canonical URI. The document's dialect must exist or be assemblable from a
+  registered or bundled metaschema; `$ref` targets are not followed (use
+  `load_schema` for that). `get_range` is the D17 position capability for this
+  document.
+- `Engine.load_schema(schema, retrieval_uri, dialect_uri=None, get_range=None)
+  -> str`: registers a document and loads every resource it references (P4).
+- `Engine.load(uri) -> str`: loads and registers a resource by URI through the
+  configured loaders.
+- `Engine.locate(schema_location) -> SourceLocation | None`: translates a
+  canonical schema location back to its document: the containing document, the
+  document-rooted pointer, and the source range when that document's loader
+  reported positions. Returns `None` for a resource the registry never saw.
+  Zero cost on the evaluation path; nothing calls this unless asked.
+- `Engine.evaluate(schema_uri, instance, *, output=OutputFormat.FLAG,
+  annotations=False, error_params=False, verbose=None, trace=False,
+  positions=False) -> Result`: evaluates `instance` against a registered schema
+  (D6). `output` names the format; `annotations` selects which annotations
+  reach output (D5); `error_params` adds keyword identity and structured params
+  to the flat error units (D13); `verbose` asks for the verbose level of
+  `list`/`hierarchical`; `trace` renders the application tree into
+  `Result.trace`; `positions` decorates the flat units with schema-side source
+  positions (D17). An unsupported combination raises `OutputOptionsError`
+  before evaluating.
+
+### Evaluation results and output units
+
+`Result`: the result of an evaluation (D6): a frozen dataclass with fields
+`valid: bool`, `errors: list[ErrorUnit] | None`, `annotations:
+list[AnnotationUnit] | None`, `output_document: OutputDocument | None`,
+`dropped_errors: list[ErrorUnit] | None = None`, `dropped_annotations:
+list[AnnotationUnit] | None = None`, and `trace: TraceUnit | None = None`.
+Presence rules: `errors` iff invalid; `annotations` iff valid and annotations
+were selected; the dropped pair at the verbose level; `trace` when requested;
+`output_document` is `None` for `flag`, which carries nothing beyond `valid`.
+
+`OutputDocument`: the document type each non-flag `OutputFormat` renders:
+`BasicOutputDocument | DetailedOutputUnit | ListOutputDocument | OutputUnit |
+dict[str, bool]`. `basic` renders `BasicOutputDocument`; `detailed`/`verbose`
+render `DetailedOutputUnit`; `list` renders `ListOutputDocument`;
+`hierarchical` renders `OutputUnit`.
+
+`ErrorUnit`: a `TypedDict` for one rendered assertion failure, native field
+names (D6, D13): `evaluationPath: str`, `schemaLocation: str`, `inputLocation:
+str`, `error: str`, `keyword: NotRequired[str]`, `vocabulary:
+NotRequired[str]`, `params: NotRequired[dict[str, JsonValue]]`, `source:
+NotRequired[SourceLocation]`. `keyword`/`vocabulary`/`params` appear only with
+the `error_params` control; `keyword`/`vocabulary` are additionally absent for
+a boolean `false` schema's error, which names no keyword; `source` appears with
+the `positions` control.
+
+`AnnotationUnit`: a `TypedDict` for one rendered annotation (a keyword's own
+value at a location): `evaluationPath: str`, `schemaLocation: str`,
+`inputLocation: str`, `keyword: str`, `annotation: JsonValue`, `vocabulary:
+NotRequired[str]`, `source: NotRequired[SourceLocation]`.
+
+`BasicOutputDocument`: a `TypedDict` for the IETF draft-03 §13.4.2 `basic`
+document: `valid: bool`, `keywordLocation: str`, `absoluteKeywordLocation:
+str`, `instanceLocation: str`, `errors: NotRequired[list[...]]` (each
+`{keywordLocation, absoluteKeywordLocation, instanceLocation, error}`),
+`annotations: NotRequired[list[...]]` (each with `annotation` in place of
+`error`). `errors` appears only on an invalid result, `annotations` only on a
+valid one, never both.
+
+`DetailedOutputUnit`: a `TypedDict` for one node of the `detailed`/`verbose`
+keyword-level tree (IETF draft-03 §13.3): `valid: bool`, `keywordLocation:
+str`, `absoluteKeywordLocation: str`, `instanceLocation: str`, `error:
+NotRequired[str]`, `annotation: NotRequired[JsonValue]`, `errors:
+NotRequired[list[DetailedOutputUnit]]`, `annotations:
+NotRequired[list[DetailedOutputUnit]]`. Nested results key on the node's own
+result: `errors` for a failing node, `annotations` for a passing one.
+
+`ListOutputDocument`: a `TypedDict` for the `list` document (the
+machines-oriented output proposal): `valid: bool`, `details: list[OutputUnit]`,
+one unit per schema application in pre-order.
+
+`OutputUnit`: a `TypedDict` for one schema application in the
+`list`/`hierarchical` documents: `valid: bool`, `evaluationPath: str`,
+`schemaLocation: str`, `instanceLocation: str`, `errors: NotRequired[dict[str,
+str]]`, `annotations: NotRequired[dict[str, JsonValue]]`, `droppedErrors:
+NotRequired[dict[str, str]]`, `droppedAnnotations: NotRequired[dict[str,
+JsonValue]]`, `details: NotRequired[list[OutputUnit]]` (nested
+sub-applications, `hierarchical` only). At the verbose level `droppedErrors`/
+`droppedAnnotations` mark irrelevant records.
+
+`TraceUnit`: a `TypedDict` for one schema application from a traced evaluation
+(`Result.trace`): `segments: list[str]` (evaluation-path segments below the
+parent, decoded; the first is the applying keyword), `schemaLocation: str`,
+`inputLocation: str`, `valid: bool`, `errorIndexes: list[int]` (indexing
+`Result.errors` of the same run, populated only when the evaluation failed),
+`children: list[TraceUnit]`.
+
+### Output options
+
+`AnnotationsOption`: a type alias, `bool | AnnotationSelection`: `False`
+(nothing), `True` (everything), or a filtered `AnnotationSelection`. Passed as
+`Engine.evaluate`'s `annotations` argument.
+
+`AnnotationSelection`: which annotations reach output (D5), independent of
+format and level: a frozen dataclass with fields `keywords: frozenset[str] |
+None = None`, `vocabularies: frozenset[str] | None = None`, `exclude_keywords:
+frozenset[str] = frozenset()`, `exclude_vocabularies: frozenset[str] =
+frozenset()`, `keep: Callable[[AnnotationUnit], bool] | None = None`. The
+allow-lists (`keywords`, `vocabularies`) are OR'd together; when both are
+`None` every keyword is allowed. The deny-lists subtract from that result.
+`keep` runs last, over the fully rendered `AnnotationUnit`.
+
+`OutputFormat`: a `StrEnum` of output format names (D6), each fixing its own
+document structure and field vocabulary: `FLAG = "flag"`, `BASIC = "basic"`,
+`DETAILED = "detailed"`, `VERBOSE = "verbose"`, `LIST = "list"`, `HIERARCHICAL
+= "hierarchical"`. `flag`/`basic`/`detailed`/`verbose` are IETF draft-03 §13;
+`list`/`hierarchical` are the machines-oriented output proposal.
+
+### Errors
+
+Every error below is a `JsonSchemaEngineError` (directly or through another
+error in this list); `schema_location: str | None` lives on the root and is
+populated when the error concerns a specific schema position.
+
+`JsonSchemaEngineError(message, *, schema_location=None)`: root of every error
+this engine raises. Catch this to see everything the library raises without
+also swallowing bugs (`TypeError`, `KeyError`).
+
+`JsonSyntaxError(message, *, line, column, offset)`: `parse_json_with_ranges`
+met text that is not an RFC 8259 document. Also a `ValueError`. Carries the
+1-based `line: int` and `column: int` and the 0-based `offset: int` of the
+first offending character.
+
+`InvalidSchemaError`: a keyword-claimed schema position holds neither an object
+nor a boolean (D19). Raised by the registration walk and, as a lazy backstop,
+by schema application.
+
+`ReadOnlyRegistryError`: registration was attempted on a compiled artifact's
+registry snapshot.
+
+`UnknownDialectError`: a schema names a `$schema` dialect URI that no
+registered dialect claims.
+
+`UnknownKeywordError`: a schema uses a keyword its dialect does not define and
+does not permit unknown keywords for. Only dialects built with
+`allow_unknown_keywords=False` raise this; the default treats an unknown
+keyword as annotation-only.
+
+`UndeclaredProductionError`: a keyword called `ctx.produce()` without declaring
+its id in `StaticFacts.produces`. See "Dialects and keywords" below and
+`guide/custom-keywords.md`.
+
+`UndeclaredConsumptionError`: a keyword called `ctx.visible()` for an id absent
+from its `StaticFacts.consumes`. The mirror of `UndeclaredProductionError`.
+
+`KeywordContractError`: a keyword reported an error through `ctx.error()` yet
+accepted the input. Relevance drops the errors of accepting evaluations, so
+such an error would otherwise vanish; the contract violation is reported
+instead of the phantom error.
+
+`InfiniteLoopError`: a schema was re-entered at the same instance location
+without progress (the `$ref` cycle guard, keyed by schema location and cursor
+identity).
+
+`MaxDepthExceededError`: registration or evaluation nested deeper than
+`max_depth` allows (P3), raised before CPython's own recursion limit can fire.
+
+`OutputOptionsError`: the requested combination of output format, level, and
+controls is invalid. Raised by `Engine.evaluate` before evaluation (D6), so a
+caller never pays for a run whose result it cannot be given.
+
+`UnsupportedPatternError`: a regex could not be translated into the configured
+backend's dialect. Raised at registration (P1), never on the hot path.
+
+`UnsafeRegexError`: a regex failed the star-height screen while
+`reject_unsafe_regex` is on (D20 ReDoS defense).
+
+`UnresolvableReferenceError`: a reference could not be resolved to a schema: it
+does not form a usable absolute URI, its target document was never registered
+and no loader supplied it, or a pointer or anchor names nothing in an otherwise
+known resource.
+
+`UnknownVocabularyError`: a metaschema's `$vocabulary` requires a vocabulary
+nobody registered. Only a vocabulary marked `true` (required) raises; an
+unknown optional vocabulary is skipped.
+
+`UnknownFormatError`: a `format` names a format the engine's table lacks, under
+the format-assertion vocabulary (which promised assertion for every name).
+
+`FormatUnavailableError`: a `format` names a table entry that cannot run in
+this environment (an optional extra is missing); asserting it is refused at
+registration.
+
+`FormatsRequiredError`: a format table is needed but none was configured:
+`assert_formats=True` without `formats=`, or a metaschema declaring the
+format-assertion vocabulary on an engine without a table.
+
+`SchemaValidationError(message, errors, *, schema_location=None)`: a registered
+document fails its own metaschema (`create_engine(validate_schemas=True)`).
+`errors: list[object]` are the list-format units of the failed evaluation.
+
+### Dialects and keywords (the extension surface)
+
+These are the types a custom keyword or dialect is written against; see
+`guide/custom-keywords.md` for a worked example.
+
+`KeywordBehavior`: a keyword's static analysis and evaluation semantics (D2), a
+frozen dataclass. Keywords are data: vocabularies are plain mappings of these,
+looked up on the instance and never bound as methods. Fields:
+
+- `id: str`: the keyword URI: its stable identity, independent of its name in
+  any dialect.
+- `evaluate: EvaluateFn` (`Callable[[JsonValue, Cursor, KeywordContext],
+  bool]`): interpreter semantics, synchronous (D7). A keyword that reports an
+  error through `ctx.error()` must return `False`.
+- `analyze: AnalyzeFn | None = None` (`Callable[[JsonValue, AnalyzeContext],
+  StaticFacts] | None`): static facts; also drives the registration walk's
+  descent. `None` means no facts: no subschemas, no productions, nothing to
+  screen.
+- `phase: Phase = Phase.ASSERT`: evaluation order within one schema object.
+- `structural: bool = False`: an identifier or reserved-location keyword
+  (`$id`, `$defs`, `$comment`): it evaluates to nothing and appears in no
+  output unit.
+- `lower: LowerFn | None = None`: compiled form as lowering IR (M6). `None`
+  means a schema object containing this keyword becomes an interpreted unit
+  (the trampoline fallback), never a failure.
+- `KeywordBehavior.facts(value, schema) -> StaticFacts`: the keyword's static
+  facts for one occurrence, `StaticFacts()` (empty) if `analyze` is `None`.
+
+`KeywordContext`: a `Protocol`: the engine services available to one keyword
+application, the only path to subschema application, the channel, and error
+reporting. The engine owns path, scope, and frame bookkeeping in exactly one
+place, which is what lets locations become compile-time constants in the
+compiler tier.
+
+- `KeywordContext.schema -> Mapping[str, JsonValue]`: the current schema
+  object, this keyword's siblings included.
+- `KeywordContext.cursor -> Cursor`: the current instance position (internal
+  type: a parent-linked, identity-compared position).
+- `KeywordContext.apply(segments, cursor) -> bool`: applies the subschema at
+  `segments` (relative to the schema object).
+- `KeywordContext.resolve_ref(ref) -> SchemaRef`: resolves a reference against
+  the current lexical base.
+- `KeywordContext.resolve_dynamic(ref) -> SchemaRef`: resolves a
+  `$dynamicRef`-class reference with rebinding (D8).
+- `KeywordContext.resolve_recursive(ref) -> SchemaRef`: resolves a 2019-09
+  `$recursiveRef`, D8's degenerate case.
+- `KeywordContext.apply_resolved(target) -> bool`: applies a resolved reference
+  target at the current cursor.
+- `KeywordContext.compile_regex(pattern) -> CompiledRegex`: compiles through
+  the engine's regex dialect, backend, and cache.
+- `KeywordContext.annotate() -> None`: records this keyword's own value as an
+  annotation.
+- `KeywordContext.produce(data) -> None`: communicates dependency data to other
+  keywords; never output.
+- `KeywordContext.visible(behavior_ids, scope="all") ->
+  Sequence[DependencyView]`: dependency records visible at the current cursor.
+  `"all"` sees this schema object's keywords plus records merged from
+  successful in-place sub-applications (what `unevaluated*` needs);
+  `"adjacent"` sees only this schema object's own keywords (what `then`/`else`
+  need from `if`).
+- `KeywordContext.error(message, params=None) -> None`: reports an assertion
+  failure with optional structured params (D13).
+
+`StaticFacts`: what one keyword occurrence says about itself from its value
+alone (a frozen dataclass); the compiler tier's entire window into keyword
+semantics, and it drives the registry's schema-position walk: only the
+positions a keyword claims in `subschemas` are treated as schemas. Fields, all
+defaulting to empty/`None`:
+
+- `subschemas: tuple[SubschemaPath, ...] = ()`: paths to child schemas,
+  relative to the keyword's value.
+- `references: tuple[str, ...] = ()`: reference URIs in the value, relative to
+  the lexical base; drive transitive loading (P4).
+- `produces: tuple[str, ...] = ()`: behavior ids this keyword may `produce()`
+  dependency data under, normally its own id. An undeclared producer raises
+  `UndeclaredProductionError`.
+- `consumes: tuple[str, ...] = ()`: behavior ids this keyword reads through
+  `visible()` (D5).
+- `regexes: tuple[str, ...] = ()`: regular expressions the keyword compiles;
+  screened by `reject_unsafe_regex` at registration (D20).
+- `formats: tuple[str, ...] = ()`: format names the keyword needs a table entry
+  for (M7).
+- `dynamic_scope_sensitive: bool = False`: participates in dynamic-scope
+  resolution (D8); forces the compiler to fall back to the interpreter.
+- `evaluates_names: NameCoverage | None = None`: property-name coverage this
+  occurrence contributes (D9a); `None` means none.
+- `evaluates_indexes: IndexCoverage | None = None`: array-index coverage this
+  occurrence contributes (D9a); `None` means none.
+- `applications: tuple[SubschemaApplication, ...] = ()`: how the keyword
+  applies its subschemas (M6): the planner's edges and the coverage analysis's
+  transitive contributors.
+
+`AnalyzeContext`: a frozen dataclass wrapping `schema: Mapping[str,
+JsonValue]`, the keyword's containing schema object, for sibling-dependent
+facts (e.g. `items` starting after `prefixItems`, `if` declaring edges for
+`then`).
+
+`DependencyView`: a frozen dataclass, a consumer's view of one dependency
+record: `behavior_id: str` (who produced it) and `data: object` (what).
+Returned by `KeywordContext.visible`.
+
+`Dialect`: an ordered set of vocabularies with identifier and `$ref` semantics,
+a frozen dataclass. Fields: `uri: str`; `keywords: Mapping[str,
+DialectKeyword]`; `ordered: tuple[DialectKeyword, ...]` (every phase-0 entry,
+then every phase-1 entry, each group in vocabulary-then-declaration order);
+`vocabulary_uris: tuple[str, ...]`; `allow_unknown_keywords: bool` (unknown
+keywords collected as annotations when true, `UnknownKeywordError` when false);
+`identifiers: IdentifierExtractor`; `ref_ignores_siblings: bool` (draft-07/06:
+a schema object with `$ref` evaluates only `$ref`). Method
+`Dialect.identifiers_of(node) -> IdentifierFacts`: identifier facts for a node,
+none for a boolean schema.
+
+`DialectRegistry`: the registry of vocabularies and the dialects assembled from
+them (D2). Construct with `DialectRegistry()`.
+
+- `DialectRegistry.register_vocabulary(uri, keywords) -> None`: registers a
+  vocabulary's keyword behaviors (`Mapping[str, KeywordBehavior]`) under its
+  URI.
+- `DialectRegistry.register_dialect(uri, vocabulary_uris, *,
+  allow_unknown_keywords=True, identifiers=identifiers_2020,
+  ref_ignores_siblings=False) -> Dialect`: assembles a dialect from
+  already-registered vocabularies. A later vocabulary rebinding a name replaces
+  the earlier binding, so a dialect author can override a built-in keyword by
+  listing an extension vocabulary after the standard one.
+- `DialectRegistry.snapshot() -> DialectRegistry`: a frozen copy: the same
+  vocabularies and dialects, read-only. A compiled artifact binds to a snapshot
+  (M6).
+- `DialectRegistry.get_dialect(uri) -> Dialect`: looks up a registered dialect;
+  raises `UnknownDialectError`.
+- `DialectRegistry.has_dialect(uri) -> bool`
+- `DialectRegistry.has_vocabulary(uri) -> bool`
+
+`Phase`: an `IntEnum` of evaluation order within one schema object: `ASSERT =
+0`, `UNEVALUATED = 1`. Phase 1 keywords (`unevaluated*`) run after every phase
+0 keyword of the same object has merged its records, so their `visible()` sees
+the whole object's dependency data.
+
+### Loaders and source positions
+
+`Loader`: a type alias, `Callable[[str], LoadedResource | None]`. Returns
+`None` for a URI it does not know: a miss is not an error, since the next
+loader may know it.
+
+`LoadedResource`: a `Protocol`: what the engine needs from a loader's result.
+`LoadedResource.value -> JsonValue` and `LoadedResource.uri -> str` (the URI to
+register the document under; a loader that followed a redirect reports where
+the document actually lives).
+
+`LoadedDocument`: a frozen dataclass, the engine's own concrete
+`LoadedResource`: `value: JsonValue`, `uri: str`, `get_range: RangeLookup |
+None = None` (the optional D17 position capability).
+
+`RangeLookup`: a type alias, `Callable[[str], SourceRange | None]`: a loader's
+position capability, the range of a document-rooted JSON Pointer, or `None`
+when it does not know.
+
+`SourceLocation`: a `TypedDict` for a schema location translated back to its
+document (D17): `documentUri: str`, `pointer: str` (document-rooted, unlike a
+`schemaLocation`), `range: NotRequired[SourceRange]` (present when the
+document's loader reported positions).
+
+`SourcePosition`: a `TypedDict` for a point in source text: `line: int`
+(1-based), `column: int` (1-based), `offset: int` (0-based).
+
+`SourceRange`: a `TypedDict` for where a value sits in its document: `value:
+SourceSpan`, `key: NotRequired[SourceSpan]` (present for an object member:
+diagnostics about a missing or extra property point at the key, those about a
+value at the value).
+
+`SourceSpan`: a `TypedDict`: `start: SourcePosition`, `end: SourcePosition`.
+
+`ParsedDocument`: a frozen dataclass returned by `parse_json_with_ranges`,
+satisfying `LoadedResource` with the D17 extension: `value: JsonValue`, `uri:
+str`, `get_range: Callable[[str], SourceRange | None]`.
+
+`parse_json_with_ranges(text, uri) -> ParsedDocument`: parses `text` as JSON,
+returning the value plus a source-position lookup by document-rooted JSON
+Pointer (RFC 6901). Raises `JsonSyntaxError` (also a `ValueError`) on any
+syntax error, including trailing content and the non-JSON extensions
+`NaN`/`Infinity`. The reference loader for D17 positions; a loader can return
+the result directly since `evaluate(..., positions=True)` and `Engine.locate`
+read its `get_range`.
+
+### Formats contract
+
+`FormatDefinition`: one format: its predicate and the instance types it applies
+to. A frozen dataclass: `test: FormatPredicate`, `types: tuple[TypeName, ...] =
+("string",)` (an instance of a type not listed is vacuously valid),
+`unavailable: str | None = None` (marks an entry that exists but cannot run in
+this environment; asserting it fails loudly at registration), `import_path: str
+| None = None` (`module:attribute`, lets a standalone module import the
+predicate by name).
+
+`FormatPredicate`: a type alias, `Callable[[Any], bool]`. Runs only on
+instances of the definition's `types`; the `format` keyword guards the instance
+type first.
+
+`FormatTable`: a type alias, `Mapping[str, FormatDefinition]`. Injected into
+`create_engine(formats=...)`; core never imports a table itself.
+
+### JSON model
+
+`JsonType`: a `StrEnum` of the seven JSON Schema primitive type names, spelled
+as the spec spells them: `NULL = "null"`, `BOOLEAN = "boolean"`, `OBJECT =
+"object"`, `ARRAY = "array"`, `NUMBER = "number"`, `STRING = "string"`,
+`INTEGER = "integer"`.
+
+`JsonValue`: a type alias for a JSON-representable value: `bool | int | float |
+str | list[JsonValue] | dict[str, JsonValue] | None`. Non-finite floats (`NaN`,
+`Infinity`) are outside this model even though `float` admits them; parse
+boundaries reject them.
+
+`json_equal(a, b) -> bool`: whether two JSON values are equal per the spec:
+same type and same value, object member order insignificant, array order
+significant, numeric equality mathematical (`1 == 1.0`). The only equality core
+uses between `JsonValue`s; plain `==` conflates `True` with `1`.
+
+### Regex
+
+`RegexDialect`: a type alias, `Literal["ecma262", "python"]`. `ecma262` is the
+default for every current draft; `python` hands the pattern to `re` untouched,
+for callers migrating schemas that only ever ran under Python.
+
+`RegexBackend`: a type alias, `Literal["re", "regex"]`.
+
+`UnsafeRegexReport`: a frozen dataclass: `safe: bool`, `reason: str | None =
+None`.
+
+`detect_unsafe_regex(pattern) -> UnsafeRegexReport`: a conservative ReDoS
+screen: nested unbounded quantifiers (D20). Necessary, not sufficient, so it
+over-reports. Backs the opt-in `reject_unsafe_regex` engine option.
+
+### Constants
+
+`DIALECT_2019_09`: `"https://json-schema.org/draft/2019-09/schema"`.
+
+`DIALECT_2020_12`: `"https://json-schema.org/draft/2020-12/schema"`.
+
+`DIALECT_DRAFT_06`: `"http://json-schema.org/draft-06/schema"`.
+
+`DIALECT_DRAFT_07`: `"http://json-schema.org/draft-07/schema"`.
+
+`VOCAB_FORMAT_ASSERTION`:
+`"https://json-schema.org/draft/2020-12/vocab/format-assertion"`.
+
+## `json_schema_engine.compiler`
+
+Consumes only `analyze()` facts and each keyword's optional `lower()` IR from
+`json_schema_engine.core`, never keyword names (D1). Anything the compiler
+cannot lower trampolines to the interpreter, so an artifact is exactly as
+correct as `Engine.evaluate` and never less complete: tier choice is a
+performance decision, not a semantic one. Compile only after registration on
+the engine is complete; an artifact binds a snapshot of the schema and dialect
+registries taken at compile time.
+
+### Functions
+
+`build_plan(engine, schema_uri) -> CompilationPlan`: plans the compilation of
+one registered root schema: classifies every reachable schema node as a static
+(compilable) or interpreted (trampoline) unit. Conservative by design; anything
+uncertain falls back to the interpreter.
+
+`compile_validator(engine, schema_uri, *, max_depth=None, conservative=False)
+-> CompiledValidator`: compiles a registered root schema into a verdict-only
+validator. `max_depth` defaults to the engine's; `conservative=True` turns the
+emitter's optimizations off (no inlining, no set specialization): the
+differential fuzzer referees both configurations.
+
+`emit_standalone(engine, schema_uri, *, max_depth=None) -> str`: emits a
+registered root schema as a self-contained validator module: source text whose
+`validate(instance) -> bool` agrees with `Engine.evaluate` on every instance,
+importable without the compiler package. Raises `StandaloneUnsupportedError`
+when the plan has any interpreted unit or the engine's regex backend is not
+`"re"`.
+
+`explain_compilation(plan) -> CompilationExplanation`: a read-only projection
+of a plan for census gates and diagnostics: counts of static versus interpreted
+units, grouped by `FallbackCause`.
+
+### Artifacts and plan types
+
+`CompiledValidator`: a frozen dataclass: the compiled flag validator. Fields:
+`validate: Callable[[JsonValue], bool]`, `plan: CompilationPlan`, `module:
+ast.Module` (the emitted module), `source: str` (`ast.unparse(module)`, for
+diagnostics and goldens).
+
+`CompilationPlan`: a frozen dataclass: `root_key: str`, `units: dict[str,
+PlannedUnit]` (insertion order is planning order, deterministic function
+numbering), `patterns: tuple[str, ...]` (every regex source any static unit
+tests), `formats: tuple[str, ...]` (every format name any static unit asserts,
+M7), `targets: tuple[PlannedUnit, ...]` (interpreted units in stable order;
+index = target-table slot).
+
+`PlannedUnit`: a mutable, slotted dataclass: one schema node in the plan, keyed
+by its canonical location. Fields: `key: str`, `ref: SchemaRef` (internal
+type), `kind: Literal["static", "interpreted"] = "static"`, `cause:
+FallbackCause | None = None`, `edges: list[PlannedApplication] = []` (resolved
+outgoing edges, in keyword order, static units only), `coverage: StaticCoverage
+| None = None` (static evaluated coverage licensed for this object's consumers,
+D9a; internal type), `reaches_interpreted: bool = False` (true when some apply
+path from here can reach an interpreted unit), `use_count: int = 0` (planned
+edges targeting this unit). Method `PlannedUnit.interpret(cause) -> None`:
+marks the unit interpreted with the given `FallbackCause` and clears its edges.
+
+`PlannedApplication`: a frozen dataclass: one application edge out of a unit,
+resolved at plan time. Fields: `keyword: str`, `app: SubschemaApplication`
+(from `json_schema_engine.core.dialect`), `target_key: str`.
+
+`FallbackCause`: a type alias, `Literal["dynamic", "unlowerable", "cycle",
+"non_schema"]`: why a unit is interpreted: a `$dynamicRef`-class keyword; a
+keyword without `lower()`, an unresolvable edge, or a consumer without static
+coverage; a possible in-place cycle; or a reference into non-schema data.
+
+`CompilationExplanation`: a frozen dataclass: `total_units: int`,
+`static_units: int`, `interpreted_units: int`, `causes: Mapping[FallbackCause,
+int]`, `interpreted_keys: tuple[str, ...]`, `reaches_interpreted: int`.
+
+### Errors
+
+`FormatTableError(JsonSchemaEngineError)`: a compiled artifact asserts a format
+the engine's table cannot serve.
+
+`StandaloneUnsupportedError(JsonSchemaEngineError)`: `emit_standalone` refused:
+the schema needs the interpreter at evaluation time, or the engine's regex
+backend cannot be emitted.
+
+## `json_schema_engine.formats`
+
+One table per built-in dialect, each entry a predicate implemented from the
+format's RFC and verified against the official test suite. Core never imports
+this package; inject a table with `create_engine(formats=...)`.
+
+### Tables
+
+`FORMATS_2020_12`: a `FormatTable` with the nineteen formats 2020-12 §7.3
+defines: `date-time`, `date`, `time`, `duration`, `email`, `idn-email`,
+`hostname`, `idn-hostname` (unavailable without the `idna` extra), `ipv4`,
+`ipv6`, `uri`, `uri-reference`, `iri`, `iri-reference`, `uuid`, `uri-template`,
+`json-pointer`, `relative-json-pointer`, `regex`.
+
+`FORMATS_2019_09`: the same `FormatTable` object as `FORMATS_2020_12`; 2019-09
+§7.3 names the same nineteen formats.
+
+`FORMATS_DRAFT_07`: `FORMATS_2020_12` minus `uuid` and `duration` (draft-07
+§7.3).
+
+`FORMATS_DRAFT_06`: `FORMATS_2020_12` restricted to `date-time`, `email`,
+`hostname`, `ipv4`, `ipv6`, `uri`, `uri-reference`, `uri-template`,
+`json-pointer` (draft-06 §8.3).
+
+### Lookup
+
+`format_table_for(dialect_uri) -> FormatTable`: the standard table for a
+built-in dialect URI (fragment ignored). Raises `ValueError` for any other URI.
+
+### Shared helper
+
+`anchored(fragment) -> re.Pattern[str]`: compiles an ABNF fragment as a
+whole-string match (`\A(?:fragment)\Z`); used by every predicate module in this
+package and available for a caller building a compatible format.
+
+## `ecma_regex`
+
+A standalone package with no dependency on `json_schema_engine` (P1): one regex
+AST, a front-end parser, back-ends that emit for `re`/`regex`, and a
+`search`-only matcher with ECMA-262 `u`-mode semantics. Untranslatable patterns
+raise at translation, not on the hot path.
+
+### `compile` and the pattern object
+
+`compile(pattern, *, flags="", backend="re") -> EcmaRegex`: parses, translates,
+and compiles `pattern` in one step. Raises `EcmaRegexSyntaxError` for an
+invalid pattern and `UnsupportedPatternError` for a valid pattern the backend
+cannot express.
+
+`EcmaRegex`: a frozen dataclass: an ECMA-262 pattern compiled for a Python
+backend. Fields: `pattern: str` (the original source), `flags: str` (the
+original flag string), `translated: str` (the backend pattern that was
+compiled), `backend: BackendName`, `compiled: CompiledPattern` (the underlying
+`re.Pattern` or `regex` equivalent). Method `EcmaRegex.search(string) -> bool`:
+whether the pattern matches anywhere in `string` (`RegExp.prototype.test`
+semantics: unanchored, yes/no only). Nothing here is cached; build one per
+pattern and hold on to it, or cache in front of `compile`.
+
+`CompiledPattern`: a `Protocol`: the slice of a compiled backend pattern this
+package relies on, `search(string, /) -> object | None`.
+
+`Pattern`: a frozen dataclass: a parsed pattern, `root: Node` and `flags:
+Flags`. Returned by `parse`.
+
+`Flags`: a frozen dataclass, the subset of ECMA-262 `RegExp` flags this package
+models: `ignore_case: bool = False`, `multiline: bool = False`, `dot_all: bool
+= False`, `unicode: bool = True` (always true; only `u`-mode is implemented).
+Property `Flags.source -> str`: the flags as an ECMA-262 flag string, in
+canonical order (`s`, `i`, `m`, `u`).
+
+### Lower-level functions
+
+`parse(pattern, *, flags="") -> Pattern`: parses `pattern` as an ECMA-262
+pattern under `u`-mode semantics. `flags` is an ECMA-262 flag string; `i`, `m`,
+`s`, `u` are accepted (`u` is implied). Raises `EcmaRegexSyntaxError` for an
+invalid pattern and `UnsupportedPatternError` for a flag this package does not
+model.
+
+`translate(pattern, *, backend="re") -> str`: emits a backend pattern string
+with ECMA-262 semantics, meant to be compiled with the flags `translate_flags`
+returns. Raises `UnsupportedPatternError` when the chosen backend cannot
+express the pattern (a variable-width lookbehind on `re`, or an uncomputable
+Unicode property).
+
+`translate_flags(pattern) -> int`: backend compile flags that cannot be
+expressed in the pattern text. Only `re.IGNORECASE` is ever returned: `m` and
+`s` are spelled out in the translated pattern, because Python's own
+`MULTILINE`/`DOTALL` use a narrower line-terminator set than ECMA-262.
+
+`star_height(pattern) -> int`: the nesting depth of unbounded quantifiers (`a`
+is 0, `a+` is 1, `(a+)+` is 2; bounded quantifiers like `a{2,3}` do not count,
+`a{2,}` does). A star height of 2 or more is the classic necessary (not
+sufficient) screen for catastrophic backtracking.
+
+`width(node) -> tuple[int, int | None]`: the `(minimum, maximum)` number of
+code points `node` consumes; `maximum` is `None` when unbounded or not
+statically known (a backreference).
+
+`BackendName`: a type alias, `Literal["re", "regex"]`.
+
+### AST and errors
+
+`Node`: a type alias for any pattern AST node: the union of every node type
+below except `Pattern` itself.
+
+`Alternation`: a frozen dataclass: `options: tuple[Node, ...]` (`a|b|c`).
+
+`Concatenation`: a frozen dataclass: `parts: tuple[Node, ...]`, a sequence of
+terms; an empty tuple is the empty alternative.
+
+`Literal`: a frozen dataclass: `code_point: int`, a single code point matched
+literally.
+
+`Dot`: a frozen dataclass with no fields: `.`, every code point except a line
+terminator unless the `s` flag is set.
+
+`Anchor`: a frozen dataclass: `kind: Literal["start", "end"]` (`^` or `$`).
+
+`WordBoundary`: a frozen dataclass: `negated: bool` (`\b` when `False`, `\B`
+when `True`).
+
+`Group`: a frozen dataclass: `body: Node`, `capturing: bool`, `index: int |
+None = None` (one-based capture index, `None` when non-capturing), `name: str |
+None = None`.
+
+`Backreference`: a frozen dataclass: `index: int | None = None` (`\1`), `name:
+str | None = None` (`\k<name>`).
+
+`Lookaround`: a frozen dataclass: `body: Node`, `direction: Literal["ahead",
+"behind"]`, `negated: bool`.
+
+`Quantifier`: a frozen dataclass: `target: Node`, `min: int`, `max: int | None`
+(`None` for unbounded), `greedy: bool`.
+
+`CharClass`: a frozen dataclass: `negated: bool`, `items: tuple[ClassItem,
+...]` (`[...]` or `[^...]`).
+
+`ClassEscape`: a frozen dataclass: `kind: Literal["d", "D", "w", "W", "s",
+"S"]` (`\d`, `\D`, `\w`, `\W`, `\s`, or `\S`).
+
+`ClassRange`: a frozen dataclass: `low: int`, `high: int`, an inclusive
+code-point range inside a character class.
+
+`ClassItem`: a type alias, `Literal | ClassRange | ClassEscape |
+PropertyEscape` (the AST node types, not `typing.Literal`): one member of a
+character class.
+
+`PropertyEscape`: a frozen dataclass: `name: str` (`General_Category`,
+`Script`, `Script_Extensions`, or a binary property name), `value: str | None`
+(the property value for `name=value` form, `None` for the lone-name form),
+`negated: bool` (`\p{...}` / `\P{...}`).
+
+`EcmaRegexError(message, position)`: base class for every error this package
+raises. `position` is a zero-based index into the source pattern (or, for flag
+errors, into the flag string).
+
+`EcmaRegexSyntaxError`: a subclass of `EcmaRegexError`: the pattern is not a
+valid ECMA-262 pattern under `u` semantics.
+
+`UnsupportedPatternError`: a subclass of `EcmaRegexError`: the pattern is valid
+ECMA-262 but cannot be translated faithfully by the chosen backend (e.g. a
+variable-width lookbehind on `re`, or an uncomputable Unicode property).
+

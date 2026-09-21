@@ -39,7 +39,7 @@ wheels = [
 
 [[package]]
 name = "ecma-regex"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "packages/ecma-regex" }
 
 [package.optional-dependencies]
@@ -247,7 +247,7 @@ wheels = [
 
 [[package]]
 name = "json-schema-engine"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "ecma-regex" },

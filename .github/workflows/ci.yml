@@ -26,7 +26,7 @@ jobs:
       - run: uv run lint-imports
       - run: uv run pytest -q
       - run: uv run python scripts/standalone_smoke.py
-      - run: uv build
+      - run: uv run python scripts/install_smoke.py
 
   bowtie:
     runs-on: ubuntu-latest

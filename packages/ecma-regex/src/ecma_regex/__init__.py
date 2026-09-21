@@ -91,9 +91,11 @@ than fixed:
 Cost
 ----
 The first ``\\p{...}`` translated on the ``re`` backend scans every code
-point to build its range list (roughly 50 ms for a General_Category
-property, up to a few hundred for a predicate-derived binary property).
-The result is cached process-wide, so every later use is a dict hit.
+point to build its range list, whether the property is a General_Category
+value or a predicate-derived binary property -- roughly 40 ms on CPython
+3.12 either way, since the scan cost comes from walking every code point
+once, not from which property is being built. The result is cached
+process-wide, so every later use, of any property, is a dict hit.
 """
 
 from .analysis import star_height, width

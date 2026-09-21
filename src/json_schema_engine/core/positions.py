@@ -1,82 +1,50 @@
-# D17: reference implementation of the loader capability "report source
-# ranges". A hand-written recursive-descent JSON parser that records, for
-# every value it parses, the source span of that value (and, for an object
-# member, the span of its key token too), keyed by the JSON Pointer (RFC
-# 6901) of the value's location in the document. This lets tests exercise
-# the engine's own position lookups end to end without the engine's own
-# loader machinery.
+# D17: the reference loader capability "report source ranges". A
+# recursive-descent JSON parser that records, for every value it parses,
+# the source span of that value (and, for an object member, the span of
+# its key token too), keyed by the JSON Pointer (RFC 6901) of the value's
+# location in the document. `parse_json_with_ranges` is the public way to
+# get positions without writing a parser: its result is a `LoadedResource`
+# with a `get_range`, so a loader can return it directly.
 #
-# IP policy (DESIGN.md D15): implementation from RFC 8259 (JSON), RFC 6901
-# (JSON Pointer), and DESIGN.md only; no other JSON Schema validator's
-# source was read, ported, or translated. Our own TS engine's
-# `packages/test-kit/src/positions.ts` (prior work of ours, not a
-# third-party validator) was consulted for the shape of the result and its
-# tests, then rewritten from the grammar in idiomatic Python: this parser
-# walks the JSON grammar itself (object/array/string/number/literal
-# productions) rather than delegating structure to `json.loads`, so it
-# rejects non-JSON extensions such as `NaN`/`Infinity` that `json.loads`
-# accepts by default (DESIGN.md P2, §5).
+# IP policy (DESIGN.md D15): implemented from RFC 8259 (JSON) and RFC 6901
+# (JSON Pointer) only. The parser walks the JSON grammar itself rather
+# than delegating structure to `json.loads`, so it rejects non-JSON
+# extensions such as `NaN`/`Infinity` that `json.loads` accepts (P2).
 #
-# Types are structurally compatible with what `json_schema_engine.core` will
-# define for D17 (field names `line`, `column`, `offset`, `start`, `end`,
-# `value`, `key`) but are defined locally: test-kit depends on pytest only,
-# and import-linter forbids it importing the engine.
+# Dependency direction: imports core's `errors`, `json_model`, and
+# `loader` leaves only.
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import NoReturn, NotRequired, TypedDict
+from typing import NoReturn
 
-from json_schema_engine.test_kit.suite import Json
+from json_schema_engine.core.errors import JsonSyntaxError
+from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.loader import SourcePosition, SourceRange, SourceSpan
 
 _WHITESPACE = " \t\n\r"
 _ESCAPABLE = frozenset('"\\/bfnrtu')
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
-class SourcePosition(TypedDict):
-    """A point in source text: 1-based line and column, 0-based offset.
-
-    A TypedDict rather than a dataclass because these ride on the engine's
-    output units, which are plain dicts (the wire shape), and because the
-    engine's own `SourceRange` is a structurally identical TypedDict that a
-    loader written without the engine must still satisfy.
-    """
-
-    line: int
-    column: int
-    offset: int
-
-
-class SourceSpan(TypedDict):
-    start: SourcePosition
-    end: SourcePosition
-
-
-class SourceRange(TypedDict):
-    """The span of a value and, for an object member, of its key."""
-
-    value: SourceSpan
-    key: NotRequired[SourceSpan]
-
-
 @dataclass(frozen=True, slots=True)
 class ParsedDocument:
     """A parsed JSON document plus its source-position lookup.
 
-    Structurally satisfies the engine's loaded-resource contract (`value`,
-    `uri`) plus the D17 extension (`get_range`), without importing it.
+    Satisfies `LoadedResource` (`value`, `uri`) with the D17 extension
+    (`get_range`), so a loader may return it as is.
     """
 
-    value: Json
+    value: JsonValue
     uri: str
     get_range: Callable[[str], SourceRange | None]
 
 
 def _escape_pointer_token(token: str) -> str:
-    """RFC 6901 §3: encode ``~`` and ``/`` within one reference token."""
+    """RFC 6901 §3: encode `~` and `/` within one reference token."""
     return token.replace("~", "~0").replace("/", "~1")
 
 
@@ -87,11 +55,10 @@ def _is_ascii_digit(ch: str | None) -> bool:
 class _Parser:
     """Recursive-descent parser over the RFC 8259 JSON grammar.
 
-    Walks ``text`` once, left to right, tracking line/column/offset as it
-    goes and recording a :class:`SourceRange` for every JSON Pointer it
-    visits. Never delegates structural parsing to `json.loads`; only a
-    already-delimited leaf token (a string or number literal) is handed to
-    `json.loads` to decode its Python value.
+    Walks `text` once, left to right, tracking line/column/offset as it
+    goes and recording a `SourceRange` for every JSON Pointer it visits.
+    Only an already-delimited leaf token (a string or number literal) is
+    handed to `json.loads`, to decode its Python value.
     """
 
     __slots__ = ("column", "length", "line", "pos", "ranges", "text")
@@ -108,8 +75,12 @@ class _Parser:
         return SourcePosition(line=self.line, column=self.column, offset=self.pos)
 
     def _fail(self, message: str) -> NoReturn:
-        msg = f"{message} at line {self.line}, column {self.column}"
-        raise ValueError(msg)
+        raise JsonSyntaxError(
+            f"{message} at line {self.line}, column {self.column}",
+            line=self.line,
+            column=self.column,
+            offset=self.pos,
+        )
 
     def _peek(self) -> str | None:
         return self.text[self.pos] if self.pos < self.length else None
@@ -133,7 +104,7 @@ class _Parser:
             self._fail(f"expected {ch!r}")
         self._advance()
 
-    def parse_document(self) -> Json:
+    def parse_document(self) -> JsonValue:
         self._skip_ws()
         value = self._parse_value("")
         self._skip_ws()
@@ -141,13 +112,15 @@ class _Parser:
             self._fail("trailing content after JSON document")
         return value
 
-    def _parse_value(self, pointer: str, key_span: SourceSpan | None = None) -> Json:
+    def _parse_value(
+        self, pointer: str, key_span: SourceSpan | None = None
+    ) -> JsonValue:
         self._skip_ws()
         if self.pos >= self.length:
             self._fail("unexpected end of input")
         start = self._position()
         ch = self._peek()
-        value: Json
+        value: JsonValue
         if ch == "{":
             value = self._parse_object(pointer)
         elif ch == "[":
@@ -178,10 +151,10 @@ class _Parser:
         for _ in literal:
             self._advance()
 
-    def _parse_object(self, pointer: str) -> dict[str, Json]:
+    def _parse_object(self, pointer: str) -> dict[str, JsonValue]:
         self._expect("{")
         self._skip_ws()
-        obj: dict[str, Json] = {}
+        obj: dict[str, JsonValue] = {}
         if self._peek() == "}":
             self._advance()
             return obj
@@ -205,10 +178,10 @@ class _Parser:
             self._fail("expected ',' or '}'")
         return obj
 
-    def _parse_array(self, pointer: str) -> list[Json]:
+    def _parse_array(self, pointer: str) -> list[JsonValue]:
         self._expect("[")
         self._skip_ws()
-        arr: list[Json] = []
+        arr: list[JsonValue] = []
         if self._peek() == "]":
             self._advance()
             return arr
@@ -295,13 +268,14 @@ class _Parser:
 
 
 def parse_json_with_ranges(text: str, uri: str) -> ParsedDocument:
-    """Parses ``text`` as JSON, returning the value plus a source-position
-    lookup by JSON Pointer (RFC 6901), exercising the D17 loader capability
-    end to end.
+    """Parse `text` as JSON, returning the value plus a source-position
+    lookup by document-rooted JSON Pointer (RFC 6901).
 
-    Raises :class:`ValueError` (message includes line and column) on any
-    syntax error, including trailing content after the document and
-    non-JSON extensions such as ``NaN``/``Infinity``/``-Infinity``.
+    The result is a `LoadedResource` with `get_range`, so a loader can
+    return it and `evaluate(..., positions=True)` and `Engine.locate` will
+    report line/column/offset. Raises `JsonSyntaxError` (also a
+    `ValueError`) with the position on any syntax error, including
+    trailing content and the non-JSON extensions `NaN`/`Infinity`.
     """
     parser = _Parser(text)
     value = parser.parse_document()

@@ -4,8 +4,12 @@
 
 import pytest
 
-from json_schema_engine.core import OutputOptionsError, create_engine
-from json_schema_engine.test_kit import ParsedDocument, parse_json_with_ranges
+from json_schema_engine.core import (
+    OutputOptionsError,
+    ParsedDocument,
+    create_engine,
+    parse_json_with_ranges,
+)
 
 TEXT = """{
   "$id": "https://pos.example/root",

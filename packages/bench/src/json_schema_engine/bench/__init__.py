@@ -7,6 +7,7 @@ standalone artifacts against the interpreter and two competitors
 nothing here gates CI.
 """
 
+from json_schema_engine.bench.compare import compare
 from json_schema_engine.bench.corpora import CORPUS_NAMES, Corpus, load_corpus
 from json_schema_engine.bench.harness import Exclusion, Results, TaskResult, run
 from json_schema_engine.bench.report import format_table
@@ -20,6 +21,7 @@ __all__ = [
     "Results",
     "Subject",
     "TaskResult",
+    "compare",
     "format_table",
     "load_corpus",
     "run",
