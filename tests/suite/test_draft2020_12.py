@@ -85,8 +85,8 @@ REMOTE_PARAMS = collect_suite_params(SUITE_DIR, ["refRemote"], UNSUPPORTED)
 
 # Pinned from the first green run, after checking every skip reason names
 # an unimplemented keyword (test_every_skip_names_an_unimplemented_keyword).
-EXPECTED_RUN, EXPECTED_SKIPPED = 418, 123
-EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED = 25, 6
+EXPECTED_RUN, EXPECTED_SKIPPED = 1213, 6
+EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED = 31, 0
 
 
 def test_census_covers_the_dialect() -> None:
