@@ -34,13 +34,22 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.keywords._ids import VOCAB_VALIDATION, keyword_id
 from json_schema_engine.core.lowering import (
+    CmpOp,
     Const,
+    Expr,
     LowerFn,
     LoweringContext,
+    LowerMessage,
+    LowerParams,
+    Stmt,
     TypeName,
     and_,
+    cmp,
     fail,
     has_key,
+    helper,
+    in_consts,
+    lower_nothing,
     not_,
     regex_test,
     type_is,
@@ -93,14 +102,24 @@ def assertion(
     message: Callable[[JsonValue], str],
     params: Callable[[JsonValue], ErrorParams] | None = None,
     lower: LowerFn | None = None,
+    lower_test: Callable[[JsonValue, Expr], Expr | None] | None = None,
 ) -> KeywordBehavior:
     """Build a one-error assertion: `test(value, instance)` or `ctx.error()`.
 
     Covers every validation keyword whose entire behavior is "check a
     predicate against the instance, and if it fails, report exactly one
     error naming the keyword's own value" — everything here except
-    `uniqueItems` (whose error cites the colliding indexes, not the keyword
-    value) and `dependentRequired` (which can report more than one error).
+    `enum`/`uniqueItems` (whose lowering isn't one guard-then-compare) and
+    `dependentRequired` (which can report more than one error).
+
+    `lower_test(value, instance)` names the "guard, then compare" family:
+    given the keyword's (schema-fixed) value and the instance expression,
+    it returns the failing condition, or `None` when the keyword value
+    itself makes the assertion always vacuous (mirroring `test`'s own
+    vacuous-truth guard on `value`, decided once at lowering time rather
+    than per instance). `message`/`params` are shared verbatim with
+    `evaluate` so the two never drift. Pass `lower` directly instead for a
+    keyword whose lowering isn't of this shape.
     """
 
     def _evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -109,8 +128,23 @@ def assertion(
         ctx.error(message(value), params(value) if params is not None else None)
         return False
 
+    def _lower(value: JsonValue, lctx: LoweringContext) -> None:
+        assert lower_test is not None
+        cond = lower_test(value, lctx.instance)
+        if cond is None:
+            return
+        raw_params = params(value) if params is not None else None
+        wrapped: LowerParams | None = (
+            None if raw_params is None else {k: Const(v) for k, v in raw_params.items()}
+        )
+        lctx.emit(when(cond, (fail((message(value),), wrapped),)))
+
+    resolved_lower = (
+        lower if lower is not None else (_lower if lower_test is not None else None)
+    )
+
     return KeywordBehavior(
-        id=keyword_id(VOCAB_VALIDATION, name), evaluate=_evaluate, lower=lower
+        id=keyword_id(VOCAB_VALIDATION, name), evaluate=_evaluate, lower=resolved_lower
     )
 
 
@@ -244,18 +278,39 @@ def _enum_test(value: JsonValue, instance: JsonValue) -> bool:
     return any(json_equal(candidate, instance) for candidate in candidates)
 
 
+def _enum_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    # A non-list `value` gives `_enum_test` an empty candidate set, which
+    # fails for every instance (§4 rule 6 vacuous-truth guards run the
+    # other way here): mirror that as an unconditional `Fail`, no `when`.
+    message: LowerMessage = ("not one of the allowed values",)
+    params: LowerParams = {"allowedValues": Const(value)}
+    if not isinstance(value, list) or not value:
+        lctx.emit(fail(message, params))
+        return
+    lctx.emit(
+        when(not_(in_consts(lctx.instance, tuple(value))), (fail(message, params),))
+    )
+
+
 _enum_behavior = assertion(
     "enum",
     _enum_test,
     lambda _value: "not one of the allowed values",
     lambda value: {"allowedValues": value},
+    lower=_enum_lower,
 )
+
+
+def _const_lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+    return not_(helper("json_equal", instance, Const(value)))
+
 
 _const_behavior = assertion(
     "const",
     json_equal,
     lambda _value: "does not equal the required constant",
     lambda value: {"allowedValue": value},
+    lower_test=_const_lower_test,
 )
 
 
@@ -268,11 +323,21 @@ def _multiple_of_test(value: JsonValue, instance: JsonValue) -> bool:
     return is_multiple_of(instance, value)
 
 
+def _multiple_of_lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+    if not _is_number(value):
+        return None
+    return and_(
+        type_is(instance, "number"),
+        not_(helper("is_multiple_of", instance, Const(value))),
+    )
+
+
 _multiple_of_behavior = assertion(
     "multipleOf",
     _multiple_of_test,
     lambda value: f"must be a multiple of {value}",
     lambda value: {"multipleOf": value},
+    lower_test=_multiple_of_lower_test,
 )
 
 
@@ -280,15 +345,26 @@ _multiple_of_behavior = assertion(
 
 
 def _numeric_bound(
-    name: str, op: Callable[[int | float, int | float], bool], symbol: str
+    name: str, op: Callable[[int | float, int | float], bool], symbol: CmpOp
 ) -> KeywordBehavior:
     def _test(value: JsonValue, instance: JsonValue) -> bool:
         if not _is_number(instance) or not _is_number(value):
             return True
         return op(instance, value)
 
+    def _lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+        if not _is_number(value):
+            return None
+        return and_(
+            type_is(instance, "number"), not_(cmp(symbol, instance, Const(value)))
+        )
+
     return assertion(
-        name, _test, lambda value: f"must be {symbol} {value}", _limit_params
+        name,
+        _test,
+        lambda value: f"must be {symbol} {value}",
+        _limit_params,
+        lower_test=_lower_test,
     )
 
 
@@ -306,23 +382,38 @@ _exclusive_minimum_behavior = _numeric_bound(
 
 
 def _string_bound(
-    name: str, op: Callable[[int, int], bool], phrase: str
+    name: str, op: Callable[[int, int], bool], phrase: str, symbol: CmpOp
 ) -> KeywordBehavior:
     def _test(value: JsonValue, instance: JsonValue) -> bool:
         if not isinstance(instance, str) or not _is_number(value):
             return True
         return op(code_point_length(instance), int(value))
 
+    def _lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+        # `evaluate` truncates a non-integer keyword value via `int(value)`
+        # (§4 rule 6 does not require the value itself to be a spec-valid
+        # integer): the lowered comparison bakes in the same truncation.
+        if not _is_number(value):
+            return None
+        return and_(
+            type_is(instance, "string"),
+            not_(cmp(symbol, helper("code_point_length", instance), Const(int(value)))),
+        )
+
     return assertion(
-        name, _test, lambda value: f"must be {phrase} {value} characters", _limit_params
+        name,
+        _test,
+        lambda value: f"must be {phrase} {value} characters",
+        _limit_params,
+        lower_test=_lower_test,
     )
 
 
 _max_length_behavior = _string_bound(
-    "maxLength", lambda n, limit: n <= limit, "at most"
+    "maxLength", lambda n, limit: n <= limit, "at most", "<="
 )
 _min_length_behavior = _string_bound(
-    "minLength", lambda n, limit: n >= limit, "at least"
+    "minLength", lambda n, limit: n >= limit, "at least", ">="
 )
 
 
@@ -330,46 +421,71 @@ _min_length_behavior = _string_bound(
 
 
 def _array_bound(
-    name: str, op: Callable[[int, int], bool], phrase: str
+    name: str, op: Callable[[int, int], bool], phrase: str, symbol: CmpOp
 ) -> KeywordBehavior:
     def _test(value: JsonValue, instance: JsonValue) -> bool:
         if not isinstance(instance, list) or not _is_number(value):
             return True
         return op(len(instance), int(value))
 
+    def _lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+        if not _is_number(value):
+            return None
+        return and_(
+            type_is(instance, "array"),
+            not_(cmp(symbol, helper("length_of", instance), Const(int(value)))),
+        )
+
     return assertion(
-        name, _test, lambda value: f"must have {phrase} {value} items", _limit_params
+        name,
+        _test,
+        lambda value: f"must have {phrase} {value} items",
+        _limit_params,
+        lower_test=_lower_test,
     )
 
 
-_max_items_behavior = _array_bound("maxItems", lambda n, limit: n <= limit, "at most")
-_min_items_behavior = _array_bound("minItems", lambda n, limit: n >= limit, "at least")
+_max_items_behavior = _array_bound(
+    "maxItems", lambda n, limit: n <= limit, "at most", "<="
+)
+_min_items_behavior = _array_bound(
+    "minItems", lambda n, limit: n >= limit, "at least", ">="
+)
 
 
 # --- object size: maxProperties/minProperties (M2) ------------------------
 
 
 def _object_bound(
-    name: str, op: Callable[[int, int], bool], phrase: str
+    name: str, op: Callable[[int, int], bool], phrase: str, symbol: CmpOp
 ) -> KeywordBehavior:
     def _test(value: JsonValue, instance: JsonValue) -> bool:
         if not is_object(instance) or not _is_number(value):
             return True
         return op(len(instance), int(value))
 
+    def _lower_test(value: JsonValue, instance: Expr) -> Expr | None:
+        if not _is_number(value):
+            return None
+        return and_(
+            type_is(instance, "object"),
+            not_(cmp(symbol, helper("length_of", instance), Const(int(value)))),
+        )
+
     return assertion(
         name,
         _test,
         lambda value: f"must have {phrase} {value} properties",
         _limit_params,
+        lower_test=_lower_test,
     )
 
 
 _max_properties_behavior = _object_bound(
-    "maxProperties", lambda n, limit: n <= limit, "at most"
+    "maxProperties", lambda n, limit: n <= limit, "at most", "<="
 )
 _min_properties_behavior = _object_bound(
-    "minProperties", lambda n, limit: n >= limit, "at least"
+    "minProperties", lambda n, limit: n >= limit, "at least", ">="
 )
 
 
@@ -393,9 +509,28 @@ def _unique_items_evaluate(
     return False
 
 
+def _unique_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    # `value is not True` (not merely falsy) mirrors `evaluate`'s own guard.
+    if value is not True:
+        return
+    instance = lctx.instance
+    # The colliding pair is runtime-only (D9e: the scan itself only runs on
+    # the failure path in `evaluate`, and `Fail`'s message/params are inert
+    # in this milestone regardless, per lowering.py's module docstring), so
+    # the message omits the indexes `evaluate` reports instead of computing
+    # them again at lowering time.
+    lctx.emit(
+        when(
+            and_(type_is(instance, "array"), helper("has_duplicate_items", instance)),
+            (fail(("items are not unique",)),),
+        )
+    )
+
+
 _unique_items_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "uniqueItems"),
     evaluate=_unique_items_evaluate,
+    lower=_unique_items_lower,
 )
 
 
@@ -422,9 +557,37 @@ def _dependent_required_evaluate(
     return ok
 
 
+def _dependent_required_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    outer: list[Stmt] = []
+    for name, deps in value.items():
+        if not isinstance(deps, list):
+            continue
+        inner = tuple(
+            when(
+                not_(has_key(instance, dep)),
+                (
+                    fail(
+                        (f"'{name}' requires '{dep}' to be present",),
+                        {"property": Const(name), "missingProperty": Const(dep)},
+                    ),
+                ),
+            )
+            for dep in deps
+            if isinstance(dep, str)
+        )
+        if inner:
+            outer.append(when(has_key(instance, name), inner))
+    if outer:
+        lctx.emit(when(type_is(instance, "object"), tuple(outer)))
+
+
 _dependent_required_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "dependentRequired"),
     evaluate=_dependent_required_evaluate,
+    lower=_dependent_required_lower,
 )
 
 
@@ -445,11 +608,13 @@ def _inert_evaluate(_value: JsonValue, _cursor: Cursor, _ctx: KeywordContext) ->
 _min_contains_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "minContains"),
     evaluate=_inert_evaluate,
+    lower=lower_nothing,
 )
 
 _max_contains_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "maxContains"),
     evaluate=_inert_evaluate,
+    lower=lower_nothing,
 )
 
 

@@ -17,7 +17,7 @@ from json_schema_engine.core import create_engine
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDENS = Path(__file__).parent / "goldens"
-NAMES = ["user", "island"]
+NAMES = ["user", "event", "profile", "static-consumer", "island"]
 
 
 def compile_fixture(name: str) -> str:

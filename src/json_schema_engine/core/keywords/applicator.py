@@ -22,7 +22,17 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
-from json_schema_engine.core.lowering import HERE, LoweringContext, apply, combine_check
+from json_schema_engine.core.lowering import (
+    HERE,
+    LoweringContext,
+    apply,
+    apply_expr,
+    combine_check,
+    has_key,
+    lower_nothing,
+    type_is,
+    when,
+)
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -123,7 +133,25 @@ ALL_OF = KeywordBehavior(
 
 def _one_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     count = len(value) if isinstance(value, list) else 0
-    return StaticFacts(subschemas=tuple((index,) for index in range(count)))
+    return StaticFacts(
+        subschemas=tuple((index,) for index in range(count)),
+        applications=tuple(
+            SubschemaApplication((index,), "in_place", conditional=True, asserts=True)
+            for index in range(count)
+        ),
+    )
+
+
+def _one_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    assert isinstance(value, list)
+    # Every branch is an `exactly_one` apply; the combine check closes the
+    # run. `evaluate`'s message interpolates the runtime count (pinned by
+    # existing tests), so the IR carries the static portion of that text
+    # rather than a wholly separate message (D1: one message builder).
+    lctx.emit(
+        *(apply((index,), HERE, "exactly_one") for index in range(len(value))),
+        combine_check(("expected exactly 1",)),
+    )
 
 
 def _one_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -143,7 +171,10 @@ def _one_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
 
 
 ONE_OF = KeywordBehavior(
-    id=ONE_OF_ID, evaluate=_one_of_evaluate, analyze=_one_of_analyze
+    id=ONE_OF_ID,
+    evaluate=_one_of_evaluate,
+    analyze=_one_of_analyze,
+    lower=_one_of_lower,
 )
 
 
@@ -151,7 +182,18 @@ ONE_OF = KeywordBehavior(
 
 
 def _not_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
-    return StaticFacts(subschemas=((),))
+    return StaticFacts(
+        subschemas=((),),
+        applications=(
+            SubschemaApplication(
+                (), "in_place", conditional=False, asserts=True, inverted=True
+            ),
+        ),
+    )
+
+
+def _not_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    lctx.emit(apply((), HERE, "negate", message=("must not match the subschema",)))
 
 
 def _not_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -161,14 +203,46 @@ def _not_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> boo
     return True
 
 
-NOT = KeywordBehavior(id=NOT_ID, evaluate=_not_evaluate, analyze=_not_analyze)
+NOT = KeywordBehavior(
+    id=NOT_ID, evaluate=_not_evaluate, analyze=_not_analyze, lower=_not_lower
+)
 
 
 # --- if / then / else -----------------------------------------------------
 
 
-def _if_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
-    return StaticFacts(subschemas=((),), produces=(IF_ID,))
+def _if_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticFacts:
+    applications = [
+        SubschemaApplication((), "in_place", conditional=False, asserts=False)
+    ]
+    for branch in ("then", "else"):
+        if branch in ctx.schema:
+            applications.append(
+                SubschemaApplication(
+                    (), "in_place", conditional=True, asserts=True, sibling=branch
+                )
+            )
+    return StaticFacts(
+        subschemas=((),), produces=(IF_ID,), applications=tuple(applications)
+    )
+
+
+def _if_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    has_then = "then" in lctx.schema
+    has_else = "else" in lctx.schema
+    if not has_then and not has_else:
+        # No sibling consumes the outcome, but the interpreter still applies
+        # the condition unconditionally (depth/cycle bookkeeping must match)
+        # even though its verdict and any errors are irrelevant here.
+        lctx.emit(apply((), HERE, "discard"))
+        return
+    lctx.emit(
+        when(
+            apply_expr((), HERE, "discard"),
+            (apply((), HERE, sibling="then"),) if has_then else (),
+            (apply((), HERE, sibling="else"),) if has_else else (),
+        )
+    )
 
 
 def _if_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -180,7 +254,9 @@ def _if_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool
     return True
 
 
-IF = KeywordBehavior(id=IF_ID, evaluate=_if_evaluate, analyze=_if_analyze)
+IF = KeywordBehavior(
+    id=IF_ID, evaluate=_if_evaluate, analyze=_if_analyze, lower=_if_lower
+)
 
 
 def _conditional_branch_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
@@ -205,11 +281,13 @@ THEN = KeywordBehavior(
     id=THEN_ID,
     evaluate=_make_conditional_branch_evaluate("then", True),
     analyze=_conditional_branch_analyze,
+    lower=lower_nothing,
 )
 ELSE = KeywordBehavior(
     id=ELSE_ID,
     evaluate=_make_conditional_branch_evaluate("else", False),
     analyze=_conditional_branch_analyze,
+    lower=lower_nothing,
 )
 
 
@@ -218,7 +296,27 @@ ELSE = KeywordBehavior(
 
 def _dependent_schemas_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     names = tuple(value) if is_object(value) else ()
-    return StaticFacts(subschemas=tuple((name,) for name in names))
+    return StaticFacts(
+        subschemas=tuple((name,) for name in names),
+        applications=tuple(
+            SubschemaApplication((name,), "in_place", conditional=True, asserts=True)
+            for name in names
+        ),
+    )
+
+
+def _dependent_schemas_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            tuple(
+                when(has_key(instance, name), (apply((name,), HERE),)) for name in value
+            ),
+        )
+    )
 
 
 def _dependent_schemas_evaluate(
@@ -239,6 +337,7 @@ DEPENDENT_SCHEMAS = KeywordBehavior(
     id=DEPENDENT_SCHEMAS_ID,
     evaluate=_dependent_schemas_evaluate,
     analyze=_dependent_schemas_analyze,
+    lower=_dependent_schemas_lower,
 )
 
 

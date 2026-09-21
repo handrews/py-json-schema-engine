@@ -13,6 +13,8 @@
 # Dependency direction: imports `cursor`, `dialect`, `json_model`, and
 # `_ids`. Never the evaluator or the registry.
 
+from collections.abc import Mapping
+
 from json_schema_engine.core.cursor import Cursor, child_cursor
 from json_schema_engine.core.dialect import (
     AnalyzeContext,
@@ -22,9 +24,28 @@ from json_schema_engine.core.dialect import (
     KeywordContext,
     PrefixIndexes,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.lowering import (
+    HERE,
+    Binding,
+    Const,
+    CountRange,
+    ForEachIndex,
+    LoweringContext,
+    LowerMessage,
+    LowerParams,
+    apply,
+    apply_expr,
+    child,
+    cmp,
+    const,
+    helper,
+    type_is,
+    when,
+)
 
 PREFIX_ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "prefixItems")
 ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "items")
@@ -42,6 +63,30 @@ def _prefix_items_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts
         subschemas=tuple((index,) for index in range(count)),
         produces=(PREFIX_ITEMS_ID,),
         evaluates_indexes=PrefixIndexes(count),
+        applications=tuple(
+            SubschemaApplication(
+                (index,), "child_by_index", conditional=False, asserts=True
+            )
+            for index in range(count)
+        ),
+    )
+
+
+def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not isinstance(value, list):
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            type_is(instance, "array"),
+            tuple(
+                when(
+                    cmp(">", helper("length_of", instance), const(index)),
+                    (apply((index,), child(HERE, index)),),
+                )
+                for index in range(len(value))
+            ),
+        )
     )
 
 
@@ -66,14 +111,19 @@ def _prefix_items_evaluate(
 
 
 PREFIX_ITEMS = KeywordBehavior(
-    id=PREFIX_ITEMS_ID, evaluate=_prefix_items_evaluate, analyze=_prefix_items_analyze
+    id=PREFIX_ITEMS_ID,
+    evaluate=_prefix_items_evaluate,
+    analyze=_prefix_items_analyze,
+    lower=_prefix_items_lower,
 )
 
 
 # --- items (child applicator, sweeps past sibling prefixItems) -----------
 
 
-def _items_start(schema_context: AnalyzeContext | KeywordContext) -> int:
+def _items_start(
+    schema_context: AnalyzeContext | KeywordContext | LoweringContext,
+) -> int:
     sibling = schema_context.schema.get("prefixItems")
     return len(sibling) if isinstance(sibling, list) else 0
 
@@ -83,6 +133,28 @@ def _items_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticFacts:
         subschemas=((),),
         produces=(ITEMS_ID,),
         evaluates_indexes=IndexesFrom(_items_start(ctx)),
+        applications=(
+            SubschemaApplication((), "child_sweep", conditional=False, asserts=True),
+        ),
+    )
+
+
+def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    instance = lctx.instance
+    start = _items_start(lctx)
+    binding = lctx.binding()
+    lctx.emit(
+        when(
+            type_is(instance, "array"),
+            (
+                ForEachIndex(
+                    instance,
+                    binding,
+                    (apply((), child(HERE, Binding(binding))),),
+                    start=start,
+                ),
+            ),
+        )
     )
 
 
@@ -102,17 +174,30 @@ def _items_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
     return ok
 
 
-ITEMS = KeywordBehavior(id=ITEMS_ID, evaluate=_items_evaluate, analyze=_items_analyze)
+ITEMS = KeywordBehavior(
+    id=ITEMS_ID, evaluate=_items_evaluate, analyze=_items_analyze, lower=_items_lower
+)
 
 
 # --- contains (in-place-per-element applicator, range configurable) -------
 
 
-def _bound(ctx: KeywordContext, name: str) -> int | float | None:
-    value = ctx.schema.get(name)
+def _bound(schema: Mapping[str, JsonValue], name: str) -> int | float | None:
+    value = schema.get(name)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value
+
+
+def _contains_bounds(
+    schema: Mapping[str, JsonValue], *, sibling_bounds: bool
+) -> tuple[int | float, int | float | None]:
+    if not sibling_bounds:
+        return 1, None
+    minimum = _bound(schema, "minContains")
+    minimum = 1 if minimum is None else minimum
+    maximum = _bound(schema, "maxContains")
+    return minimum, maximum
 
 
 def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehavior:
@@ -129,6 +214,52 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             subschemas=((),),
             produces=(behavior_id,),
             evaluates_indexes=DynamicIndexes(),
+            applications=(
+                SubschemaApplication(
+                    (), "child_sweep", conditional=False, asserts=False
+                ),
+            ),
+        )
+
+    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+        instance = lctx.instance
+        minimum, maximum = _contains_bounds(lctx.schema, sibling_bounds=sibling_bounds)
+        # Runtime dictates the actual match count (`count`), so — unlike
+        # `evaluate()` — the message can only report the compile-time-known
+        # bounds, not how many elements actually matched.
+        if not sibling_bounds:
+            message: LowerMessage = ("no item matches the contains subschema",)
+        elif maximum is None:
+            message = (
+                f"expected at least {int(minimum)} item(s) matching "
+                "the contains subschema",
+            )
+        else:
+            message = (
+                f"expected {int(minimum)}-{int(maximum)} item(s) matching "
+                "the contains subschema",
+            )
+        params: LowerParams = (
+            {"minContains": Const(int(minimum)), "maxContains": Const(int(maximum))}
+            if maximum is not None
+            else {"minContains": Const(int(minimum))}
+        )
+        binding = lctx.binding()
+        lctx.emit(
+            when(
+                type_is(instance, "array"),
+                (
+                    CountRange(
+                        instance,
+                        binding,
+                        apply_expr((), child(HERE, Binding(binding)), "discard"),
+                        int(minimum),
+                        int(maximum) if maximum is not None else None,
+                        message=message,
+                        params=params,
+                    ),
+                ),
+            )
         )
 
     def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -140,12 +271,7 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             if ctx.apply(("contains",), child_cursor(cursor, index, instance[index])):
                 matched.append(index)
         count = len(matched)
-        if sibling_bounds:
-            minimum = _bound(ctx, "minContains")
-            minimum = 1 if minimum is None else minimum
-            maximum = _bound(ctx, "maxContains")
-        else:
-            minimum, maximum = 1, None
+        minimum, maximum = _contains_bounds(ctx.schema, sibling_bounds=sibling_bounds)
         if count < minimum or (maximum is not None and count > maximum):
             if not sibling_bounds:
                 message = "no item matches the contains subschema"
@@ -171,7 +297,9 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             ctx.produce(True if count == len(instance) else matched)
         return True
 
-    return KeywordBehavior(id=behavior_id, evaluate=evaluate, analyze=analyze)
+    return KeywordBehavior(
+        id=behavior_id, evaluate=evaluate, analyze=analyze, lower=lower
+    )
 
 
 CONTAINS = contains_behavior(CONTAINS_ID, sibling_bounds=True)

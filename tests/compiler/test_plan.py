@@ -2,8 +2,6 @@
 # in-place cycle islanding, `reaches_interpreted`, `use_count`, and the
 # explanation projection.
 
-import pytest
-
 from json_schema_engine.compiler import build_plan, explain_compilation
 from json_schema_engine.core import DIALECT_DRAFT_07, JsonValue, create_engine
 
@@ -100,7 +98,6 @@ def test_ref_into_data_is_a_non_schema_unit() -> None:
     assert plan.units[uri + "#/x-data/n"].cause == "non_schema"
 
 
-@pytest.mark.xfail(strict=True, reason="unevaluated* lowering lands in Step 2")
 def test_consumer_licensing_needs_static_coverage() -> None:
     licensed, _ = plan_for({"properties": {"a": True}, "unevaluatedProperties": False})
     root = licensed.units[licensed.root_key]
