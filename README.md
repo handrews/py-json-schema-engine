@@ -6,11 +6,19 @@ compiler tier for hot paths, full annotation collection, and every standard
 output format. It is the Python counterpart of
 [handrews/json-schema-engine](https://github.com/handrews/json-schema-engine)
 and shares its architecture: two tiers, one keyword registry, a frame-scoped
-record channel, and the IETF draft-03 relevance model.
+record channel, and the new (2026)
+[IETF working group draft-03](https://www.ietf.org/archive/id/draft-ietf-jsonschema-json-schema-03.html)
+relevance model.
 
 Produced by Henry Andrews via Claude Code.
 
-**Status: `0.0.2` is the first functional release.** It carries the
+**Status: `0.0.2` is the first functional release.**
+
+All `0.0.x` releases will have AI-written documentation.  Version
+`0.1.0` will indicate that the documentation has been audited and revised
+by a human.
+
+As of `0.0.2`, this package carries the
 interpreter core for 2020-12, 2019-09, draft-07, and draft-06 with every
 standard output format, the compiler tier (a flag validator and standalone
 modules, M6–M7), and the `json_schema_engine.formats` package — green on
