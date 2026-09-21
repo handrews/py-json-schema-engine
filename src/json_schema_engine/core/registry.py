@@ -10,7 +10,7 @@
 # Dependency direction: imports `dialect`, `ref`, `uri`, `json_model`, and
 # `errors`. The evaluator and the engine façade build on this.
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import unquote
@@ -28,6 +28,7 @@ from json_schema_engine.core.json_model import (
     json_type_of,
     unescape_segment,
 )
+from json_schema_engine.core.loader import RangeLookup, SourceRange
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.uri import resolve, split_fragment, strip_fragment
 
@@ -54,6 +55,25 @@ def _resource_of(uri: str) -> str:
     return strip_fragment(uri)
 
 
+def effective_dialect_uri(
+    schema: JsonValue,
+    retrieval_uri: str,
+    dialect_uri: str | None,
+    default_dialect_uri: str,
+) -> str:
+    """The dialect a document is registered under, fragment-free.
+
+    `$schema` wins when present, then the caller's `dialect_uri`, then the
+    default. `…/draft-07/schema#` names the same dialect as the bare form.
+    """
+    effective = _resource_of(dialect_uri or default_dialect_uri)
+    if is_object(schema):
+        declared = schema.get("$schema")
+        if isinstance(declared, str):
+            effective = _resource_of(resolve(retrieval_uri, declared))
+    return effective
+
+
 def _split(uri: str) -> tuple[str, str | None]:
     """Resource and percent-decoded fragment.
 
@@ -74,10 +94,16 @@ class SchemaRegistry:
         default_dialect_uri: str,
         *,
         max_depth: int = DEFAULT_MAX_DEPTH,
+        bundled: Mapping[str, JsonValue] | None = None,
     ) -> None:
         self._dialects = dialects
         self._default_dialect_uri = _resource_of(default_dialect_uri)
         self._max_depth = max_depth
+        # Trusted resources (the standard metaschemas) registered on first
+        # use rather than up front: an engine is often created per
+        # evaluation, and walking eight documents each time would cost more
+        # than every evaluation that never references one.
+        self._bundled: Mapping[str, JsonValue] = bundled or {}
         self._documents: dict[str, JsonValue] = {}
         self._anchors: dict[str, SchemaRef] = {}
         self._dynamic_anchors: dict[str, SchemaRef] = {}
@@ -89,6 +115,10 @@ class SchemaRegistry:
         self._consumed_ids: set[str] = set()
         self._document_dialects: dict[str, str] = {}
         self._resource_locations: dict[str, DocumentLocation] = {}
+        # Position lookups by document URI (D17): only the outermost
+        # registration installs one; embedded resources map back to their
+        # document through `_resource_locations`.
+        self._document_ranges: dict[str, RangeLookup] = {}
         # Retrieval URI -> declared `$id` base when they differ: the
         # document must be reachable under both, but anchors and lexical
         # bases live under `$id`.
@@ -108,6 +138,7 @@ class SchemaRegistry:
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
     ) -> str:
         """Register a schema document and return its canonical base URI.
 
@@ -116,11 +147,9 @@ class SchemaRegistry:
         URIs compare fragment-free: `…/draft-07/schema#` names the same
         dialect as the bare form.
         """
-        effective_dialect = _resource_of(dialect_uri or self._default_dialect_uri)
-        if is_object(schema):
-            declared = schema.get("$schema")
-            if isinstance(declared, str):
-                effective_dialect = _resource_of(resolve(retrieval_uri, declared))
+        effective_dialect = effective_dialect_uri(
+            schema, retrieval_uri, dialect_uri, self._default_dialect_uri
+        )
         dialect = self._dialects.get_dialect(effective_dialect)
 
         retrieval_resource = _resource_of(retrieval_uri)
@@ -133,6 +162,8 @@ class SchemaRegistry:
         self._documents[base_uri] = schema
         self._document_dialects[base_uri] = effective_dialect
         self._resource_locations[base_uri] = DocumentLocation(base_uri, "")
+        if get_range is not None:
+            self._document_ranges[base_uri] = get_range
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
         return base_uri
 
@@ -217,11 +248,33 @@ class SchemaRegistry:
     # --- lookups ---------------------------------------------------------
 
     def _canonical(self, resource_uri: str) -> str:
+        if (
+            resource_uri not in self._documents
+            and resource_uri not in self._aliases
+            and resource_uri in self._bundled
+        ):
+            self._register_bundled(resource_uri)
         return self._aliases.get(resource_uri, resource_uri)
 
+    def _register_bundled(self, resource_uri: str) -> None:
+        # The D20 screen is for caller schemas; a trusted resource's own
+        # patterns are not its business, so the hook is off for the walk.
+        hook, self.on_regex = self.on_regex, None
+        try:
+            self.register(self._bundled[resource_uri], resource_uri)
+        finally:
+            self.on_regex = hook
+
+    def is_bundled(self, resource_uri: str) -> bool:
+        return resource_uri in self._bundled
+
     def has(self, resource_uri: str) -> bool:
-        """True if a resource is registered, directly or via an alias."""
-        return resource_uri in self._documents or resource_uri in self._aliases
+        """True if a resource is registered, aliased, or bundled."""
+        return (
+            resource_uri in self._documents
+            or resource_uri in self._aliases
+            or resource_uri in self._bundled
+        )
 
     def document(self, resource_uri: str) -> JsonValue | None:
         """The schema node at a resource's root, if registered."""
@@ -229,6 +282,11 @@ class SchemaRegistry:
 
     def document_location(self, resource_uri: str) -> DocumentLocation | None:
         return self._resource_locations.get(self._canonical(resource_uri))
+
+    def range(self, document_uri: str, pointer: str) -> SourceRange | None:
+        """The source range of a document-rooted pointer, if its loader knows."""
+        lookup = self._document_ranges.get(document_uri)
+        return None if lookup is None else lookup(pointer)
 
     def take_unresolved(self) -> list[str]:
         """External resources referenced but not registered; drained per call."""

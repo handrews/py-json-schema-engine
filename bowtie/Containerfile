@@ -1,0 +1,14 @@
+# Bowtie harness image for json-schema-engine (M3 Step 3). Build context is
+# the repo root; `scripts/bowtie_check.py` builds the wheels into dist/
+# before invoking `<tool> build`. Installed offline via --find-links: the
+# engine's ecma-regex dependency ships as a sibling wheel in dist/, so no
+# network access is needed inside the build.
+FROM docker.io/library/python:3.12-slim
+
+COPY dist/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels json-schema-engine \
+    && rm -rf /tmp/wheels
+
+COPY bowtie/harness.py /harness.py
+
+ENTRYPOINT ["python", "/harness.py"]

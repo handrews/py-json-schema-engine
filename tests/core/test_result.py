@@ -256,11 +256,13 @@ def test_trace_is_rejected_as_deferred_regardless_of_format(output_format: str) 
 
 
 @pytest.mark.parametrize("output_format", ["basic", "list"])
-def test_positions_is_rejected_as_deferred_regardless_of_format(
+def test_positions_is_admitted_for_record_carrying_formats(
     output_format: str,
 ) -> None:
-    with pytest.raises(OutputOptionsError, match="not implemented in this milestone"):
-        resolve_output_demand(output=output_format, positions=True)
+    # D17: decoration happens post-hoc on the flat units, so any format
+    # that carries units admits it; `flag` still rejects it (tested above).
+    demand = resolve_output_demand(output=output_format, positions=True)
+    assert demand.format.value == output_format
 
 
 def test_output_format_enum_accepts_an_existing_output_format_value() -> None:

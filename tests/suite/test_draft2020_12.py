@@ -22,71 +22,35 @@ SUITE_DIR = SUITE_ROOT / "tests" / "draft2020-12"
 REMOTES_DIR = SUITE_ROOT / "remotes"
 RETRIEVAL_URI = "https://suite.example/schema"
 
-# Every draft2020-12 file except: `refRemote` (its own leg, below);
-# `dynamicRef` and `vocabulary` (M3 — and `vocabulary.json` drives
-# `$vocabulary` through `$schema`, which the keyword scan cannot see, so it
-# is excluded by name rather than by scan); `defs` (validates against the
-# 2020-12 metaschema, which M3 bundles).
-FILES = [
-    "additionalProperties",
-    "allOf",
-    "anchor",
-    "anyOf",
-    "boolean_schema",
-    "const",
-    "contains",
-    "content",
-    "default",
-    "dependentRequired",
-    "dependentSchemas",
-    "enum",
-    "exclusiveMaximum",
-    "exclusiveMinimum",
-    "format",
-    "if-then-else",
-    "infinite-loop-detection",
-    "items",
-    "maxContains",
-    "maxItems",
-    "maxLength",
-    "maxProperties",
-    "maximum",
-    "minContains",
-    "minItems",
-    "minLength",
-    "minProperties",
-    "minimum",
-    "multipleOf",
-    "not",
-    "oneOf",
-    "pattern",
-    "patternProperties",
-    "prefixItems",
-    "properties",
-    "propertyNames",
-    "ref",
-    "required",
-    "type",
-    "unevaluatedItems",
-    "unevaluatedProperties",
-    "uniqueItems",
+# Every top-level draft2020-12 file. Each case builds an engine with the
+# suite's remotes loader and loads the schema, as the TS engine does; the
+# loader is inert for the many cases that reference nothing remote.
+FILES = sorted(p.stem for p in SUITE_DIR.glob("*.json"))
+
+# Optional files the engine passes today; the rest wait for later
+# milestones (`cross-draft` needs 2019-09, `dependencies-compatibility` a
+# legacy keyword, `format` and `format-assertion` the formats package,
+# `ecmascript-regex`/`non-bmp-regex` an ECMA-conformance leg of their own,
+# `bignum`/`float-overflow` a number-representation decision).
+OPTIONAL_FILES = [
+    "optional/anchor",
+    "optional/dynamicRef",
+    "optional/id",
+    "optional/no-schema",
+    "optional/refOfUnknownKeyword",
+    "optional/unknownKeyword",
 ]
 
 IMPLEMENTED = frozenset(create_engine().dialects.get_dialect(DIALECT_2020_12).keywords)
 UNSUPPORTED = ALL_2020_12 - IMPLEMENTED
 
-# Groups the keyword scan cannot see through: they reference the 2020-12
-# metaschema, whose evaluation needs keywords and bundling that land in M3.
-NEEDS_METASCHEMA = "needs the bundled 2020-12 metaschema (M3)"
-SKIP_GROUPS = {("ref", "remote ref, containing refs itself"): NEEDS_METASCHEMA}
-
-PARAMS = collect_suite_params(SUITE_DIR, FILES, UNSUPPORTED, SKIP_GROUPS)
-REMOTE_PARAMS = collect_suite_params(SUITE_DIR, ["refRemote"], UNSUPPORTED)
+PARAMS = collect_suite_params(SUITE_DIR, FILES, UNSUPPORTED)
+OPTIONAL_PARAMS = collect_suite_params(SUITE_DIR, OPTIONAL_FILES, UNSUPPORTED)
 
 # Pinned from the first green run, after checking every skip reason names
 # an unimplemented keyword (test_every_skip_names_an_unimplemented_keyword).
-EXPECTED_RUN, EXPECTED_SKIPPED = 1213, 6
-EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED = 31, 0
+EXPECTED_RUN, EXPECTED_SKIPPED = 1301, 0
+EXPECTED_OPTIONAL_RUN, EXPECTED_OPTIONAL_SKIPPED = 25, 0
 
 
 def test_census_covers_the_dialect() -> None:
@@ -97,13 +61,13 @@ def test_census_covers_the_dialect() -> None:
 
 @pytest.mark.parametrize("case", PARAMS)
 def test_suite_case(case: SuiteCase) -> None:
-    engine = create_engine()
-    uri = engine.register_schema(case.schema, RETRIEVAL_URI)
+    engine = create_engine(loaders=[suite_remotes_loader(REMOTES_DIR)])
+    uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
 
 
-@pytest.mark.parametrize("case", REMOTE_PARAMS)
-def test_ref_remote_case(case: SuiteCase) -> None:
+@pytest.mark.parametrize("case", OPTIONAL_PARAMS)
+def test_optional_case(case: SuiteCase) -> None:
     engine = create_engine(loaders=[suite_remotes_loader(REMOTES_DIR)])
     uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
@@ -111,15 +75,16 @@ def test_ref_remote_case(case: SuiteCase) -> None:
 
 def test_exact_case_counts() -> None:
     assert count_params(PARAMS) == (EXPECTED_RUN, EXPECTED_SKIPPED)
-    assert count_params(REMOTE_PARAMS) == (EXPECTED_REMOTE_RUN, EXPECTED_REMOTE_SKIPPED)
+    assert count_params(OPTIONAL_PARAMS) == (
+        EXPECTED_OPTIONAL_RUN,
+        EXPECTED_OPTIONAL_SKIPPED,
+    )
 
 
 def test_every_skip_names_an_unimplemented_keyword() -> None:
-    for param in [*PARAMS, *REMOTE_PARAMS]:
+    for param in [*PARAMS, *OPTIONAL_PARAMS]:
         for mark in param.marks:
             reason = str(mark.kwargs.get("reason", ""))
-            if reason == NEEDS_METASCHEMA:
-                continue
             assert reason.startswith("uses "), reason
             for name in reason.removeprefix("uses ").split(", "):
                 assert name in UNSUPPORTED, name

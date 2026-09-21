@@ -5,6 +5,13 @@ helpers, and suite-running machinery shared between the engine's own test
 suite and the packages under ``packages/``.
 """
 
+from json_schema_engine.test_kit.positions import (
+    ParsedDocument,
+    SourcePosition,
+    SourceRange,
+    SourceSpan,
+    parse_json_with_ranges,
+)
 from json_schema_engine.test_kit.remotes import LoadedDocument, suite_remotes_loader
 from json_schema_engine.test_kit.suite import (
     Json,
@@ -18,10 +25,15 @@ from json_schema_engine.test_kit.suite import (
 __all__ = [
     "Json",
     "LoadedDocument",
+    "ParsedDocument",
+    "SourcePosition",
+    "SourceRange",
+    "SourceSpan",
     "SuiteCase",
     "collect_suite_params",
     "count_params",
     "load_suite_file",
+    "parse_json_with_ranges",
     "suite_remotes_loader",
     "unsupported_in",
 ]
