@@ -59,6 +59,8 @@ class ModuleContext:
     pending: list[str] = field(default_factory=list[str])
     # regex source -> hoisted name
     regexes: dict[str, str] = field(default_factory=dict[str, str])
+    # format name -> hoisted name (M7)
+    formats: dict[str, str] = field(default_factory=dict[str, str])
     # hoisted constant containers and sets: name -> expression
     constants: list[tuple[str, ast.expr]] = field(
         default_factory=list[tuple[str, ast.expr]]
@@ -94,6 +96,13 @@ class ModuleContext:
             name = self.names.fresh("r")
             self.regexes[source] = name
         return name
+
+    def format_name(self, name: str) -> str:
+        hoisted = self.formats.get(name)
+        if hoisted is None:
+            hoisted = self.names.fresh("fmt")
+            self.formats[name] = hoisted
+        return hoisted
 
     def hoist(self, expr: ast.expr) -> str:
         name = self.names.fresh("k")

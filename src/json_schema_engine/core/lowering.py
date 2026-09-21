@@ -23,7 +23,7 @@
 # Scope (M6, the flag validator): the TS engine's `annotate`, `produce`,
 # `coverageFold`, `coverageCovers`, `tally`, and `tallyList` nodes serve
 # list/annotation output and runtime coverage tracking (M9) and are not
-# defined yet; `formatTest` waits for the formats package (M7). `Fail`
+# defined yet (`FormatTest` arrived with the formats package, M7). `Fail`
 # keeps its message and params although flag emission ignores them, so a
 # keyword shares one message builder between `evaluate` and `lower` from
 # the start and list-mode parity is mechanical later.
@@ -143,6 +143,15 @@ class RegexTest:
 
 
 @dataclass(frozen=True, slots=True)
+class FormatTest:
+    """A format predicate applied to `target`, hoisted like a regex and
+    resolved by `name` from the engine's format table (M7)."""
+
+    name: str
+    target: "Expr"
+
+
+@dataclass(frozen=True, slots=True)
 class Not:
     expr: "Expr"
 
@@ -174,6 +183,7 @@ type Expr = (
     | Helper
     | InConsts
     | RegexTest
+    | FormatTest
     | Not
     | Logic
     | ApplyExpr
@@ -389,6 +399,10 @@ def in_consts(target: Expr, values: tuple[JsonValue, ...]) -> InConsts:
 
 def regex_test(source: str, target: Expr) -> RegexTest:
     return RegexTest(source, target)
+
+
+def format_test(name: str, target: Expr) -> FormatTest:
+    return FormatTest(name, target)
 
 
 def not_(expr: Expr) -> Not:

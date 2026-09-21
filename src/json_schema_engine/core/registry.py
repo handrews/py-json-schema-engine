@@ -18,6 +18,7 @@ from urllib.parse import unquote
 from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
     InvalidSchemaError,
+    JsonSchemaEngineError,
     MaxDepthExceededError,
     ReadOnlyRegistryError,
     UnresolvableReferenceError,
@@ -268,7 +269,16 @@ class SchemaRegistry:
             entry = dialect.keywords.get(name)
             if entry is None:
                 continue
-            facts = entry.behavior.facts(value, node)
+            try:
+                facts = entry.behavior.facts(value, node)
+            except JsonSchemaEngineError as error:
+                # `analyze()` has no location of its own (an unknown or
+                # unavailable format, M7): attach the keyword's.
+                if error.schema_location is None:
+                    error.schema_location = (
+                        f"{base_uri}#{pointer}/{escape_segment(name)}"
+                    )
+                raise
             self._produced_ids.update(facts.produces)
             self._consumed_ids.update(facts.consumes)
             if self.on_regex is not None and facts.regexes:

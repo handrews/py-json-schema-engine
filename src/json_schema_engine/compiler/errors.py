@@ -6,6 +6,11 @@
 from json_schema_engine.core.errors import JsonSchemaEngineError
 
 
+class FormatTableError(JsonSchemaEngineError):
+    """A compiled artifact asserts a format the engine's table cannot serve
+    (the single-table contract, `core/keywords/format.py`)."""
+
+
 class StandaloneUnsupportedError(JsonSchemaEngineError):
     """`emit_standalone` refused: the schema needs the interpreter at
     evaluation time, or the engine's regex backend cannot be emitted."""

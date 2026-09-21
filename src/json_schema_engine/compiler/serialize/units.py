@@ -19,6 +19,7 @@ from json_schema_engine.core.lowering import (
     Expr,
     ForEachIndex,
     ForEachKey,
+    FormatTest,
     HasKey,
     Helper,
     If,
@@ -103,6 +104,7 @@ def _exprs_of(expr: Expr) -> Iterator[Expr]:
             | TypeIs(target, _)
             | InConsts(target, _)
             | RegexTest(_, target)
+            | FormatTest(_, target)
         ):
             yield from _exprs_of(target)
         case Item(target, index):

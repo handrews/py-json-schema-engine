@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from typing import NoReturn, Protocol
 
 from json_schema_engine.compiler import emit as e
+from json_schema_engine.compiler.errors import FormatTableError
 from json_schema_engine.core.cursor import root_cursor
 from json_schema_engine.core.errors import MaxDepthExceededError
 from json_schema_engine.core.evaluator import evaluate_fragment
+from json_schema_engine.core.formats import FormatPredicate, FormatTable
 from json_schema_engine.core.json_model import (
     JsonValue,
     has_duplicate_items,
@@ -38,6 +40,8 @@ type Fragment = Callable[[SchemaRef, JsonValue, tuple[str, ...], int], bool]
 @dataclass(frozen=True, slots=True)
 class Runtime:
     re: Mapping[str, Searchable]
+    # Format name -> predicate, filtered to what the artifact asserts (M7).
+    formats: Mapping[str, FormatPredicate]
     max_depth: int
     frag: Fragment
     too_deep: Callable[[], NoReturn]
@@ -52,11 +56,23 @@ def make_runtime(
     regex_cache: RegexCache,
     patterns: Sequence[str],
     max_depth: int,
+    *,
+    formats: Sequence[str] = (),
+    format_table: FormatTable | None = None,
 ) -> Runtime:
     """Bind an artifact's runtime to a registry (normally a snapshot)."""
     table: dict[str, Searchable] = {
         source: regex_cache.compile(source).compiled for source in patterns
     }
+    predicates: dict[str, FormatPredicate] = {}
+    for name in formats:
+        definition = format_table.get(name) if format_table is not None else None
+        if definition is None or definition.unavailable is not None:
+            raise FormatTableError(
+                f"compiled artifact asserts format {name!r} with no usable "
+                "definition in the engine's format table"
+            )
+        predicates[name] = definition.test
     compile_regex = regex_cache.compile
 
     def frag(
@@ -80,7 +96,7 @@ def make_runtime(
             f"schema application exceeds max_depth ({max_depth})"
         )
 
-    return Runtime(table, max_depth, frag, too_deep)
+    return Runtime(table, predicates, max_depth, frag, too_deep)
 
 
 def make_namespace(runtime: Runtime, targets: Sequence[SchemaRef]) -> dict[str, object]:

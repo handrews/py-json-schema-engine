@@ -28,6 +28,9 @@ classifiers = [
 
 [project.optional-dependencies]
 regex = ["regex"]
+idna = [
+    "idna>=3.7",
+]
 
 [project.urls]
 Homepage = "https://github.com/handrews/py-json-schema-engine"
@@ -56,6 +59,7 @@ dev = [
     "json-schema-engine-bench",
     "regex>=2026.9.10",
     "hypothesis>=6.168.0",
+    "idna>=3.7",
 ]
 
 [tool.uv.workspace]
@@ -129,6 +133,24 @@ name = "core never imports test-kit"
 type = "forbidden"
 source_modules = ["json_schema_engine.core"]
 forbidden_modules = ["json_schema_engine.test_kit"]
+
+[[tool.importlinter.contracts]]
+name = "core never imports formats"
+type = "forbidden"
+source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["json_schema_engine.formats"]
+
+[[tool.importlinter.contracts]]
+name = "compiler never imports formats"
+type = "forbidden"
+source_modules = ["json_schema_engine.compiler"]
+forbidden_modules = ["json_schema_engine.formats"]
+
+[[tool.importlinter.contracts]]
+name = "formats never imports compiler or test-kit"
+type = "forbidden"
+source_modules = ["json_schema_engine.formats"]
+forbidden_modules = ["json_schema_engine.compiler", "json_schema_engine.test_kit"]
 
 [[tool.importlinter.contracts]]
 name = "compiler never imports test-kit"

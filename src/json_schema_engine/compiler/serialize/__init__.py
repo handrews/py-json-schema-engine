@@ -33,6 +33,8 @@ class Serialized:
 
     # `rN = ...` bindings the prologue must provide, in name order.
     regexes: tuple[tuple[str, str], ...]  # (name, source)
+    # `fmtN = ...` bindings, in name order (M7).
+    formats: tuple[tuple[str, str], ...]  # (name, format name)
     constants: tuple[tuple[str, ast.expr], ...]
     functions: tuple[ast.FunctionDef, ...]
     validate: ast.FunctionDef
@@ -117,6 +119,9 @@ def serialize_plan(
     return Serialized(
         regexes=tuple(
             sorted(((n, s) for s, n in module.regexes.items()), key=lambda p: p[0])
+        ),
+        formats=tuple(
+            sorted(((n, f) for f, n in module.formats.items()), key=lambda p: p[0])
         ),
         constants=tuple(module.constants),
         functions=tuple(functions),

@@ -77,6 +77,8 @@ class CompilationPlan:
     units: dict[str, PlannedUnit]
     # Every regex source any static unit tests (patterns plus coverage).
     patterns: tuple[str, ...]
+    # Every format name any static unit asserts (M7).
+    formats: tuple[str, ...]
     # Interpreted units in stable order; index = target-table slot.
     targets: tuple[PlannedUnit, ...]
 
@@ -243,6 +245,7 @@ def build_plan(engine: Engine, schema_uri: str) -> CompilationPlan:
 def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPlan:
     units: dict[str, PlannedUnit] = {}
     patterns: dict[str, None] = {}
+    formats: dict[str, None] = {}
 
     def plan(ref: SchemaRef, in_place_chain: tuple[str, ...]) -> PlannedUnit:
         key = unit_key(ref)
@@ -281,6 +284,8 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
                 consumer_present = True
             for regex in facts.regexes:
                 patterns[regex] = None
+            for format_name in facts.formats:
+                formats[format_name] = None
             present.append((entry.name, facts))
         # Unknown keywords are annotations: nothing to assert in flag mode.
 
@@ -367,7 +372,7 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
             units[edge.target_key].use_count += 1
 
     targets = tuple(u for u in units.values() if u.kind == "interpreted")
-    return CompilationPlan(root.key, units, tuple(patterns), targets)
+    return CompilationPlan(root.key, units, tuple(patterns), tuple(formats), targets)
 
 
 @dataclass(frozen=True, slots=True)

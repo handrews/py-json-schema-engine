@@ -27,6 +27,7 @@ _FILES: Mapping[str, Mapping[str, str]] = {
         _BASE_2020_12 + "meta/unevaluated": "unevaluated.json",
         _BASE_2020_12 + "meta/meta-data": "meta-data.json",
         _BASE_2020_12 + "meta/format-annotation": "format-annotation.json",
+        _BASE_2020_12 + "meta/format-assertion": "format-assertion.json",
         _BASE_2020_12 + "meta/content": "content.json",
     },
     "2019-09": {

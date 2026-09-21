@@ -11,6 +11,7 @@ VOCAB_META_DATA = "https://json-schema.org/draft/2020-12/vocab/meta-data"
 VOCAB_FORMAT_ANNOTATION = (
     "https://json-schema.org/draft/2020-12/vocab/format-annotation"
 )
+VOCAB_FORMAT_ASSERTION = "https://json-schema.org/draft/2020-12/vocab/format-assertion"
 VOCAB_CONTENT = "https://json-schema.org/draft/2020-12/vocab/content"
 
 DIALECT_2020_12 = "https://json-schema.org/draft/2020-12/schema"

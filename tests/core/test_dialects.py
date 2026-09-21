@@ -202,7 +202,7 @@ def test_legacy_metaschemas_resolve_without_loaders() -> None:
 
 
 def test_bundled_metaschemas_count() -> None:
-    assert len(bundled_metaschemas()) == 17
+    assert len(bundled_metaschemas()) == 18
 
 
 def test_contains_without_sibling_bounds_in_draft_07() -> None:
