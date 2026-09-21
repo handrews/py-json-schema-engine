@@ -11,8 +11,9 @@ for the duration of a single `run` command, so remote `$ref`s resolve
 exactly the way a real application's loader would, rather than being
 inlined ahead of time.
 
-Per M3 Step 3, only `output: "flag"` is implemented; `"annotations"` cases
-are reported as skipped until M5 adds annotation output support here.
+Only `output: "flag"` is served; `"annotations"` cases are reported as
+skipped. The engine renders annotations (M5), but wiring Bowtie's
+annotation protocol is a separate piece of work.
 """
 
 from __future__ import annotations
@@ -130,7 +131,7 @@ class Harness:
             return {
                 "seq": seq,
                 "skipped": True,
-                "message": "annotation output arrives in M5",
+                "message": "this harness serves flag output only",
             }
 
         try:

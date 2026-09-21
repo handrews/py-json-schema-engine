@@ -53,7 +53,9 @@ dev = [
     "pyright",
     "import-linter",
     "json-schema-engine-test-kit",
+    "json-schema-engine-bench",
     "regex>=2026.9.10",
+    "hypothesis>=6.168.0",
 ]
 
 [tool.uv.workspace]
@@ -62,28 +64,45 @@ members = ["packages/*"]
 [tool.uv.sources]
 ecma-regex = { workspace = true }
 json-schema-engine-test-kit = { workspace = true }
+json-schema-engine-bench = { workspace = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/test-kit/tests", "packages/ecma-regex/tests"]
+testpaths = [
+    "tests",
+    "packages/test-kit/tests",
+    "packages/ecma-regex/tests",
+    "packages/bench/tests",
+]
 addopts = "--import-mode=importlib"
 
 [tool.ruff]
 target-version = "py312"
 line-length = 88
 src = ["src", "packages/*/src"]
-extend-exclude = ["DESIGN.md"]
+extend-exclude = ["DESIGN.md", "tests/compiler/goldens"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH", "TID", "C4", "PIE", "RET", "N"]
+# P5: `exec`/`eval` are banned everywhere but the compiler's one
+# instantiation module (the builtin `compile` has no ruff rule; the fences
+# test covers it).
+extend-select = ["S102", "S307"]
 ignore = ["ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN"]
+"tests/**" = ["ANN", "S102", "S307"]
 "packages/*/tests/**" = ["ANN"]
+"src/json_schema_engine/compiler/runtime_compile.py" = ["S102"]
 
 [tool.pyright]
 include = ["src", "packages", "tests", "bowtie", "scripts"]
-extraPaths = ["src", "packages/test-kit/src", "packages/ecma-regex/src"]
+exclude = ["tests/compiler/goldens"]
+extraPaths = [
+    "src",
+    "packages/test-kit/src",
+    "packages/ecma-regex/src",
+    "packages/bench/src",
+]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
 venvPath = "."
@@ -109,6 +128,12 @@ forbidden_modules = ["ast"]
 name = "core never imports test-kit"
 type = "forbidden"
 source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["json_schema_engine.test_kit"]
+
+[[tool.importlinter.contracts]]
+name = "compiler never imports test-kit"
+type = "forbidden"
+source_modules = ["json_schema_engine.compiler"]
 forbidden_modules = ["json_schema_engine.test_kit"]
 
 [[tool.importlinter.contracts]]

@@ -27,6 +27,7 @@ from json_schema_engine.core.dialect import (
     KeywordContext,
     Phase,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import (
@@ -40,6 +41,22 @@ from json_schema_engine.core.keywords.applicator_array import (
     PREFIX_ITEMS_ID,
 )
 from json_schema_engine.core.keywords.applicator_object import PROPERTIES_ID
+from json_schema_engine.core.lowering import (
+    HERE,
+    Binding,
+    Expr,
+    ForEachIndex,
+    ForEachKey,
+    LoweringContext,
+    apply,
+    child,
+    in_consts,
+    not_,
+    or_,
+    regex_test,
+    type_is,
+    when,
+)
 
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
 ADDITIONAL_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "additionalProperties")
@@ -67,6 +84,37 @@ def unevaluated_properties(
             consumes=consumes,
             produces=(behavior_id,),
             evaluates_names=AllNames(),
+            applications=(
+                SubschemaApplication(
+                    (), "child_sweep", conditional=False, asserts=True
+                ),
+            ),
+        )
+
+    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+        cov = lctx.static_coverage()
+        if cov is None:
+            raise RuntimeError("unevaluatedProperties lowered without static coverage")
+        if cov.covers_all_names:
+            return
+        instance = lctx.instance
+        b = lctx.binding()
+        parts: list[Expr] = []
+        if cov.names:
+            parts.append(in_consts(Binding(b), tuple(sorted(cov.names))))
+        parts.extend(regex_test(pattern, Binding(b)) for pattern in cov.patterns)
+        covered = or_(*parts)
+        lctx.emit(
+            when(
+                type_is(instance, "object"),
+                (
+                    ForEachKey(
+                        instance,
+                        b,
+                        (when(not_(covered), (apply((), child(HERE, Binding(b))),)),),
+                    ),
+                ),
+            )
         )
 
     def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -96,7 +144,11 @@ def unevaluated_properties(
         return ok
 
     return KeywordBehavior(
-        id=behavior_id, evaluate=evaluate, analyze=analyze, phase=Phase.UNEVALUATED
+        id=behavior_id,
+        evaluate=evaluate,
+        analyze=analyze,
+        phase=Phase.UNEVALUATED,
+        lower=lower,
     )
 
 
@@ -120,6 +172,33 @@ def unevaluated_items(
             consumes=consumes,
             produces=(behavior_id,),
             evaluates_indexes=AllIndexes(),
+            applications=(
+                SubschemaApplication(
+                    (), "child_sweep", conditional=False, asserts=True
+                ),
+            ),
+        )
+
+    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+        cov = lctx.static_coverage()
+        if cov is None:
+            raise RuntimeError("unevaluatedItems lowered without static coverage")
+        if cov.covers_all_indexes:
+            return
+        instance = lctx.instance
+        b = lctx.binding()
+        lctx.emit(
+            when(
+                type_is(instance, "array"),
+                (
+                    ForEachIndex(
+                        instance,
+                        b,
+                        (apply((), child(HERE, Binding(b))),),
+                        start=cov.prefix_count,
+                    ),
+                ),
+            )
         )
 
     def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -156,7 +235,11 @@ def unevaluated_items(
         return ok
 
     return KeywordBehavior(
-        id=behavior_id, evaluate=evaluate, analyze=analyze, phase=Phase.UNEVALUATED
+        id=behavior_id,
+        evaluate=evaluate,
+        analyze=analyze,
+        phase=Phase.UNEVALUATED,
+        lower=lower,
     )
 
 

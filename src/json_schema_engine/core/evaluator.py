@@ -24,7 +24,8 @@
 # frame discard, so verbose output can report the irrelevant ones.
 #
 # Dependency direction: imports the registry, dialect, channel, cursor, ref,
-# json_model, and errors modules. The engine façade imports this; keyword
+# json_model, and errors modules. The engine façade imports this, and the
+# compiler tier's trampoline enters through `evaluate_fragment`; keyword
 # modules never do — they see only the `KeywordContext` protocol.
 
 from collections.abc import Callable, Sequence
@@ -511,6 +512,24 @@ def _evaluate_keyword(
     return ok
 
 
+def _apply_with_backstop(
+    state: EvalState,
+    schema_ref: SchemaRef,
+    cursor: Cursor,
+    path_node: PathNode | None,
+) -> bool:
+    """`apply_schema` with the P3 backstop: a `RecursionError` escaping the
+    interpreter (only possible when `max_depth` exceeds what the runtime's
+    stack allows) becomes `MaxDepthExceededError`, never an untyped crash."""
+    try:
+        return apply_schema(state, schema_ref, cursor, path_node)
+    except RecursionError:
+        raise MaxDepthExceededError(
+            "evaluation exceeded the interpreter's stack "
+            f"(max_depth={state.max_depth}); reduce nesting or lower max_depth"
+        ) from None
+
+
 def run_evaluation(
     registry: SchemaRegistry,
     schema_uri: str,
@@ -525,10 +544,7 @@ def run_evaluation(
 
     Returns the verdict and the final state, whose root frame holds the
     surviving records and, with `tracing`, whose `trace_root` holds the
-    application tree with the irrelevant records retained. A
-    `RecursionError` escaping the interpreter (only possible when
-    `max_depth` exceeds what the runtime's stack allows) is reported as
-    `MaxDepthExceededError` so callers never see an untyped crash (P3).
+    application tree with the irrelevant records retained.
     """
     state = EvalState(
         registry,
@@ -537,13 +553,61 @@ def run_evaluation(
         max_depth=max_depth,
         tracing=tracing,
     )
-    try:
-        valid = apply_schema(
-            state, registry.root_ref(schema_uri), root_cursor(instance), None
-        )
-    except RecursionError:
-        raise MaxDepthExceededError(
-            f"evaluation exceeded the interpreter's stack (max_depth={max_depth}); "
-            "reduce nesting or lower max_depth"
-        ) from None
+    valid = _apply_with_backstop(
+        state, registry.root_ref(schema_uri), root_cursor(instance), None
+    )
     return valid, state
+
+
+@dataclass(frozen=True, slots=True)
+class FragmentResult:
+    """What `evaluate_fragment` hands back: the verdict, the relevant
+    errors, and the root frame's surviving records with their cursor
+    identities intact, so a compiled caller can merge them under channel
+    rule 3 and filter under rule 4 exactly as an interpreted parent would."""
+
+    valid: bool
+    errors: list[ErrorRecord]
+    annotations: list[AnnotationRecord]
+    dependencies: list[DependencyRecord]
+
+
+def evaluate_fragment(
+    registry: SchemaRegistry,
+    target: SchemaRef,
+    cursor: Cursor,
+    *,
+    compile_regex: RegexCompiler,
+    dynamic_scope: Sequence[str] = (),
+    depth: int = 0,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+    should_record: RecordPredicate | None = None,
+    path_node: PathNode | None = None,
+) -> FragmentResult:
+    """Evaluate one schema fragment with pre-seeded state: the compiled
+    tier's trampoline into the interpreter (M6, D1).
+
+    `dynamic_scope` is the caller's entered resources, outermost first
+    (D8); `depth` is the depth the caller has already consumed, so compiled
+    and interpreted nesting share one `max_depth` budget (P3, D20);
+    `path_node` is the evaluation-path prefix.
+
+    The cycle guard is fresh per fragment, which is sound because the
+    trampoline is one-way (interpreted code never re-enters compiled code)
+    and the planner islands every in-place cycle: any cycle has an
+    interpreted member, and once the interpreter enters it the rest of the
+    cycle runs inside this one state, where same-cursor re-entry raises
+    `InfiniteLoopError` as it would in a fully interpreted run.
+    """
+    state = EvalState(
+        registry,
+        compile_regex,
+        should_record=should_record,
+        max_depth=max_depth,
+    )
+    state.dynamic_scope.extend(dynamic_scope)
+    state.depth = depth
+    valid = _apply_with_backstop(state, target, cursor, path_node)
+    return FragmentResult(
+        valid, state.errors, state.root_annotations, state.root_dependencies
+    )

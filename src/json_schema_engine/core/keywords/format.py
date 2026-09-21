@@ -19,6 +19,7 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.keywords._ids import VOCAB_FORMAT_ANNOTATION, keyword_id
+from json_schema_engine.core.lowering import lower_nothing
 
 
 def _format_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
@@ -34,6 +35,7 @@ format_annotation = KeywordBehavior(
     id=keyword_id(VOCAB_FORMAT_ANNOTATION, "format"),
     evaluate=_format_evaluate,
     analyze=_format_analyze,
+    lower=lower_nothing,
 )
 
 FORMAT_ANNOTATION_VOCABULARY = {"format": format_annotation}

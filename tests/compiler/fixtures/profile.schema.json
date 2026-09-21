@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spike.example/profile",
+  "title": "User profile",
+  "type": "object",
+  "required": [
+    "id"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "title": "Identifier",
+      "readOnly": true
+    },
+    "displayName": {
+      "type": "string",
+      "title": "Display name",
+      "default": ""
+    },
+    "bio": {
+      "type": "string",
+      "title": "Biography",
+      "default": ""
+    },
+    "createdAt": {
+      "type": "string",
+      "title": "Created",
+      "readOnly": true
+    }
+  }
+}

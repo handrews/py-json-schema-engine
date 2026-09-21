@@ -25,12 +25,31 @@ from json_schema_engine.core.dialect import (
     KeywordContext,
     PrefixIndexes,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import (
     VOCAB_APPLICATOR_07,
     VOCAB_APPLICATOR_2019,
     keyword_id,
+)
+from json_schema_engine.core.lowering import (
+    HERE,
+    Binding,
+    Const,
+    ForEachIndex,
+    LoweringContext,
+    Stmt,
+    apply,
+    child,
+    cmp,
+    const,
+    fail,
+    has_key,
+    helper,
+    not_,
+    type_is,
+    when,
 )
 
 ITEMS_LEGACY_ID = keyword_id(VOCAB_APPLICATOR_2019, "items")
@@ -52,14 +71,62 @@ def _items_legacy_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts
             subschemas=tuple((index,) for index in range(count)),
             produces=(ITEMS_LEGACY_ID,),
             evaluates_indexes=PrefixIndexes(count),
+            applications=tuple(
+                SubschemaApplication(
+                    (index,), "child_by_index", conditional=False, asserts=True
+                )
+                for index in range(count)
+            ),
         )
     if _is_schema_value(value):
         return StaticFacts(
             subschemas=((),),
             produces=(ITEMS_LEGACY_ID,),
             evaluates_indexes=IndexesFrom(0),
+            applications=(
+                SubschemaApplication(
+                    (), "child_sweep", conditional=False, asserts=True
+                ),
+            ),
         )
     return StaticFacts()
+
+
+def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    instance = lctx.instance
+    if isinstance(value, list):
+        # Tuple form: same shape as 2020-12 `prefixItems`.
+        lctx.emit(
+            when(
+                type_is(instance, "array"),
+                tuple(
+                    when(
+                        cmp(">", helper("length_of", instance), const(index)),
+                        (apply((index,), child(HERE, index)),),
+                    )
+                    for index in range(len(value))
+                ),
+            )
+        )
+        return
+    if not _is_schema_value(value):
+        return
+    # Schema form: same shape as 2020-12 `items`, with no sibling
+    # `prefixItems` to start after.
+    binding = lctx.binding()
+    lctx.emit(
+        when(
+            type_is(instance, "array"),
+            (
+                ForEachIndex(
+                    instance,
+                    binding,
+                    (apply((), child(HERE, Binding(binding))),),
+                    start=0,
+                ),
+            ),
+        )
+    )
 
 
 def _items_legacy_evaluate(
@@ -102,6 +169,7 @@ ITEMS_LEGACY = KeywordBehavior(
     id=ITEMS_LEGACY_ID,
     evaluate=_items_legacy_evaluate,
     analyze=_items_legacy_analyze,
+    lower=_items_legacy_lower,
 )
 
 
@@ -121,8 +189,35 @@ def _additional_items_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticF
             subschemas=((),),
             produces=(ADDITIONAL_ITEMS_ID,),
             evaluates_indexes=IndexesFrom(len(sibling)),
+            applications=(
+                SubschemaApplication(
+                    (), "child_sweep", conditional=False, asserts=True
+                ),
+            ),
         )
     return StaticFacts(subschemas=((),), produces=(ADDITIONAL_ITEMS_ID,))
+
+
+def _additional_items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    sibling = lctx.schema.get("items")
+    if not isinstance(sibling, list):
+        return
+    start = len(sibling)
+    instance = lctx.instance
+    binding = lctx.binding()
+    lctx.emit(
+        when(
+            type_is(instance, "array"),
+            (
+                ForEachIndex(
+                    instance,
+                    binding,
+                    (apply((), child(HERE, Binding(binding))),),
+                    start=start,
+                ),
+            ),
+        )
+    )
 
 
 def _additional_items_evaluate(
@@ -150,6 +245,7 @@ ADDITIONAL_ITEMS = KeywordBehavior(
     id=ADDITIONAL_ITEMS_ID,
     evaluate=_additional_items_evaluate,
     analyze=_additional_items_analyze,
+    lower=_additional_items_lower,
 )
 
 
@@ -164,7 +260,49 @@ def _dependencies_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts
     if not is_object(value):
         return StaticFacts()
     names = tuple(name for name, dep in value.items() if _is_schema_value(dep))
-    return StaticFacts(subschemas=tuple((name,) for name in names))
+    return StaticFacts(
+        subschemas=tuple((name,) for name in names),
+        applications=tuple(
+            SubschemaApplication((name,), "in_place", conditional=True, asserts=True)
+            for name in names
+        ),
+    )
+
+
+def _dependencies_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    checks: list[Stmt] = []
+    for name, dep in value.items():
+        if isinstance(dep, list):
+            # Array member: the `dependentRequired` shape.
+            required_checks = tuple(
+                when(
+                    not_(has_key(instance, required)),
+                    (
+                        fail(
+                            (f"'{name}' requires '{required}' to be present",),
+                            {
+                                "property": Const(name),
+                                "missingProperty": Const(required),
+                            },
+                        ),
+                    ),
+                )
+                for required in dep
+                if isinstance(required, str)
+            )
+            if required_checks:
+                checks.append(when(has_key(instance, name), required_checks))
+        elif _is_schema_value(dep):
+            # Schema member: an in-place application guarded by presence,
+            # same as `dependentSchemas`.
+            checks.append(when(has_key(instance, name), (apply((name,), HERE),)))
+        # Any other member shape is unreachable per the metaschema; ignored
+        # defensively, mirroring `evaluate`.
+    if checks:
+        lctx.emit(when(type_is(instance, "object"), tuple(checks)))
 
 
 def _dependencies_evaluate(
@@ -196,6 +334,7 @@ DEPENDENCIES = KeywordBehavior(
     id=DEPENDENCIES_ID,
     evaluate=_dependencies_evaluate,
     analyze=_dependencies_analyze,
+    lower=_dependencies_lower,
 )
 
 

@@ -23,9 +23,27 @@ from json_schema_engine.core.dialect import (
     NamesCoverage,
     PatternsCoverage,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.lowering import (
+    HERE,
+    Binding,
+    Expr,
+    ForEachKey,
+    LoweringContext,
+    apply,
+    child,
+    has_key,
+    in_consts,
+    key,
+    not_,
+    or_,
+    regex_test,
+    type_is,
+    when,
+)
 
 PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "properties")
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
@@ -42,6 +60,27 @@ def _properties_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
         subschemas=tuple((name,) for name in names),
         produces=(PROPERTIES_ID,),
         evaluates_names=NamesCoverage(names),
+        applications=tuple(
+            SubschemaApplication(
+                (name,), "child_by_key", conditional=False, asserts=True
+            )
+            for name in names
+        ),
+    )
+
+
+def _properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            tuple(
+                when(has_key(instance, name), (apply((name,), child(HERE, name)),))
+                for name in value
+            ),
+        )
     )
 
 
@@ -66,7 +105,10 @@ def _properties_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) 
 
 
 PROPERTIES = KeywordBehavior(
-    id=PROPERTIES_ID, evaluate=_properties_evaluate, analyze=_properties_analyze
+    id=PROPERTIES_ID,
+    evaluate=_properties_evaluate,
+    analyze=_properties_analyze,
+    lower=_properties_lower,
 )
 
 
@@ -82,6 +124,37 @@ def _pattern_properties_analyze(value: JsonValue, _ctx: AnalyzeContext) -> Stati
         regexes=patterns,
         produces=(PATTERN_PROPERTIES_ID,),
         evaluates_names=PatternsCoverage(patterns),
+        applications=tuple(
+            SubschemaApplication(
+                (pattern,), "child_sweep", conditional=False, asserts=True
+            )
+            for pattern in patterns
+        ),
+    )
+
+
+def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    b = lctx.binding()
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            (
+                ForEachKey(
+                    instance,
+                    b,
+                    tuple(
+                        when(
+                            regex_test(pattern, Binding(b)),
+                            (apply((pattern,), child(HERE, Binding(b))),),
+                        )
+                        for pattern in value
+                    ),
+                ),
+            ),
+        )
     )
 
 
@@ -113,6 +186,7 @@ PATTERN_PROPERTIES = KeywordBehavior(
     id=PATTERN_PROPERTIES_ID,
     evaluate=_pattern_properties_evaluate,
     analyze=_pattern_properties_analyze,
+    lower=_pattern_properties_lower,
 )
 
 
@@ -126,6 +200,35 @@ def _additional_properties_analyze(
         subschemas=((),),
         produces=(ADDITIONAL_PROPERTIES_ID,),
         evaluates_names=AllNames(),
+        applications=(
+            SubschemaApplication((), "child_sweep", conditional=False, asserts=True),
+        ),
+    )
+
+
+def _additional_properties_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    instance = lctx.instance
+    sibling_properties = lctx.schema.get("properties")
+    names = tuple(sibling_properties) if is_object(sibling_properties) else ()
+    sibling_patterns = lctx.schema.get("patternProperties")
+    patterns = tuple(sibling_patterns) if is_object(sibling_patterns) else ()
+    b = lctx.binding()
+    parts: list[Expr] = []
+    if names:
+        parts.append(in_consts(Binding(b), names))
+    parts.extend(regex_test(pattern, Binding(b)) for pattern in patterns)
+    covered = or_(*parts)
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            (
+                ForEachKey(
+                    instance,
+                    b,
+                    (when(not_(covered), (apply((), child(HERE, Binding(b))),)),),
+                ),
+            ),
+        )
     )
 
 
@@ -164,6 +267,7 @@ ADDITIONAL_PROPERTIES = KeywordBehavior(
     id=ADDITIONAL_PROPERTIES_ID,
     evaluate=_additional_properties_evaluate,
     analyze=_additional_properties_analyze,
+    lower=_additional_properties_lower,
 )
 
 
@@ -171,7 +275,23 @@ ADDITIONAL_PROPERTIES = KeywordBehavior(
 
 
 def _property_names_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
-    return StaticFacts(subschemas=((),))
+    return StaticFacts(
+        subschemas=((),),
+        applications=(
+            SubschemaApplication((), "property_name", conditional=False, asserts=True),
+        ),
+    )
+
+
+def _property_names_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    instance = lctx.instance
+    b = lctx.binding()
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            (ForEachKey(instance, b, (apply((), key(b)),)),),
+        )
+    )
 
 
 def _property_names_evaluate(
@@ -191,6 +311,7 @@ PROPERTY_NAMES = KeywordBehavior(
     id=PROPERTY_NAMES_ID,
     evaluate=_property_names_evaluate,
     analyze=_property_names_analyze,
+    lower=_property_names_lower,
 )
 
 

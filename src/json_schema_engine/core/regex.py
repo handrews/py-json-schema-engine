@@ -21,15 +21,19 @@ type RegexBackend = Literal["re", "regex"]
 
 
 class _PythonRegex:
-    """A Python-dialect pattern: `re` semantics, search-only like ECMA `test`."""
+    """A Python-dialect pattern: `re` semantics, search-only like ECMA `test`.
 
-    __slots__ = ("_compiled",)
+    `compiled` is the backend pattern, exposed so the compiler tier can hand
+    emitted code the object whose `search` it calls directly (M6).
+    """
+
+    __slots__ = ("compiled",)
 
     def __init__(self, pattern: str) -> None:
-        self._compiled = re.compile(pattern)
+        self.compiled = re.compile(pattern)
 
     def search(self, text: str, /) -> bool:
-        return self._compiled.search(text) is not None
+        return self.compiled.search(text) is not None
 
 
 class RegexCache:

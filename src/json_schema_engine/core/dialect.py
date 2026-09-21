@@ -5,8 +5,9 @@
 # nothing here is privileged.
 #
 # Dependency direction: imports `cursor`, `ref`, `json_model`, `errors`, and
-# the regex adapter's `CompiledRegex` protocol. The registry and the
-# evaluator build on this; keyword modules import it and never the engine.
+# `lowering` (the compiler IR's type vocabulary, for the `lower` slot). The
+# registry and the evaluator build on this; keyword modules import it and
+# never the engine.
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -14,8 +15,9 @@ from enum import IntEnum
 from typing import Literal, Protocol
 
 from json_schema_engine.core.cursor import Cursor
-from json_schema_engine.core.errors import UnknownDialectError
+from json_schema_engine.core.errors import ReadOnlyRegistryError, UnknownDialectError
 from json_schema_engine.core.json_model import JsonValue, is_object
+from json_schema_engine.core.lowering import LowerFn
 from json_schema_engine.core.ref import SchemaRef
 
 # --- Static facts --------------------------------------------------------
@@ -76,6 +78,39 @@ type IndexCoverage = PrefixIndexes | IndexesFrom | AllIndexes | DynamicIndexes
 
 type SubschemaPath = tuple[str | int, ...]
 
+type ApplyMode = Literal[
+    "in_place",  # same cursor: allOf/anyOf/oneOf/not/if/$ref
+    "child_by_key",  # a fixed property name: properties entries
+    "child_by_index",  # a fixed array index: prefixItems entries
+    "child_sweep",  # runtime-determined children: items, *Properties sweeps
+    "property_name",  # applied to the property NAME as the instance
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SubschemaApplication:
+    """How one keyword applies one subschema (D1, M6): the planner's edge.
+
+    `path` is relative to the keyword's value; `()` is the value itself. A
+    sibling keyword's value (`if` → `then`/`else`) is named by `sibling`
+    instead; a reference keyword sets `ref`, resolved at plan time against
+    the lexical base (then `path` is ignored). `conditional` means the
+    application depends on runtime branching (`anyOf` alternatives, an
+    `if`-guarded `then`), not merely on instance shape; `asserts` means the
+    subschema's verdict feeds this keyword's verdict (false for `if`'s
+    condition role and `contains`' per-item probes); `inverted` means it
+    feeds negated (`not`), so its records never survive the parent-success
+    path and coverage analysis skips the edge.
+    """
+
+    path: SubschemaPath
+    mode: ApplyMode
+    conditional: bool
+    asserts: bool
+    sibling: str | None = None
+    ref: str | None = None
+    inverted: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class StaticFacts:
@@ -106,6 +141,10 @@ class StaticFacts:
     dynamic_scope_sensitive: bool = False
     evaluates_names: NameCoverage | None = None
     evaluates_indexes: IndexCoverage | None = None
+    # How the keyword applies its subschemas (M6): the planner's edges and
+    # the coverage analysis's transitive contributors. `subschemas` remains
+    # the registration walk's position list.
+    applications: tuple[SubschemaApplication, ...] = ()
 
 
 EMPTY_FACTS = StaticFacts()
@@ -251,6 +290,10 @@ class KeywordBehavior:
     # An identifier or reserved-location keyword (`$id`, `$defs`,
     # `$comment`): it evaluates to nothing and appears in no output unit.
     structural: bool = False
+    # Compiled form as lowering IR (D1, M6). Absent means a schema object
+    # containing this keyword becomes an interpreted unit (the trampoline
+    # fallback), never a failure.
+    lower: LowerFn | None = None
 
     def facts(self, value: JsonValue, schema: Mapping[str, JsonValue]) -> StaticFacts:
         """The keyword's static facts for one occurrence, empty if it has none."""
@@ -362,11 +405,13 @@ class DialectRegistry:
     def __init__(self) -> None:
         self._vocabularies: dict[str, Mapping[str, KeywordBehavior]] = {}
         self._dialects: dict[str, Dialect] = {}
+        self._read_only = False
 
     def register_vocabulary(
         self, uri: str, keywords: Mapping[str, KeywordBehavior]
     ) -> None:
         """Register a vocabulary's keyword behaviors under its URI."""
+        self._check_writable()
         self._vocabularies[uri] = dict(keywords)
 
     def register_dialect(
@@ -384,6 +429,7 @@ class DialectRegistry:
         a dialect author can override a built-in keyword by listing an
         extension vocabulary after the standard one.
         """
+        self._check_writable()
         keywords: dict[str, DialectKeyword] = {}
         for vocabulary_uri in vocabulary_uris:
             vocabulary = self._vocabularies.get(vocabulary_uri)
@@ -410,6 +456,24 @@ class DialectRegistry:
         )
         self._dialects[uri] = dialect
         return dialect
+
+    def snapshot(self) -> "DialectRegistry":
+        """A frozen copy: the same vocabularies and dialects, no registration.
+
+        A compiled artifact binds to a snapshot (M6), so a dialect registered
+        after compilation cannot change what an artifact's islands resolve.
+        """
+        copy = DialectRegistry()
+        copy._vocabularies = dict(self._vocabularies)
+        copy._dialects = dict(self._dialects)
+        copy._read_only = True
+        return copy
+
+    def _check_writable(self) -> None:
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this dialect registry is a compiled artifact's snapshot"
+            )
 
     def get_dialect(self, uri: str) -> Dialect:
         """Look up a registered dialect; raises `UnknownDialectError`."""

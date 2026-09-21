@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spike.example/event",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "#/$defs/base"
+    },
+    {
+      "$ref": "#/$defs/timestamps"
+    }
+  ],
+  "properties": {
+    "kind": {
+      "enum": [
+        "created",
+        "updated",
+        "deleted"
+      ]
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": [
+        "id",
+        "actor"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "required": [
+        "createdAt"
+      ],
+      "properties": {
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
