@@ -4,11 +4,18 @@
 # exact-count pins make a submodule bump or a keyword landing a deliberate
 # two-number edit.
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from json_schema_engine.core import DIALECT_2020_12, create_engine
+from json_schema_engine.core import (
+    DIALECT_2020_12,
+    LoadedDocument,
+    Loader,
+    create_engine,
+)
+from json_schema_engine.test_kit import LoadedDocument as SuiteLoadedDocument
 from json_schema_engine.test_kit import (
     SuiteCase,
     collect_suite_params,
@@ -71,9 +78,23 @@ def test_suite_case(case: SuiteCase) -> None:
     assert engine.evaluate(uri, case.data).valid is case.valid
 
 
+def _as_core_loader(loader: Callable[[str], object]) -> Loader:
+    # `suite_remotes_loader` returns its own `LoadedDocument`, structurally
+    # identical to core's but a distinct class (test-kit must not depend on
+    # core: see remotes.py). Adapt it to the engine's `Loader` contract.
+    def load(uri: str) -> LoadedDocument | None:
+        doc = loader(uri)
+        if doc is None:
+            return None
+        assert isinstance(doc, SuiteLoadedDocument)
+        return LoadedDocument(value=doc.value, uri=doc.uri)
+
+    return load
+
+
 @pytest.mark.parametrize("case", REMOTE_PARAMS)
 def test_ref_remote_case(case: SuiteCase) -> None:
-    engine = create_engine(loaders=[suite_remotes_loader(REMOTES_DIR)])
+    engine = create_engine(loaders=[_as_core_loader(suite_remotes_loader(REMOTES_DIR))])
     uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
 

@@ -3,9 +3,10 @@
 import pytest
 
 from json_schema_engine.core.cursor import Cursor, child_cursor, root_cursor
+from json_schema_engine.core.json_model import JsonValue
 
 
-def test_root_cursor_pointer_is_empty():
+def test_root_cursor_pointer_is_empty() -> None:
     root = root_cursor({"a": 1})
     assert root.pointer == ""
     assert root.parent is None
@@ -35,14 +36,14 @@ def test_root_cursor_pointer_is_empty():
         (["constructor", "toString"], "/constructor/toString"),
     ],
 )
-def test_pointer_materialization(segments, expected):
+def test_pointer_materialization(segments: list[str | int], expected: str) -> None:
     cursor = root_cursor(None)
     for segment in segments:
         cursor = child_cursor(cursor, segment, None)
     assert cursor.pointer == expected
 
 
-def test_pointer_is_cached_and_stable():
+def test_pointer_is_cached_and_stable() -> None:
     root = root_cursor({"a": {"b": 1}})
     child = child_cursor(root, "a", {"b": 1})
     grandchild = child_cursor(child, "b", 1)
@@ -54,7 +55,7 @@ def test_pointer_is_cached_and_stable():
     assert root.pointer == ""
 
 
-def test_pointer_materializes_from_a_partially_cached_chain():
+def test_pointer_materializes_from_a_partially_cached_chain() -> None:
     root = root_cursor(None)
     mid = child_cursor(root, "a", None)
     assert mid.pointer == "/a"
@@ -62,7 +63,7 @@ def test_pointer_materializes_from_a_partially_cached_chain():
     assert deep.pointer == "/a/b/c"
 
 
-def test_deep_chains_do_not_exhaust_the_interpreter_stack():
+def test_deep_chains_do_not_exhaust_the_interpreter_stack() -> None:
     # Instance depth is attacker-controlled and is not covered by the
     # evaluator's depth budget, so materialization must not recurse.
     cursor = root_cursor(None)
@@ -72,12 +73,12 @@ def test_deep_chains_do_not_exhaust_the_interpreter_stack():
     assert cursor.pointer.endswith("/4999")
 
 
-def test_structurally_identical_cursors_are_distinct_dict_keys():
+def test_structurally_identical_cursors_are_distinct_dict_keys() -> None:
     # Channel rule 4 filters dependency records by cursor identity, so two
     # cursors over the same value at the same location must never collapse
     # into one: that is exactly what would make a cousin schema's records
     # visible to `unevaluatedProperties`.
-    value = {"a": 1}
+    value: JsonValue = {"a": 1}
     left = child_cursor(root_cursor(value), "a", 1)
     right = child_cursor(root_cursor(value), "a", 1)
 
@@ -93,14 +94,14 @@ def test_structurally_identical_cursors_are_distinct_dict_keys():
     assert len({left, right}) == 2
 
 
-def test_a_cursor_equals_only_itself():
+def test_a_cursor_equals_only_itself() -> None:
     cursor = root_cursor(None)
     assert cursor == cursor
     assert cursor != root_cursor(None)
     assert hash(cursor) == hash(cursor)
 
 
-def test_in_place_application_reuses_the_very_same_cursor():
+def test_in_place_application_reuses_the_very_same_cursor() -> None:
     # `$ref`, `allOf`, and `if` apply to the same cursor object; only child
     # applicators build new ones. The distinction is the whole basis of rule 4.
     root = root_cursor({"a": 1})
@@ -111,7 +112,7 @@ def test_in_place_application_reuses_the_very_same_cursor():
     assert child.parent is root
 
 
-def test_segment_keeps_string_and_index_apart():
+def test_segment_keeps_string_and_index_apart() -> None:
     root = root_cursor([{"0": "x"}])
     element = child_cursor(root, 0, {"0": "x"})
     member = child_cursor(element, "0", "x")
@@ -122,7 +123,7 @@ def test_segment_keeps_string_and_index_apart():
     assert member.pointer == "/0/0"
 
 
-def test_cursor_dataclass_shape():
+def test_cursor_dataclass_shape() -> None:
     cursor = Cursor(1, root_cursor(None), "a")
     assert cursor.value == 1
     assert cursor.segment == "a"

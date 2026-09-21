@@ -1,6 +1,7 @@
 """JSON model: type dispatch, equality, canonical keys, RFC 6901 escaping (P2)."""
 
 import operator
+from collections.abc import Sequence
 
 import pytest
 
@@ -38,16 +39,16 @@ TYPE_CASES: list[tuple[JsonValue, JsonType]] = [
 
 
 @pytest.mark.parametrize(("value", "expected"), TYPE_CASES)
-def test_json_type_of(value, expected):
+def test_json_type_of(value: JsonValue, expected: JsonType) -> None:
     assert json_type_of(value) is expected
 
 
 @pytest.mark.parametrize("value", [v for v, _ in TYPE_CASES])
-def test_json_type_of_never_returns_integer(value):
+def test_json_type_of_never_returns_integer(value: JsonValue) -> None:
     assert json_type_of(value) is not JsonType.INTEGER
 
 
-def test_json_type_names_are_the_spec_spellings():
+def test_json_type_names_are_the_spec_spellings() -> None:
     assert [t.value for t in JsonType] == [
         "null",
         "boolean",
@@ -81,7 +82,7 @@ def test_json_type_names_are_the_spec_spellings():
         ({"a": 1}, False),
     ],
 )
-def test_is_integer_value(value, expected):
+def test_is_integer_value(value: JsonValue, expected: bool) -> None:
     assert is_integer_value(value) is expected
 
 
@@ -96,7 +97,7 @@ def test_is_integer_value(value, expected):
         (1, False),
     ],
 )
-def test_is_object(value, expected):
+def test_is_object(value: JsonValue, expected: bool) -> None:
     assert is_object(value) is expected
 
 
@@ -149,18 +150,18 @@ UNEQUAL_PAIRS: list[tuple[JsonValue, JsonValue]] = [
 
 
 @pytest.mark.parametrize(("a", "b"), EQUAL_PAIRS)
-def test_json_equal_holds_in_both_directions(a, b):
+def test_json_equal_holds_in_both_directions(a: JsonValue, b: JsonValue) -> None:
     assert json_equal(a, b)
     assert json_equal(b, a)
 
 
 @pytest.mark.parametrize(("a", "b"), UNEQUAL_PAIRS)
-def test_json_equal_fails_in_both_directions(a, b):
+def test_json_equal_fails_in_both_directions(a: JsonValue, b: JsonValue) -> None:
     assert not json_equal(a, b)
     assert not json_equal(b, a)
 
 
-def test_json_equal_separates_true_from_one_where_python_does_not():
+def test_json_equal_separates_true_from_one_where_python_does_not() -> None:
     # The whole point of P2: plain `==` and `hash` both conflate these.
     assert operator.eq(True, 1)
     assert hash(True) == hash(1)
@@ -171,12 +172,14 @@ def test_json_equal_separates_true_from_one_where_python_does_not():
 
 
 @pytest.mark.parametrize(("a", "b"), EQUAL_PAIRS)
-def test_canonical_key_agrees_with_json_equal(a, b):
+def test_canonical_key_agrees_with_json_equal(a: JsonValue, b: JsonValue) -> None:
     assert canonical_key(a) == canonical_key(b)
 
 
 @pytest.mark.parametrize(("a", "b"), UNEQUAL_PAIRS)
-def test_canonical_key_separates_values_that_could_collide(a, b):
+def test_canonical_key_separates_values_that_could_collide(
+    a: JsonValue, b: JsonValue
+) -> None:
     # Not required by the contract (which is one-directional), but every
     # distinct pair the engine actually meets must land in its own bucket,
     # or `uniqueItems` degrades to a linear scan per item.
@@ -193,7 +196,7 @@ def test_canonical_key_separates_values_that_could_collide(a, b):
         (None, "null"),
     ],
 )
-def test_canonical_key_renderings(value, expected):
+def test_canonical_key_renderings(value: JsonValue, expected: str) -> None:
     assert canonical_key(value) == expected
 
 
@@ -210,7 +213,9 @@ def test_canonical_key_renderings(value, expected):
         (["]"], [["]"]]),
     ],
 )
-def test_canonical_key_structure_cannot_be_forged_by_string_content(a, b):
+def test_canonical_key_structure_cannot_be_forged_by_string_content(
+    a: JsonValue, b: JsonValue
+) -> None:
     assert not json_equal(a, b)
     assert canonical_key(a) != canonical_key(b)
 
@@ -234,7 +239,7 @@ def test_canonical_key_structure_cannot_be_forged_by_string_content(a, b):
         (" ", " "),
     ],
 )
-def test_escape_segment_round_trip(raw, escaped):
+def test_escape_segment_round_trip(raw: str, escaped: str) -> None:
     assert escape_segment(raw) == escaped
     assert unescape_segment(escaped) == raw
 
@@ -243,7 +248,7 @@ def test_escape_segment_round_trip(raw, escaped):
     "raw",
     ["", "~", "/", "~0", "~1", "~01", "a/b~c", "~~//", "0", "-", "foo bar"],
 )
-def test_escape_unescape_is_the_identity(raw):
+def test_escape_unescape_is_the_identity(raw: str) -> None:
     assert unescape_segment(escape_segment(raw)) == raw
 
 
@@ -261,7 +266,7 @@ def test_escape_unescape_is_the_identity(raw):
         (["", ""], "//"),
     ],
 )
-def test_pointer_of(segments, expected):
+def test_pointer_of(segments: Sequence[str | int], expected: str) -> None:
     assert pointer_of(segments) == expected
 
 
@@ -277,5 +282,5 @@ def test_pointer_of(segments, expected):
         ("é", 2),
     ],
 )
-def test_code_point_length(text, expected):
+def test_code_point_length(text: str, expected: int) -> None:
     assert code_point_length(text) == expected

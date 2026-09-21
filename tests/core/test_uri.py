@@ -15,7 +15,7 @@ from json_schema_engine.core.uri import (
 RFC_BASE = "http://a/b/c/d;p?q"
 
 # RFC 3986 §5.4.1, complete and in the RFC's order.
-NORMAL_EXAMPLES = [
+NORMAL_EXAMPLES: list[tuple[str, str]] = [
     ("g:h", "g:h"),
     ("g", "http://a/b/c/g"),
     ("./g", "http://a/b/c/g"),
@@ -43,7 +43,7 @@ NORMAL_EXAMPLES = [
 
 # RFC 3986 §5.4.2, complete and in the RFC's order. `http:g` takes the
 # strict-parser result, which §5.4.2 gives as the primary answer.
-ABNORMAL_EXAMPLES = [
+ABNORMAL_EXAMPLES: list[tuple[str, str]] = [
     ("../../../g", "http://a/g"),
     ("../../../../g", "http://a/g"),
     ("/./g", "http://a/g"),
@@ -67,16 +67,16 @@ ABNORMAL_EXAMPLES = [
 
 
 @pytest.mark.parametrize(("ref", "expected"), NORMAL_EXAMPLES)
-def test_rfc3986_normal_examples(ref, expected):
+def test_rfc3986_normal_examples(ref: str, expected: str) -> None:
     assert resolve(RFC_BASE, ref) == expected
 
 
 @pytest.mark.parametrize(("ref", "expected"), ABNORMAL_EXAMPLES)
-def test_rfc3986_abnormal_examples(ref, expected):
+def test_rfc3986_abnormal_examples(ref: str, expected: str) -> None:
     assert resolve(RFC_BASE, ref) == expected
 
 
-def test_rfc3986_tables_are_complete():
+def test_rfc3986_tables_are_complete() -> None:
     # A guard against a future edit quietly dropping rows from either table.
     assert len(NORMAL_EXAMPLES) == 23
     assert len(ABNORMAL_EXAMPLES) == 19
@@ -131,11 +131,11 @@ def test_rfc3986_tables_are_complete():
         ("https://a/b/c", "%2E%2E/d", "https://a/b/%2E%2E/d"),
     ],
 )
-def test_resolve(base, ref, expected):
+def test_resolve(base: str, ref: str, expected: str) -> None:
     assert resolve(base, ref) == expected
 
 
-def test_empty_reference_keeps_the_query_and_drops_the_fragment():
+def test_empty_reference_keeps_the_query_and_drops_the_fragment() -> None:
     assert resolve("https://a/b?q=1#frag", "") == "https://a/b?q=1"
     assert resolve("https://a/b?q=1#frag", "?q=2") == "https://a/b?q=2"
 
@@ -155,7 +155,7 @@ def test_empty_reference_keeps_the_query_and_drops_the_fragment():
         ("a/b/", "a/b/"),
     ],
 )
-def test_remove_dot_segments(path, expected):
+def test_remove_dot_segments(path: str, expected: str) -> None:
     assert remove_dot_segments(path) == expected
 
 
@@ -169,7 +169,9 @@ def test_remove_dot_segments(path, expected):
         ("a", "/", "g", "/g"),
     ],
 )
-def test_merge(authority, base_path, ref_path, expected):
+def test_merge(
+    authority: str | None, base_path: str, ref_path: str, expected: str
+) -> None:
     assert merge(authority, base_path, ref_path) == expected
 
 
@@ -192,7 +194,7 @@ def test_merge(authority, base_path, ref_path, expected):
         ("https://a/b#%2F", ("https://a/b", "%2F")),
     ],
 )
-def test_split_fragment(uri, expected):
+def test_split_fragment(uri: str, expected: tuple[str, str | None]) -> None:
     assert split_fragment(uri) == expected
 
 
@@ -205,7 +207,7 @@ def test_split_fragment(uri, expected):
         ("#/x", ""),
     ],
 )
-def test_strip_fragment(uri, expected):
+def test_strip_fragment(uri: str, expected: str) -> None:
     assert strip_fragment(uri) == expected
 
 
@@ -228,7 +230,7 @@ def test_strip_fragment(uri, expected):
         ("a/b:c", False),
     ],
 )
-def test_has_scheme(uri, expected):
+def test_has_scheme(uri: str, expected: bool) -> None:
     assert has_scheme(uri) is expected
 
 
@@ -243,5 +245,5 @@ def test_has_scheme(uri, expected):
         ("/a/b", False),
     ],
 )
-def test_is_absolute(uri, expected):
+def test_is_absolute(uri: str, expected: bool) -> None:
     assert is_absolute(uri) is expected
