@@ -17,6 +17,10 @@ from json_schema_engine.core.keywords.applicator import (
     ALL_OF,
     ANY_OF,
     APPLICATOR_VOCABULARY,
+    DEPENDENT_SCHEMAS,
+    IF,
+    NOT,
+    ONE_OF,
 )
 from json_schema_engine.core.keywords.applicator_object import (
     OBJECT_APPLICATOR_VOCABULARY,
@@ -148,6 +152,188 @@ def test_all_of_passes_when_every_branch_passes() -> None:
     assert run(schema, {"x": 1})[0] is True
 
 
+# --- oneOf -------------------------------------------------------------
+
+
+def test_one_of_passes_with_exactly_one_match() -> None:
+    schema: JsonValue = {"oneOf": [False, {}, False]}
+    assert run(schema, 1)[0] is True
+
+
+def test_one_of_fails_with_zero_matches() -> None:
+    schema: JsonValue = {"oneOf": [False, False]}
+    valid, state = run(schema, 1)
+    assert not valid
+    err = state.errors[-1]
+    assert err.message == "matched 0 branches, expected exactly 1"
+    assert err.params == {"passing": []}
+    assert err.keyword_name == "oneOf"
+
+
+def test_one_of_fails_with_two_matches() -> None:
+    schema: JsonValue = {"oneOf": [{}, {}, False]}
+    valid, state = run(schema, 1)
+    assert not valid
+    err = state.errors[-1]
+    assert err.message == "matched 2 branches, expected exactly 1"
+    assert err.params == {"passing": [0, 1]}
+
+
+def test_one_of_empty_list_matches_zero_branches() -> None:
+    schema: JsonValue = {"oneOf": []}
+    valid, state = run(schema, 1)
+    assert not valid
+    err = state.errors[-1]
+    assert err.message == "matched 0 branches, expected exactly 1"
+    assert err.params == {"passing": []}
+
+
+# --- not -----------------------------------------------------------------
+
+
+def test_not_passes_when_the_subschema_fails() -> None:
+    assert run({"not": False}, 1)[0] is True
+
+
+def test_not_fails_when_the_subschema_passes() -> None:
+    valid, state = run({"not": True}, 1)
+    assert not valid
+    assert state.errors[-1].message == "must not match the subschema"
+    assert state.errors[-1].keyword_name == "not"
+
+
+def test_not_never_lets_the_negated_subschemas_records_survive() -> None:
+    # An annotation-only keyword's own value would normally annotate on
+    # success; inside `not`, that success is exactly what makes `not` fail,
+    # discarding the frame (§4 rule 3) either way.
+    schema_passes: JsonValue = {"not": {"properties": {"x": False}}}
+    _, state = run(schema_passes, {"x": 1})
+    assert state.root_annotations == []
+
+    schema_fails: JsonValue = {"not": {"properties": {"x": {}}}}
+    _, state = run(schema_fails, {"x": 1})
+    assert state.root_annotations == []
+
+
+# --- if / then / else -----------------------------------------------------
+
+
+def test_then_without_if_accepts() -> None:
+    schema: JsonValue = {"then": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_else_without_if_accepts() -> None:
+    schema: JsonValue = {"else": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_true_then_present_else_present() -> None:
+    schema: JsonValue = {"if": True, "then": {}, "else": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_true_then_present_else_absent() -> None:
+    schema: JsonValue = {"if": True, "then": {}}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_true_then_absent_else_present() -> None:
+    # `then` is absent, so the `if: true` outcome has no consumer to apply
+    # it; the overall schema still passes.
+    schema: JsonValue = {"if": True, "else": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_true_then_absent_else_absent() -> None:
+    schema: JsonValue = {"if": True}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_false_then_present_else_present() -> None:
+    schema: JsonValue = {"if": False, "then": False, "else": {}}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_false_then_present_else_absent() -> None:
+    # `else` absent: `if: false` has no consumer, schema passes regardless
+    # of `then`.
+    schema: JsonValue = {"if": False, "then": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_false_then_absent_else_present() -> None:
+    schema: JsonValue = {"if": False, "else": {}}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_false_then_absent_else_absent() -> None:
+    schema: JsonValue = {"if": False}
+    assert run(schema, 1)[0] is True
+
+
+def test_if_true_then_fails_rejects_overall() -> None:
+    schema: JsonValue = {"if": True, "then": False}
+    assert run(schema, 1)[0] is False
+
+
+def test_if_false_else_fails_rejects_overall() -> None:
+    schema: JsonValue = {"if": False, "else": False}
+    assert run(schema, 1)[0] is False
+
+
+def test_if_rejecting_subschema_leaves_no_relevant_errors_when_valid() -> None:
+    # `if` always accepts (§4 rule 6): its rejecting condition's own error
+    # becomes irrelevant once `if` reports success, and `then` is skipped
+    # because the outcome is `False`.
+    schema: JsonValue = {"if": False, "then": False}
+    valid, state = run(schema, 1)
+    assert valid
+    assert state.errors == []
+
+
+def test_if_outcome_is_visible_only_adjacently_not_through_an_in_place_child() -> None:
+    # `if` nested inside `allOf` produces its outcome into `allOf`'s branch
+    # frame; that frame merges into the root on success (rule 3), but a
+    # top-level `then` must not see it — "adjacent" scope only.
+    schema: JsonValue = {"allOf": [{"if": True}], "then": False}
+    assert run(schema, 1)[0] is True
+
+
+# --- dependentSchemas -------------------------------------------------
+
+
+def test_dependent_schemas_trigger_present() -> None:
+    schema: JsonValue = {"dependentSchemas": {"x": False}}
+    assert run(schema, {"x": 1})[0] is False
+
+
+def test_dependent_schemas_trigger_absent() -> None:
+    schema: JsonValue = {"dependentSchemas": {"x": False}}
+    assert run(schema, {"y": 1})[0] is True
+
+
+def test_dependent_schemas_non_object_instance_passes() -> None:
+    schema: JsonValue = {"dependentSchemas": {"x": False}}
+    assert run(schema, "not an object")[0] is True
+    assert run(schema, [1, 2])[0] is True
+
+
+def test_dependent_schemas_records_merge_in_place_for_unevaluated_properties() -> None:
+    # The dependent subschema applies at the *same* cursor (in-place), so
+    # `properties` inside it merges its coverage into the same frame that
+    # `unevaluatedProperties` reads. "trigger" is covered by the sibling
+    # `properties`; "y" is covered only via the dependent subschema's own
+    # `properties`, proving the in-place merge rather than some other path.
+    schema: JsonValue = {
+        "properties": {"trigger": {}},
+        "dependentSchemas": {"trigger": {"properties": {"y": {}}}},
+        "unevaluatedProperties": False,
+    }
+    assert run(schema, {"trigger": 1, "y": 2})[0] is True
+    assert run(schema, {"trigger": 1, "y": 2, "z": 3})[0] is False
+
+
 # --- unevaluatedProperties (EXEMPLAR: consumer) ---------------------------
 
 
@@ -218,8 +404,24 @@ def test_unevaluated_properties_non_object_instance_passes() -> None:
 
 
 def test_dialect_assembles_from_applicator_and_unevaluated_vocabularies_only() -> None:
-    assert set(APPLICATOR_VOCABULARY) == {"anyOf", "allOf"}
-    assert set(OBJECT_APPLICATOR_VOCABULARY) == {"properties"}
-    assert set(UNEVALUATED_VOCABULARY) == {"unevaluatedProperties"}
+    assert set(APPLICATOR_VOCABULARY) == {
+        "anyOf",
+        "allOf",
+        "oneOf",
+        "not",
+        "if",
+        "then",
+        "else",
+        "dependentSchemas",
+    }
+    # `applicator_object.py` and `unevaluated.py` are owned by other M2
+    # agents and fan out concurrently; only check that this module's own
+    # exemplar bindings are unaffected.
+    assert "properties" in OBJECT_APPLICATOR_VOCABULARY
+    assert "unevaluatedProperties" in UNEVALUATED_VOCABULARY
     assert APPLICATOR_VOCABULARY["anyOf"].id == ANY_OF.id
     assert APPLICATOR_VOCABULARY["allOf"].id == ALL_OF.id
+    assert APPLICATOR_VOCABULARY["oneOf"].id == ONE_OF.id
+    assert APPLICATOR_VOCABULARY["not"].id == NOT.id
+    assert APPLICATOR_VOCABULARY["if"].id == IF.id
+    assert APPLICATOR_VOCABULARY["dependentSchemas"].id == DEPENDENT_SCHEMAS.id
