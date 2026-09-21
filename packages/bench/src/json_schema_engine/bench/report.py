@@ -67,6 +67,15 @@ def format_table(results: Results) -> str:
             "  compiled/fastjsonschema (hot): "
             + _fmt_ratio(compiled.get("hot"), fastjsonschema_.get("hot"))
         )
+        jsonschema_ = by_subject.get("jsonschema", {})
+        lines.append(
+            "  compiled/jsonschema (hot): "
+            + _fmt_ratio(compiled.get("hot"), jsonschema_.get("hot"))
+        )
+        lines.append(
+            "  interpreter/jsonschema (hot): "
+            + _fmt_ratio(interpreter.get("hot"), jsonschema_.get("hot"))
+        )
         lines.append("")
 
     if results.exclusions:
