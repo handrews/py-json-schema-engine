@@ -35,6 +35,10 @@ class InvalidSchemaError(JsonSchemaEngineError):
     """
 
 
+class ReadOnlyRegistryError(JsonSchemaEngineError):
+    """Registration attempted on a compiled artifact's registry snapshot."""
+
+
 class UnknownDialectError(JsonSchemaEngineError):
     """A schema names a `$schema` dialect URI that no registered dialect claims."""
 

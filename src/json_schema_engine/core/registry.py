@@ -19,6 +19,7 @@ from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
     InvalidSchemaError,
     MaxDepthExceededError,
+    ReadOnlyRegistryError,
     UnresolvableReferenceError,
 )
 from json_schema_engine.core.json_model import (
@@ -130,6 +131,36 @@ class SchemaRegistry:
         # engine installs this after its trusted metaschemas register, so
         # the D20 screen applies only to caller schemas.
         self.on_regex: RegexHook | None = None
+        # A compiled artifact's snapshot refuses registration (M6).
+        self._read_only = False
+
+    def snapshot(self) -> "SchemaRegistry":
+        """A frozen copy of this registry for a compiled artifact to bind (M6).
+
+        Index copies are shallow (documents are shared, never mutated), so
+        a `register` on the live registry after compilation cannot change
+        what an artifact's islands resolve. The copy refuses `register`;
+        lazy bundled metaschemas still register into the copy's own
+        indexes, since that mutates nothing the live registry sees.
+        """
+        copy = SchemaRegistry(
+            self._dialects.snapshot(),
+            self._default_dialect_uri,
+            max_depth=self._max_depth,
+            bundled=self._bundled,
+        )
+        copy._documents = dict(self._documents)
+        copy._anchors = dict(self._anchors)
+        copy._dynamic_anchors = dict(self._dynamic_anchors)
+        copy._recursive_roots = set(self._recursive_roots)
+        copy._produced_ids = set(self._produced_ids)
+        copy._consumed_ids = set(self._consumed_ids)
+        copy._document_dialects = dict(self._document_dialects)
+        copy._resource_locations = dict(self._resource_locations)
+        copy._document_ranges = dict(self._document_ranges)
+        copy._aliases = dict(self._aliases)
+        copy._read_only = True
+        return copy
 
     # --- registration ----------------------------------------------------
 
@@ -147,6 +178,20 @@ class SchemaRegistry:
         URIs compare fragment-free: `…/draft-07/schema#` names the same
         dialect as the bare form.
         """
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this schema registry is a compiled artifact's snapshot; "
+                "register on the engine before compiling"
+            )
+        return self._register(schema, retrieval_uri, dialect_uri, get_range)
+
+    def _register(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+    ) -> str:
         effective_dialect = effective_dialect_uri(
             schema, retrieval_uri, dialect_uri, self._default_dialect_uri
         )
@@ -269,7 +314,7 @@ class SchemaRegistry:
         # patterns are not its business, so the hook is off for the walk.
         hook, self.on_regex = self.on_regex, None
         try:
-            self.register(self._bundled[resource_uri], resource_uri)
+            self._register(self._bundled[resource_uri], resource_uri, None, None)
         finally:
             self.on_regex = hook
 

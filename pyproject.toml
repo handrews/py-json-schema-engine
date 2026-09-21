@@ -75,11 +75,16 @@ extend-exclude = ["DESIGN.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH", "TID", "C4", "PIE", "RET", "N"]
+# P5: `exec`/`eval` are banned everywhere but the compiler's one
+# instantiation module (the builtin `compile` has no ruff rule; the fences
+# test covers it).
+extend-select = ["S102", "S307"]
 ignore = ["ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN"]
+"tests/**" = ["ANN", "S102", "S307"]
 "packages/*/tests/**" = ["ANN"]
+"src/json_schema_engine/compiler/runtime_compile.py" = ["S102"]
 
 [tool.pyright]
 include = ["src", "packages", "tests", "bowtie", "scripts"]

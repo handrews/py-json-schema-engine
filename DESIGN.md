@@ -148,6 +148,17 @@ class StaticFacts:
     dynamic_scope_sensitive: bool = False               # $dynamicRef and friends (D8)
     evaluates_names: NameCoverage | None = None         # D9a static contribution to evaluated properties
     evaluates_indexes: IndexCoverage | None = None      # D9a static contribution to evaluated items
+    applications: tuple[SubschemaApplication, ...] = () # M6: how subschemas are applied (planner edges)
+
+@dataclass(frozen=True, slots=True)
+class SubschemaApplication:                             # M6
+    path: SubschemaPath                                 # relative to the keyword value; () is the value itself
+    mode: Literal["in_place", "child_by_key", "child_by_index", "child_sweep", "property_name"]
+    conditional: bool                                   # depends on runtime branching, not instance shape
+    asserts: bool                                       # its verdict feeds the keyword's verdict
+    sibling: str | None = None                          # if -> then/else
+    ref: str | None = None                              # reference keywords; path ignored
+    inverted: bool = False                              # not: coverage analysis skips the edge
 
 @dataclass(frozen=True, slots=True)
 class AnalyzeContext:
@@ -164,7 +175,7 @@ class KeywordBehavior:
     analyze: Callable[[JsonValue, AnalyzeContext], StaticFacts] | None = None   # pure static facts
     phase: Phase = Phase.ASSERT
     structural: bool = False                  # identifier/reserved keyword: never an output unit
-    # lower: added at M6 (compiler IR); absent means "interpreted unit", never a failure
+    lower: LowerFn | None = None              # M6 compiler IR (core/lowering.py); absent means "interpreted unit", never a failure
 ```
 
 `KeywordBehavior` is data (D2): vocabularies are `dict[str, KeywordBehavior]`

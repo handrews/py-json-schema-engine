@@ -18,6 +18,7 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_CORE_2019,
     keyword_id,
 )
+from json_schema_engine.core.lowering import lower_nothing
 
 _EMPTY_FACTS = StaticFacts()
 
@@ -41,7 +42,9 @@ def map_positions(value: JsonValue) -> StaticFacts:
 
 def structural(behavior_id: str, analyze: AnalyzeFn | None = None) -> KeywordBehavior:
     """An identifier/reserved keyword: no evaluation behavior, no annotation."""
-    return KeywordBehavior(behavior_id, _true, analyze=analyze, structural=True)
+    return KeywordBehavior(
+        behavior_id, _true, analyze=analyze, structural=True, lower=lower_nothing
+    )
 
 
 def annotation_only(behavior_id: str) -> KeywordBehavior:
@@ -51,7 +54,9 @@ def annotation_only(behavior_id: str) -> KeywordBehavior:
         ctx.annotate()
         return True
 
-    return KeywordBehavior(behavior_id, _evaluate)
+    # Annotation-only keywords assert nothing; the flag tier lowers them to
+    # nothing (M9 adds the annotation recipe).
+    return KeywordBehavior(behavior_id, _evaluate, lower=lower_nothing)
 
 
 def inert_subschema(behavior_id: str) -> KeywordBehavior:
@@ -61,7 +66,9 @@ def inert_subschema(behavior_id: str) -> KeywordBehavior:
     loading) but this behavior itself never applies it — a driving sibling
     keyword (`if` for `then`/`else`) owns the application.
     """
-    return KeywordBehavior(behavior_id, _true, analyze=self_position, structural=True)
+    return KeywordBehavior(
+        behavior_id, _true, analyze=self_position, structural=True, lower=lower_nothing
+    )
 
 
 def _defs_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:

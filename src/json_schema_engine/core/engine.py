@@ -110,6 +110,16 @@ class Engine:
 
         self.schemas.on_regex = screen
 
+    @property
+    def regex_cache(self) -> RegexCache:
+        """The engine's pattern cache (dialect, backend, compiled patterns)."""
+        return self._regex
+
+    @property
+    def max_depth(self) -> int:
+        """The schema-application depth budget (P3)."""
+        return self._max_depth
+
     # --- registration ----------------------------------------------------
 
     def register_schema(
