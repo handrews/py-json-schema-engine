@@ -61,6 +61,10 @@ def test_suite_case(case: SuiteCase) -> None:
     )
     uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
+    verbose = engine.evaluate(
+        uri, case.data, output="hierarchical", verbose=True, annotations=True
+    )
+    assert verbose.valid is case.valid
 
 
 @pytest.mark.parametrize("case", OPTIONAL_PARAMS)
@@ -71,6 +75,10 @@ def test_optional_case(case: SuiteCase) -> None:
     )
     uri = engine.load_schema(case.schema, RETRIEVAL_URI)
     assert engine.evaluate(uri, case.data).valid is case.valid
+    verbose = engine.evaluate(
+        uri, case.data, output="hierarchical", verbose=True, annotations=True
+    )
+    assert verbose.valid is case.valid
 
 
 def test_exact_case_counts() -> None:
