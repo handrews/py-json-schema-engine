@@ -33,9 +33,15 @@ def format_table(results: Results) -> str:
     """A per-corpus table of subjects x partitions (ops/s), plus two
     compiled-vs-reference ratio lines per corpus. No thresholds — this is
     reporting, not a gate."""
+    subject_versions = ", ".join(
+        f"{name} {version}" for name, version in results.subjects.items()
+    )
     lines: list[str] = [
         f"jse bench — {results.generated_at} — python {results.python} — "
         f"budget {results.budget_ms}ms",
+        f"machine: {results.machine} — commit: {results.commit or 'unknown'} — "
+        f"platform: {results.platform}",
+        f"subjects: {subject_versions}",
         "",
     ]
     ops_by = _ops_by(results)

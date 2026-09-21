@@ -27,14 +27,17 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import itertools
 import platform
 import re
+import subprocess
 import sys
 import timeit
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from json_schema_engine.bench.corpora import CORPUS_NAMES, Corpus, load_corpus
 from json_schema_engine.bench.subjects import SUBJECTS, Subject, Validate
@@ -45,6 +48,67 @@ Partition = str  # "compile" | "hot" | "valid" | "invalid"
 _PARTITION_NAMES = ("compile", "hot", "valid", "invalid")
 
 _MIN_BATCH_SECONDS = 0.005
+
+# .../packages/bench/src/json_schema_engine/bench/harness.py -> repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_SUBJECT_PACKAGES = ("json-schema-engine", "ecma-regex", "fastjsonschema", "jsonschema")
+
+
+def _machine() -> str:
+    """A best-effort CPU brand string; results metadata, never a gate, so
+    this must never raise regardless of platform or missing tools."""
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            brand = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            ).stdout.strip()
+            if brand:
+                return brand
+        elif system == "Linux":
+            with Path("/proc/cpuinfo").open(encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("model name"):
+                        _, _, value = line.partition(":")
+                        value = value.strip()
+                        if value:
+                            return value
+    except Exception:  # best-effort metadata, never a gate
+        pass
+    return platform.processor() or "unknown"
+
+
+def _commit() -> str | None:
+    """The repo's short commit hash, or `None` on any failure (a shallow
+    clone, a missing `git`, or running outside a repo at all)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except Exception:  # best-effort metadata, never a gate
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _subject_versions() -> dict[str, str]:
+    """Installed versions of every package a subject depends on."""
+    versions: dict[str, str] = {}
+    for name in _SUBJECT_PACKAGES:
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = "unknown"
+    return versions
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +141,9 @@ class Results:
     generated_at: str
     python: str
     platform: str
+    machine: str
+    commit: str | None
+    subjects: dict[str, str]
     budget_ms: int
     corpora: list[CorpusMeta]
     exclusions: list[Exclusion]
@@ -283,6 +350,9 @@ def run(budget_ms: int = 250, filter_regex: str | None = None) -> Results:
         generated_at=datetime.now(UTC).isoformat(),
         python=sys.version.split()[0],
         platform=platform.platform(),
+        machine=_machine(),
+        commit=_commit(),
+        subjects=_subject_versions(),
         budget_ms=budget_ms,
         corpora=corpora_meta,
         exclusions=exclusions,

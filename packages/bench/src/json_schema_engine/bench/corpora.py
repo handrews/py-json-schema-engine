@@ -4,16 +4,18 @@
 # semantics that the harness's oracle-first step checks every subject
 # against before timing it.
 #
-# `records.py` lives alongside the vendored schema fixtures in
-# `corpora/` (it generates the records-uniform/records-sparse schema and
-# instances) but is loaded here by file path rather than as a submodule:
-# `corpora.py` and the sibling `corpora/` directory share a name, and a
-# regular module always shadows a same-named namespace-package directory
-# for dotted imports, so `records.py` cannot be reached as
-# `json_schema_engine.bench.corpora.records`.
+# `records.py` and `api_payload.py` live alongside the vendored schema
+# fixtures in `corpora/` (they generate corpus instances, and `records.py`
+# also generates its schema) but are loaded here by file path rather than
+# as submodules: `corpora.py` and the sibling `corpora/` directory share a
+# name, and a regular module always shadows a same-named namespace-package
+# directory for dotted imports, so neither generator can be reached as
+# `json_schema_engine.bench.corpora.<name>`. Any future generator follows
+# the same `_load_module_from` path.
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 from dataclasses import dataclass
@@ -41,19 +43,20 @@ class Corpus:
     expected: list[bool] | None
 
 
-def _load_records_module() -> ModuleType:
-    path = _CORPORA_DIR / "records.py"
-    spec = importlib.util.spec_from_file_location(
-        "json_schema_engine.bench._records_gen", path
-    )
+def _load_module_from(filename: str, module_name: str) -> ModuleType:
+    path = _CORPORA_DIR / filename
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"could not load records generator from {path}")
+        raise ImportError(f"could not load generator from {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-_records = _load_records_module()
+_records = _load_module_from("records.py", "json_schema_engine.bench._records_gen")
+_api_payload = _load_module_from(
+    "api_payload.py", "json_schema_engine.bench._api_payload_gen"
+)
 
 
 def _read_schema(filename: str) -> JsonValue:
@@ -254,6 +257,45 @@ def _load_profile() -> Corpus:
     return _corpus("profile", "profile.schema.json", _PROFILE_VALID + _PROFILE_INVALID)
 
 
+# --- oas-document --------------------------------------------------------
+#
+# The official OpenAPI 3.1 meta-schema (Apache-2.0, vendored verbatim: no
+# external `$ref`s, but four `$dynamicRef: "#meta"` sites) validating a
+# hand-authored OpenAPI 3.1 description (MIT, this repo). The schema
+# carries its own absolute `$id`
+# (https://spec.openapis.org/oas/3.1/schema/2025-09-15); `register_schema`
+# resolves that `$id` as the canonical URI regardless of the retrieval URI
+# passed in, so `_oracle_expected`'s fixed oracle URI is not a conflict —
+# each corpus load builds its own fresh engine.
+
+
+def _load_oas_document() -> Corpus:
+    document = _read_schema("openapi-document.json")
+    invalid_document = copy.deepcopy(document)
+    assert isinstance(invalid_document, dict)
+    invalid_document["openapi"] = 4  # wrong type AND wrong pattern
+    return _corpus("oas-document", "oas-3.1-schema.json", [document, invalid_document])
+
+
+# --- api-payload -----------------------------------------------------------
+#
+# A moderate hand-authored object schema (MIT, this repo) over generated
+# request-payload instances; see `corpora/api_payload.py` for the
+# generator.
+
+
+def _load_api_payload() -> Corpus:
+    schema = _read_schema("api-payload-schema.json")
+    instances, _by_construction = _api_payload.build_api_payloads()
+    return Corpus(
+        name="api-payload",
+        dialect=DIALECT_2020_12,
+        schema=schema,
+        instances=instances,
+        expected=_oracle_expected(schema, instances),
+    )
+
+
 # --- generated records ---------------------------------------------------
 
 
@@ -275,6 +317,8 @@ _LOADERS = {
     "user": _load_user,
     "event": _load_event,
     "profile": _load_profile,
+    "oas-document": _load_oas_document,
+    "api-payload": _load_api_payload,
     "records-uniform": lambda: _load_records("uniform"),
     "records-sparse": lambda: _load_records("sparse"),
 }
@@ -283,8 +327,8 @@ CORPUS_NAMES = tuple(_LOADERS)
 
 
 def load_corpus(name: str) -> Corpus:
-    """Build the named corpus (`user`, `event`, `profile`, `records-uniform`,
-    `records-sparse`)."""
+    """Build the named corpus (`user`, `event`, `profile`, `oas-document`,
+    `api-payload`, `records-uniform`, `records-sparse`)."""
     try:
         loader = _LOADERS[name]
     except KeyError:

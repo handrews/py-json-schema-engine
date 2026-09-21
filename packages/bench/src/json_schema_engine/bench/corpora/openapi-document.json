@@ -1,0 +1,153 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Bench Orders API",
+    "version": "1.4.2",
+    "description": "A representative OpenAPI 3.1 description used only as a benchmark instance.",
+    "license": { "name": "MIT" }
+  },
+  "servers": [{ "url": "https://api.bench.example/v1" }],
+  "paths": {
+    "/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "summary": "List orders",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "enum": ["pending", "settled", "failed", "cancelled"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Order" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createOrder",
+        "summary": "Create an order",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OrderInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The created order",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Order" }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orders/{orderId}": {
+      "get": {
+        "operationId": "getOrder",
+        "summary": "Fetch one order",
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The order",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Order" }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Order": {
+        "type": "object",
+        "required": ["id", "status", "createdAt", "lineItems"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "status": { "enum": ["pending", "settled", "failed", "cancelled"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lineItems": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/LineItem" }
+          },
+          "total": { "type": "number", "minimum": 0 }
+        }
+      },
+      "OrderInput": {
+        "type": "object",
+        "required": ["lineItems"],
+        "properties": {
+          "lineItems": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/LineItem" }
+          },
+          "note": { "type": "string", "maxLength": 280 }
+        }
+      },
+      "LineItem": {
+        "type": "object",
+        "required": ["sku", "quantity"],
+        "properties": {
+          "sku": { "type": "string", "pattern": "^[A-Z0-9-]{4,20}$" },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "unitPrice": { "type": "number", "minimum": 0 }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
