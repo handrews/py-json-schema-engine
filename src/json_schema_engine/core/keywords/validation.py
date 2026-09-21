@@ -33,6 +33,19 @@ from json_schema_engine.core.json_model import (
     json_type_of,
 )
 from json_schema_engine.core.keywords._ids import VOCAB_VALIDATION, keyword_id
+from json_schema_engine.core.lowering import (
+    Const,
+    LowerFn,
+    LoweringContext,
+    TypeName,
+    and_,
+    fail,
+    has_key,
+    not_,
+    regex_test,
+    type_is,
+    when,
+)
 
 # --- pattern (EXEMPLAR: assertion class) ----------------------------------
 
@@ -51,10 +64,23 @@ def _pattern_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> 
     return False
 
 
+def _pattern_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not isinstance(value, str):
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            and_(type_is(instance, "string"), not_(regex_test(value, instance))),
+            (fail(("does not match pattern",), {"pattern": Const(value)}),),
+        )
+    )
+
+
 pattern = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "pattern"),
     evaluate=_pattern_evaluate,
     analyze=_pattern_analyze,
+    lower=_pattern_lower,
 )
 
 
@@ -66,6 +92,7 @@ def assertion(
     test: Callable[[JsonValue, JsonValue], bool],
     message: Callable[[JsonValue], str],
     params: Callable[[JsonValue], ErrorParams] | None = None,
+    lower: LowerFn | None = None,
 ) -> KeywordBehavior:
     """Build a one-error assertion: `test(value, instance)` or `ctx.error()`.
 
@@ -82,7 +109,9 @@ def assertion(
         ctx.error(message(value), params(value) if params is not None else None)
         return False
 
-    return KeywordBehavior(id=keyword_id(VOCAB_VALIDATION, name), evaluate=_evaluate)
+    return KeywordBehavior(
+        id=keyword_id(VOCAB_VALIDATION, name), evaluate=_evaluate, lower=lower
+    )
 
 
 def _is_number(x: JsonValue) -> TypeGuard[int | float]:
@@ -122,9 +151,41 @@ def _type_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> boo
     return False
 
 
+_TYPE_NAMES: dict[str, TypeName] = {
+    "null": "null",
+    "boolean": "boolean",
+    "object": "object",
+    "array": "array",
+    "number": "number",
+    "string": "string",
+    "integer": "integer",
+}
+
+
+def _type_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    names = value if isinstance(value, list) else [value]
+    # An unknown type name matches nothing, as in `_type_matches`.
+    known: list[TypeName] = []
+    for name in names:
+        if isinstance(name, str) and (known_name := _TYPE_NAMES.get(name)) is not None:
+            known.append(known_name)
+    lctx.emit(
+        when(
+            not_(type_is(lctx.instance, *known)),
+            (
+                fail(
+                    ("expected " + ", ".join(str(n) for n in names),),
+                    {"expected": Const(list(names))},
+                ),
+            ),
+        )
+    )
+
+
 _type_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "type"),
     evaluate=_type_evaluate,
+    lower=_type_lower,
 )
 
 
@@ -147,9 +208,31 @@ def _required_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) ->
     return ok
 
 
+def _required_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not isinstance(value, list):
+        return
+    instance = lctx.instance
+    checks = tuple(
+        when(
+            not_(has_key(instance, name)),
+            (
+                fail(
+                    (f"missing required property '{name}'",),
+                    {"missingProperty": Const(name)},
+                ),
+            ),
+        )
+        for name in value
+        if isinstance(name, str)
+    )
+    if checks:
+        lctx.emit(when(type_is(instance, "object"), checks))
+
+
 _required_behavior = KeywordBehavior(
     id=keyword_id(VOCAB_VALIDATION, "required"),
     evaluate=_required_evaluate,
+    lower=_required_lower,
 )
 
 

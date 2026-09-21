@@ -1,0 +1,19 @@
+{
+  "anyOf": [
+    {
+      "properties": {
+        "a": {
+          "type": "integer"
+        }
+      }
+    },
+    {
+      "properties": {
+        "b": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

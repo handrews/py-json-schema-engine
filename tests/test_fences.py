@@ -16,7 +16,7 @@ COMPILER = ROOT / "src" / "json_schema_engine" / "compiler"
 CODEGEN = {"compile", "exec", "eval"}
 
 
-def _codegen_calls(path: Path) -> list[str]:
+def _codegen_calls(path: Path, *, ast_allowed: bool = False) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     found: list[str] = []
     for node in ast.walk(tree):
@@ -31,6 +31,8 @@ def _codegen_calls(path: Path) -> list[str]:
                 and func.attr in CODEGEN
             ):
                 found.append(func.attr)
+        elif ast_allowed:
+            continue
         elif isinstance(node, ast.Import):
             if any(alias.name == "ast" for alias in node.names):
                 found.append("import ast")
@@ -49,10 +51,10 @@ def test_core_and_ecma_regex_never_generate_code() -> None:
 
 
 def test_only_runtime_compile_materializes_code() -> None:
-    if not COMPILER.exists():
-        return
+    # The compiler may build `ast` trees anywhere; it may turn one into code
+    # in exactly one place.
     for path in sorted(COMPILER.rglob("*.py")):
-        calls = _codegen_calls(path)
+        calls = _codegen_calls(path, ast_allowed=True)
         if path.name == "runtime_compile.py":
             assert sorted(calls) == ["compile", "exec"], path
         else:
@@ -87,3 +89,32 @@ def test_interpretation_raises_no_codegen_audit_events() -> None:
         [sys.executable, "-c", AUDIT_PROBE], capture_output=True, text=True, check=True
     )
     assert completed.stdout.strip() == "0", completed.stderr
+
+
+COMPILE_PROBE = """
+import sys
+from json_schema_engine.core import create_engine
+from json_schema_engine.compiler import compile_validator
+engine = create_engine()
+uri = engine.register_schema({"type": "string"}, "https://fences.example/s")
+events = []
+def hook(name, args):
+    if name in ("compile", "exec"):
+        events.append((name, args[1] if name == "compile" else None))
+sys.addaudithook(hook)
+validate = compile_validator(engine, uri).validate
+assert validate("x") and not validate(1)
+print([name for name, _ in events], validate.__code__.co_filename)
+"""
+
+
+def test_compiling_raises_exactly_one_compile_and_one_exec_event() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-c", COMPILE_PROBE],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.strip() == (
+        "['compile', 'exec'] <json_schema_engine.compiler>"
+    ), completed.stderr

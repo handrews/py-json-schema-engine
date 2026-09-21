@@ -71,7 +71,7 @@ addopts = "--import-mode=importlib"
 target-version = "py312"
 line-length = 88
 src = ["src", "packages/*/src"]
-extend-exclude = ["DESIGN.md"]
+extend-exclude = ["DESIGN.md", "tests/compiler/goldens"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH", "TID", "C4", "PIE", "RET", "N"]
@@ -88,6 +88,7 @@ ignore = ["ANN401"]
 
 [tool.pyright]
 include = ["src", "packages", "tests", "bowtie", "scripts"]
+exclude = ["tests/compiler/goldens"]
 extraPaths = ["src", "packages/test-kit/src", "packages/ecma-regex/src"]
 typeCheckingMode = "strict"
 pythonVersion = "3.12"
@@ -114,6 +115,12 @@ forbidden_modules = ["ast"]
 name = "core never imports test-kit"
 type = "forbidden"
 source_modules = ["json_schema_engine.core"]
+forbidden_modules = ["json_schema_engine.test_kit"]
+
+[[tool.importlinter.contracts]]
+name = "compiler never imports test-kit"
+type = "forbidden"
+source_modules = ["json_schema_engine.compiler"]
 forbidden_modules = ["json_schema_engine.test_kit"]
 
 [[tool.importlinter.contracts]]

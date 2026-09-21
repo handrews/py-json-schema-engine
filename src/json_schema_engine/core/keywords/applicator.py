@@ -18,9 +18,11 @@ from json_schema_engine.core.dialect import (
     KeywordBehavior,
     KeywordContext,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.lowering import HERE, LoweringContext, apply, combine_check
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -37,7 +39,24 @@ DEPENDENT_SCHEMAS_ID = keyword_id(VOCAB_APPLICATOR, "dependentSchemas")
 
 def _any_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     count = len(value) if isinstance(value, list) else 0
-    return StaticFacts(subschemas=tuple((index,) for index in range(count)))
+    return StaticFacts(
+        subschemas=tuple((index,) for index in range(count)),
+        applications=tuple(
+            SubschemaApplication((index,), "in_place", conditional=True, asserts=True)
+            for index in range(count)
+        ),
+    )
+
+
+def _any_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    assert isinstance(value, list)
+    # Every branch is an `any_may_pass` apply; the combine check closes the
+    # run with the keyword's own message. The emitter may short-circuit only
+    # where the plan proves the region verdict-only (§4 rule 7).
+    lctx.emit(
+        *(apply((index,), HERE, "any_may_pass") for index in range(len(value))),
+        combine_check(("does not match any anyOf branch",)),
+    )
 
 
 def _any_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -54,7 +73,10 @@ def _any_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
 
 
 ANY_OF = KeywordBehavior(
-    id=ANY_OF_ID, evaluate=_any_of_evaluate, analyze=_any_of_analyze
+    id=ANY_OF_ID,
+    evaluate=_any_of_evaluate,
+    analyze=_any_of_analyze,
+    lower=_any_of_lower,
 )
 
 
@@ -63,7 +85,18 @@ ANY_OF = KeywordBehavior(
 
 def _all_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     count = len(value) if isinstance(value, list) else 0
-    return StaticFacts(subschemas=tuple((index,) for index in range(count)))
+    return StaticFacts(
+        subschemas=tuple((index,) for index in range(count)),
+        applications=tuple(
+            SubschemaApplication((index,), "in_place", conditional=False, asserts=True)
+            for index in range(count)
+        ),
+    )
+
+
+def _all_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    assert isinstance(value, list)
+    lctx.emit(*(apply((index,), HERE) for index in range(len(value))))
 
 
 def _all_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -78,7 +111,10 @@ def _all_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
 
 
 ALL_OF = KeywordBehavior(
-    id=ALL_OF_ID, evaluate=_all_of_evaluate, analyze=_all_of_analyze
+    id=ALL_OF_ID,
+    evaluate=_all_of_evaluate,
+    analyze=_all_of_analyze,
+    lower=_all_of_lower,
 )
 
 

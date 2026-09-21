@@ -1,0 +1,8 @@
+{
+  "properties": {
+    "a": {
+      "type": "string"
+    }
+  },
+  "unevaluatedProperties": false
+}

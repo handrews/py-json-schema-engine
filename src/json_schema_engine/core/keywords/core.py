@@ -9,6 +9,7 @@ from json_schema_engine.core.dialect import (
     KeywordBehavior,
     KeywordContext,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.errors import InvalidSchemaError
 from json_schema_engine.core.json_model import JsonValue, is_object
@@ -18,7 +19,7 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_CORE_2019,
     keyword_id,
 )
-from json_schema_engine.core.lowering import lower_nothing
+from json_schema_engine.core.lowering import HERE, LoweringContext, apply, lower_nothing
 
 _EMPTY_FACTS = StaticFacts()
 
@@ -78,7 +79,19 @@ def _defs_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
 def _ref_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     if not isinstance(value, str):
         return _EMPTY_FACTS
-    return StaticFacts(references=(value,))
+    return StaticFacts(
+        references=(value,),
+        applications=(
+            SubschemaApplication(
+                (), "in_place", conditional=False, asserts=True, ref=value
+            ),
+        ),
+    )
+
+
+def _ref_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if isinstance(value, str):
+        lctx.emit(apply((), HERE, ref=value))
 
 
 def _ref_evaluate(value: JsonValue, _cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -91,7 +104,10 @@ def _ref_evaluate(value: JsonValue, _cursor: Cursor, ctx: KeywordContext) -> boo
 # target at the same cursor. The engine owns the evaluation-path extension
 # and the frame, so the behavior itself is one line.
 ref = KeywordBehavior(
-    keyword_id(VOCAB_CORE, "$ref"), _ref_evaluate, analyze=_ref_analyze
+    keyword_id(VOCAB_CORE, "$ref"),
+    _ref_evaluate,
+    analyze=_ref_analyze,
+    lower=_ref_lower,
 )
 
 

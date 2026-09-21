@@ -23,9 +23,19 @@ from json_schema_engine.core.dialect import (
     NamesCoverage,
     PatternsCoverage,
     StaticFacts,
+    SubschemaApplication,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.lowering import (
+    HERE,
+    LoweringContext,
+    apply,
+    child,
+    has_key,
+    type_is,
+    when,
+)
 
 PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "properties")
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
@@ -42,6 +52,27 @@ def _properties_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
         subschemas=tuple((name,) for name in names),
         produces=(PROPERTIES_ID,),
         evaluates_names=NamesCoverage(names),
+        applications=tuple(
+            SubschemaApplication(
+                (name,), "child_by_key", conditional=False, asserts=True
+            )
+            for name in names
+        ),
+    )
+
+
+def _properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if not is_object(value):
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            type_is(instance, "object"),
+            tuple(
+                when(has_key(instance, name), (apply((name,), child(HERE, name)),))
+                for name in value
+            ),
+        )
     )
 
 
@@ -66,7 +97,10 @@ def _properties_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) 
 
 
 PROPERTIES = KeywordBehavior(
-    id=PROPERTIES_ID, evaluate=_properties_evaluate, analyze=_properties_analyze
+    id=PROPERTIES_ID,
+    evaluate=_properties_evaluate,
+    analyze=_properties_analyze,
+    lower=_properties_lower,
 )
 
 
