@@ -121,3 +121,32 @@ class UnresolvableReferenceError(JsonSchemaEngineError):
     document that was never registered and no loader supplied, and a pointer
     or anchor that names nothing in an otherwise known resource.
     """
+
+
+class UnknownVocabularyError(JsonSchemaEngineError):
+    """A metaschema's `$vocabulary` requires a vocabulary nobody registered.
+
+    Only a vocabulary marked `true` (required) raises; an unknown optional
+    vocabulary is skipped and its keywords fall to unknown-keyword handling,
+    as the spec requires.
+    """
+
+
+class SchemaValidationError(JsonSchemaEngineError):
+    """A registered document fails its own metaschema (`validate_schemas`).
+
+    `errors` are the list-format units of the failed evaluation, so the
+    caller can report exactly which keyword values were malformed.
+    """
+
+    errors: list[object]
+
+    def __init__(
+        self,
+        message: str,
+        errors: list[object],
+        *,
+        schema_location: str | None = None,
+    ) -> None:
+        super().__init__(message, schema_location=schema_location)
+        self.errors = errors

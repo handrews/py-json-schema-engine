@@ -7,13 +7,23 @@
 
 from collections.abc import Sequence
 
-from json_schema_engine.core.dialect import DialectRegistry
-from json_schema_engine.core.errors import MaxDepthExceededError
+from json_schema_engine.core.dialect import (
+    DialectRegistry,
+    identifiers_2019,
+    identifiers_2020,
+)
+from json_schema_engine.core.errors import (
+    MaxDepthExceededError,
+    SchemaValidationError,
+    UnknownDialectError,
+    UnknownVocabularyError,
+)
 from json_schema_engine.core.evaluator import run_evaluation
-from json_schema_engine.core.json_model import JsonValue
-from json_schema_engine.core.keywords._ids import DIALECT_2020_12
+from json_schema_engine.core.json_model import JsonValue, is_object
+from json_schema_engine.core.keywords._ids import DIALECT_2020_12, VOCAB_CORE_2019
 from json_schema_engine.core.keywords.dialect2020 import register_standard_dialects
 from json_schema_engine.core.loader import Loader
+from json_schema_engine.core.metaschemas import bundled_metaschemas
 from json_schema_engine.core.output import AnnotationsOption, RenderInput
 from json_schema_engine.core.records import render_annotation, render_error
 from json_schema_engine.core.regex import (
@@ -22,7 +32,11 @@ from json_schema_engine.core.regex import (
     RegexDialect,
 )
 from json_schema_engine.core.regex import reject_unsafe_regex as _screen_unsafe
-from json_schema_engine.core.registry import DEFAULT_MAX_DEPTH, SchemaRegistry
+from json_schema_engine.core.registry import (
+    DEFAULT_MAX_DEPTH,
+    SchemaRegistry,
+    effective_dialect_uri,
+)
 from json_schema_engine.core.result import (
     OutputFormat,
     Result,
@@ -52,13 +66,23 @@ class Engine:
         regex_backend: RegexBackend = "re",
         reject_unsafe_regex: bool = False,
         max_depth: int = DEFAULT_MAX_DEPTH,
+        validate_schemas: bool = False,
     ) -> None:
         self.dialects = DialectRegistry()
         register_standard_dialects(self.dialects)
         self.schemas = SchemaRegistry(
-            self.dialects, default_dialect, max_depth=max_depth
+            self.dialects,
+            default_dialect,
+            max_depth=max_depth,
+            bundled=bundled_metaschemas(),
         )
+        self._default_dialect = default_dialect
         self._loaders = tuple(loaders)
+        self._validate_schemas = validate_schemas
+        # Metaschemas whose dialect is being assembled right now: a
+        # metaschema naming itself (or a chain) as its own dialect would
+        # otherwise recurse forever.
+        self._assembling: set[str] = set()
         self._regex = RegexCache(regex_dialect, regex_backend)
         self._max_depth = max_depth
         # Installed after the trusted built-ins register (there are none in
@@ -84,15 +108,20 @@ class Engine:
     ) -> str:
         """Register a schema document locally and return its canonical URI.
 
-        No references are followed; use `load_schema` for that.
+        The document's dialect must exist or be assemblable from a
+        registered or bundled metaschema; `$ref` targets are not followed
+        (use `load_schema` for that).
         """
+        self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
         try:
-            return self.schemas.register(schema, retrieval_uri, dialect_uri)
+            uri = self.schemas.register(schema, retrieval_uri, dialect_uri)
         except RecursionError:
             raise MaxDepthExceededError(
                 "schema nesting exceeded the interpreter's stack "
                 f"(max_depth={self._max_depth})"
             ) from None
+        self._maybe_validate(uri)
+        return uri
 
     def load_schema(
         self,
@@ -126,6 +155,93 @@ class Engine:
                 self.register_schema(loaded.value, loaded.uri)
                 return True
         return False
+
+    # --- dialects --------------------------------------------------------
+
+    def _ensure_dialect_for(
+        self, schema: JsonValue, retrieval_uri: str, dialect_uri: str | None
+    ) -> None:
+        """Make the document's dialect exist before registration.
+
+        A known dialect passes through. Otherwise the `$schema` target is
+        loaded as a metaschema (bundled or through the loaders) and a
+        dialect is assembled from its `$vocabulary` (2020-12 core §8.1).
+        """
+        effective = effective_dialect_uri(
+            schema, retrieval_uri, dialect_uri, self._default_dialect
+        )
+        if self.dialects.has_dialect(effective):
+            return
+        if effective in self._assembling:
+            raise UnknownDialectError(f"metaschema cycle at '{effective}'")
+        self._assembling.add(effective)
+        try:
+            if not self.schemas.has(effective):
+                self._fetch(effective)
+            meta = self.schemas.document(effective)
+            if meta is None:
+                raise UnknownDialectError(
+                    f"dialect '{effective}' is not registered and no loader "
+                    "provides its metaschema"
+                )
+            self._assemble_dialect(effective, meta)
+        finally:
+            self._assembling.discard(effective)
+
+    def _assemble_dialect(self, uri: str, meta: JsonValue) -> None:
+        declared = meta.get("$vocabulary") if is_object(meta) else None
+        if not is_object(declared):
+            # The spec leaves a `$vocabulary`-less metaschema open; the
+            # least-surprise reading is the default dialect's vocabularies.
+            base = self.dialects.get_dialect(self._default_dialect)
+            self.dialects.register_dialect(
+                uri,
+                base.vocabulary_uris,
+                allow_unknown_keywords=base.allow_unknown_keywords,
+                identifiers=base.identifiers,
+                ref_ignores_siblings=base.ref_ignores_siblings,
+            )
+            return
+        uris: list[str] = []
+        for vocabulary_uri, required in declared.items():
+            if self.dialects.has_vocabulary(vocabulary_uri):
+                uris.append(vocabulary_uri)
+            elif required is True:
+                raise UnknownVocabularyError(
+                    f"dialect '{uri}' requires unknown vocabulary '{vocabulary_uri}'",
+                    schema_location=uri,
+                )
+            # An unknown optional vocabulary is skipped; its keywords fall
+            # to unknown-keyword annotation handling (spec MUST for false).
+        # Identifier syntax travels with the core vocabulary (D18).
+        self.dialects.register_dialect(
+            uri,
+            uris,
+            identifiers=identifiers_2019
+            if VOCAB_CORE_2019 in uris
+            else identifiers_2020,
+        )
+
+    def _maybe_validate(self, base_uri: str) -> None:
+        """The `validate_schemas` policy: a document must satisfy its dialect.
+
+        Skipped when the metaschema is unavailable ("cannot check", not
+        failure). Bundled resources never reach this path, since the
+        registry registers them itself.
+        """
+        if not self._validate_schemas:
+            return
+        dialect_uri = self.schemas.dialect_uri_for(base_uri)
+        if not self.schemas.has(dialect_uri):
+            return
+        document = self.schemas.document(base_uri)
+        result = self.evaluate(dialect_uri, document, output="list")
+        if not result.valid:
+            raise SchemaValidationError(
+                f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
+                list(result.errors or []),
+                schema_location=base_uri,
+            )
 
     # --- evaluation ------------------------------------------------------
 
@@ -191,6 +307,7 @@ def create_engine(
     regex_backend: RegexBackend = "re",
     reject_unsafe_regex: bool = False,
     max_depth: int = DEFAULT_MAX_DEPTH,
+    validate_schemas: bool = False,
 ) -> Engine:
     """Create an engine with the built-in dialects registered."""
     return Engine(
@@ -200,4 +317,5 @@ def create_engine(
         regex_backend=regex_backend,
         reject_unsafe_regex=reject_unsafe_regex,
         max_depth=max_depth,
+        validate_schemas=validate_schemas,
     )

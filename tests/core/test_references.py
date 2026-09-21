@@ -1,0 +1,243 @@
+# Dynamic scope (DESIGN.md D8), `$vocabulary` assembly, bundled
+# metaschemas, and the `validate_schemas` policy through the public API.
+
+import pytest
+
+from json_schema_engine.core import (
+    JsonValue,
+    LoadedDocument,
+    SchemaValidationError,
+    UnknownDialectError,
+    UnknownVocabularyError,
+    create_engine,
+)
+
+META_2020 = "https://json-schema.org/draft/2020-12/schema"
+VOCAB = "https://json-schema.org/draft/2020-12/vocab/"
+
+
+def run(schema: JsonValue, instance: JsonValue, **options: object) -> bool:
+    engine = create_engine()
+    uri = engine.register_schema(schema, "https://dyn.example/root")
+    return engine.evaluate(uri, instance).valid
+
+
+# --- dynamic scope ---------------------------------------------------------
+
+
+def test_dynamic_ref_resolves_to_first_anchor_in_scope() -> None:
+    # The classic list/string-list shape: the outer resource's
+    # $dynamicAnchor overrides the inner default.
+    schema: JsonValue = {
+        "$id": "https://dyn.example/strings",
+        "$ref": "list",
+        "$defs": {
+            "foo": {"$dynamicAnchor": "items", "type": "string"},
+            "list": {
+                "$id": "list",
+                "type": "array",
+                "items": {"$dynamicRef": "#items"},
+                "$defs": {"items": {"$dynamicAnchor": "items"}},
+            },
+        },
+    }
+    assert run(schema, ["a", "b"]) is True
+    assert run(schema, ["a", 1]) is False
+
+
+def test_dynamic_ref_without_matching_anchor_behaves_like_ref() -> None:
+    schema: JsonValue = {
+        "$defs": {"target": {"$anchor": "t", "type": "integer"}},
+        "$dynamicRef": "#t",
+    }
+    assert run(schema, 3) is True
+    assert run(schema, "x") is False
+
+
+def test_dynamic_ref_pointer_fragment_is_plain_ref() -> None:
+    schema: JsonValue = {
+        "$defs": {"t": {"type": "boolean"}},
+        "$dynamicRef": "#/$defs/t",
+    }
+    assert run(schema, True) is True
+    assert run(schema, 1) is False
+
+
+def test_leaving_a_scope_forgets_its_anchor() -> None:
+    # `mid` carries the overriding anchor and is entered only under `a`;
+    # under `b` the scope is root -> inner, and inner's own anchor wins.
+    schema: JsonValue = {
+        "$id": "https://dyn.example/leave",
+        "properties": {"a": {"$ref": "mid"}, "b": {"$ref": "inner"}},
+        "$defs": {
+            "mid": {
+                "$id": "mid",
+                "$ref": "inner",
+                "$defs": {"n": {"$dynamicAnchor": "n", "type": "integer"}},
+            },
+            "inner": {
+                "$id": "inner",
+                "$dynamicRef": "#n",
+                "$defs": {"n": {"$dynamicAnchor": "n", "type": "string"}},
+            },
+        },
+    }
+    assert run(schema, {"a": 1}) is True
+    assert run(schema, {"a": "s"}) is False
+    assert run(schema, {"b": "s"}) is True
+    assert run(schema, {"b": 1}) is False
+
+
+def test_dynamic_ref_to_boolean_schema() -> None:
+    schema: JsonValue = {
+        "$defs": {"f": {"$dynamicAnchor": "f", "not": {}}},
+        "$dynamicRef": "#f",
+    }
+    assert run(schema, 1) is False
+
+
+# --- bundled metaschemas ---------------------------------------------------
+
+
+def test_ref_to_bundled_metaschema_needs_no_loader() -> None:
+    engine = create_engine()
+    uri = engine.load_schema({"$ref": META_2020}, "https://meta.example/s")
+    assert engine.evaluate(uri, {"type": "integer"}).valid is True
+    assert engine.evaluate(uri, {"type": 1}).valid is False
+    assert engine.evaluate(uri, {"minLength": -1}).valid is False
+    assert engine.evaluate(uri, {"$defs": {"a": {"type": "string"}}}).valid is True
+
+
+def test_bundled_resources_are_lazy() -> None:
+    engine = create_engine()
+    assert META_2020 not in list(engine.schemas.resources())
+    assert engine.schemas.has(META_2020)
+    engine.schemas.root_ref(META_2020)
+    assert META_2020 in list(engine.schemas.resources())
+
+
+# --- $vocabulary assembly --------------------------------------------------
+
+NO_VALIDATION = "https://vocab.example/no-validation"
+OPTIONAL_UNKNOWN = "https://vocab.example/optional-unknown"
+REQUIRED_UNKNOWN = "https://vocab.example/required-unknown"
+BARE = "https://vocab.example/bare"
+SELF_REFERENTIAL = "https://vocab.example/self"
+
+METASCHEMAS: dict[str, JsonValue] = {
+    NO_VALIDATION: {
+        "$schema": META_2020,
+        "$id": NO_VALIDATION,
+        "$vocabulary": {VOCAB + "applicator": True, VOCAB + "core": True},
+        "$dynamicAnchor": "meta",
+        "allOf": [
+            {"$ref": "https://json-schema.org/draft/2020-12/meta/applicator"},
+            {"$ref": "https://json-schema.org/draft/2020-12/meta/core"},
+        ],
+    },
+    OPTIONAL_UNKNOWN: {
+        "$schema": META_2020,
+        "$id": OPTIONAL_UNKNOWN,
+        "$vocabulary": {
+            VOCAB + "validation": True,
+            VOCAB + "core": True,
+            "https://vocab.example/custom": False,
+        },
+    },
+    REQUIRED_UNKNOWN: {
+        "$schema": META_2020,
+        "$id": REQUIRED_UNKNOWN,
+        "$vocabulary": {VOCAB + "core": True, "https://vocab.example/custom": True},
+    },
+    BARE: {"$schema": META_2020, "$id": BARE, "required": ["title"]},
+    SELF_REFERENTIAL: {"$schema": SELF_REFERENTIAL, "$id": SELF_REFERENTIAL},
+}
+
+
+def meta_loader(uri: str) -> LoadedDocument | None:
+    document = METASCHEMAS.get(uri)
+    return None if document is None else LoadedDocument(document, uri)
+
+
+def test_dialect_without_validation_vocabulary_ignores_minimum() -> None:
+    engine = create_engine(loaders=[meta_loader])
+    uri = engine.load_schema(
+        {"$schema": NO_VALIDATION, "properties": {"n": {"minimum": 10}, "x": False}},
+        "https://vocab.example/doc",
+    )
+    assert engine.evaluate(uri, {"n": 1}).valid is True
+    assert engine.evaluate(uri, {"x": 1}).valid is False
+
+
+def test_unknown_optional_vocabulary_is_skipped() -> None:
+    engine = create_engine(loaders=[meta_loader])
+    uri = engine.load_schema(
+        {"$schema": OPTIONAL_UNKNOWN, "type": "number"}, "https://vocab.example/doc"
+    )
+    assert engine.evaluate(uri, 1).valid is True
+    assert engine.evaluate(uri, "s").valid is False
+
+
+def test_unknown_required_vocabulary_is_loud() -> None:
+    engine = create_engine(loaders=[meta_loader])
+    with pytest.raises(UnknownVocabularyError):
+        engine.load_schema({"$schema": REQUIRED_UNKNOWN}, "https://vocab.example/doc")
+
+
+def test_metaschema_without_vocabulary_gets_the_default_dialect() -> None:
+    engine = create_engine(loaders=[meta_loader])
+    uri = engine.load_schema(
+        {"$schema": BARE, "minimum": 2}, "https://vocab.example/doc"
+    )
+    assert engine.evaluate(uri, 1).valid is False
+
+
+def test_metaschema_cycle_is_loud() -> None:
+    engine = create_engine(loaders=[meta_loader])
+    with pytest.raises(UnknownDialectError):
+        engine.load_schema({"$schema": SELF_REFERENTIAL}, "https://vocab.example/doc")
+
+
+def test_unknown_dialect_without_loader_is_loud() -> None:
+    engine = create_engine()
+    with pytest.raises(UnknownDialectError):
+        engine.register_schema({"$schema": "https://nope.example/meta"}, "urn:doc")
+
+
+# --- validate_schemas ------------------------------------------------------
+
+
+def test_validate_schemas_rejects_a_malformed_document() -> None:
+    engine = create_engine(validate_schemas=True)
+    with pytest.raises(SchemaValidationError) as info:
+        engine.register_schema({"minLength": -1}, "https://val.example/bad")
+    assert info.value.errors
+    assert engine.register_schema({"minLength": 1}, "https://val.example/ok")
+
+
+def test_validate_schemas_checks_a_loaded_metaschema() -> None:
+    engine = create_engine(loaders=[meta_loader], validate_schemas=True)
+    with pytest.raises(SchemaValidationError):
+        engine.load_schema({"$schema": BARE, "x": 1}, "https://val.example/d")
+    assert engine.load_schema({"$schema": BARE, "title": "t"}, "https://val.example/ok")
+
+
+def test_validate_schemas_skips_a_dialect_without_a_metaschema_resource() -> None:
+    engine = create_engine(validate_schemas=True)
+    engine.dialects.register_dialect(
+        "urn:custom:dialect", [VOCAB + "core", VOCAB + "validation"]
+    )
+    # The dialect exists but no document is registered under its URI:
+    # "cannot check" is not a failure.
+    assert engine.register_schema(
+        {"minLength": -1}, "https://val.example/custom", "urn:custom:dialect"
+    )
+
+
+def test_bundled_metaschemas_are_complete() -> None:
+    from json_schema_engine.core.metaschemas import bundled_metaschemas
+
+    documents = bundled_metaschemas()
+    assert len(documents) == 8
+    for uri, document in documents.items():
+        assert isinstance(document, dict) and document.get("$id") == uri

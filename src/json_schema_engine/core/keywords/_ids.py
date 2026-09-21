@@ -19,3 +19,8 @@ DIALECT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 def keyword_id(vocabulary_uri: str, name: str) -> str:
     """The stable identity of a keyword: its vocabulary URI plus its name."""
     return f"{vocabulary_uri}#{name}"
+
+
+# The 2019-09 core vocabulary, named here because a `$vocabulary`-assembled
+# dialect that includes it inherits 2019-09 identifier syntax (D18).
+VOCAB_CORE_2019 = "https://json-schema.org/draft/2019-09/vocab/core"

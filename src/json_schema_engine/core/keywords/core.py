@@ -83,6 +83,30 @@ ref = KeywordBehavior(
 )
 
 
+def _dynamic_ref_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
+    if not isinstance(value, str):
+        return _EMPTY_FACTS
+    return StaticFacts(references=(value,), dynamic_scope_sensitive=True)
+
+
+def _dynamic_ref_evaluate(
+    value: JsonValue, _cursor: Cursor, ctx: KeywordContext
+) -> bool:
+    if not isinstance(value, str):
+        raise InvalidSchemaError("'$dynamicRef' value must be a string")
+    return ctx.apply_resolved(ctx.resolve_dynamic(value))
+
+
+# D8: the lexical target must exist; a plain-name fragment minted by a
+# `$dynamicAnchor` then rebinds to the outermost dynamic scope that carries
+# the same anchor. The engine owns the scope stack; the keyword only asks.
+dynamic_ref = KeywordBehavior(
+    keyword_id(VOCAB_CORE, "$dynamicRef"),
+    _dynamic_ref_evaluate,
+    analyze=_dynamic_ref_analyze,
+)
+
+
 CORE_VOCABULARY: dict[str, KeywordBehavior] = {
     "$schema": structural(keyword_id(VOCAB_CORE, "$schema")),
     "$id": structural(keyword_id(VOCAB_CORE, "$id")),
@@ -92,4 +116,5 @@ CORE_VOCABULARY: dict[str, KeywordBehavior] = {
     "$comment": structural(keyword_id(VOCAB_CORE, "$comment")),
     "$defs": structural(keyword_id(VOCAB_CORE, "$defs"), analyze=_defs_analyze),
     "$ref": ref,
+    "$dynamicRef": dynamic_ref,
 }
