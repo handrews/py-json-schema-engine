@@ -5,6 +5,11 @@
 # module, never on `json_schema_engine.compiler`, so keyword knowledge
 # stays in exactly one module per keyword.
 #
+# Public API (M9): every name in `__all__` below is documented under
+# `json_schema_engine.core.lowering` in docs/reference.md, so a custom
+# keyword can give itself a `lower` form without reaching into a private
+# module.
+#
 # Dependency direction: imports only `json_model`. `dialect.py` imports
 # this for the `lower` slot's type; the compiler package consumes it.
 #
@@ -36,6 +41,82 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from json_schema_engine.core.json_model import JsonValue
+
+__all__ = [
+    "HERE",
+    "INSTANCE",
+    "Annotate",
+    "Append",
+    "Apply",
+    "ApplyExpr",
+    "Binding",
+    "Child",
+    "Cmp",
+    "CmpOp",
+    "Collect",
+    "CombineCheck",
+    "Cond",
+    "Const",
+    "CountRange",
+    "CoverageFold",
+    "Covers",
+    "Expr",
+    "Fail",
+    "Fold",
+    "ForEachIndex",
+    "ForEachKey",
+    "FormatTest",
+    "HasKey",
+    "Helper",
+    "HelperName",
+    "Here",
+    "If",
+    "InConsts",
+    "Instance",
+    "Item",
+    "Key",
+    "Logic",
+    "LowerApply",
+    "LowerCursor",
+    "LowerFn",
+    "LowerMessage",
+    "LowerParams",
+    "LoweringContext",
+    "Member",
+    "Not",
+    "Produce",
+    "RegexTest",
+    "StaticCoverage",
+    "Stmt",
+    "TypeIs",
+    "TypeName",
+    "and_",
+    "annotate",
+    "append",
+    "apply",
+    "apply_expr",
+    "child",
+    "cmp",
+    "collect",
+    "combine_check",
+    "cond",
+    "const",
+    "coverage_fold",
+    "covers",
+    "fail",
+    "format_test",
+    "has_key",
+    "helper",
+    "in_consts",
+    "key",
+    "lower_nothing",
+    "not_",
+    "or_",
+    "produce",
+    "regex_test",
+    "type_is",
+    "when",
+]
 
 # --- expressions -----------------------------------------------------------
 

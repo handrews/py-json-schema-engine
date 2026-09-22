@@ -337,7 +337,13 @@ defaulting to empty/`None`:
   occurrence contributes (D9a); `None` means none.
 - `applications: tuple[SubschemaApplication, ...] = ()`: how the keyword
   applies its subschemas (M6): the planner's edges and the coverage analysis's
-  transitive contributors.
+  transitive contributors. `SubschemaApplication` (internal type) fields:
+  `path: SubschemaPath`, `mode: ApplyMode`, `conditional: bool`, `asserts:
+  bool`, `sibling: str | None = None`, `ref: str | None = None`, `inverted:
+  bool = False`, `resolution: Literal["dynamic", "recursive"] | None = None`
+  (M9: marks a reference whose target depends on the dynamic scope — the
+  planner resolves such a site at plan time when every path reaching it
+  agrees on the target, and islands it otherwise).
 
 `AnalyzeContext`: a frozen dataclass wrapping `schema: Mapping[str,
 JsonValue]`, the keyword's containing schema object, for sibling-dependent
@@ -492,6 +498,284 @@ over-reports. Backs the opt-in `reject_unsafe_regex` engine option.
 `VOCAB_FORMAT_ASSERTION`:
 `"https://json-schema.org/draft/2020-12/vocab/format-assertion"`.
 
+## `json_schema_engine.core.lowering`
+
+The vocabulary a keyword behavior's `lower()` emits, and the service the
+compiler implements as `LoweringContext` (D1, D9; M6, M9). Public API since
+M9: a custom keyword builds its compiled form from these names alone,
+never from a private compiler module. See
+[Lowering a custom keyword](guide/custom-keywords.md#lowering-a-custom-keyword)
+for a worked example.
+
+### Expressions
+
+`Instance`: a frozen dataclass, no fields: the instance value under
+evaluation at the lowering site. The module constant `INSTANCE` is the one
+value every keyword shares.
+
+`Const`: a frozen dataclass: `value: JsonValue` — a schema-derived JSON
+constant; the emitter's only data entry point.
+
+`Member`: a frozen dataclass: `target: Expr`, `key: str` — object member
+access by a schema-derived key.
+
+`Item`: a frozen dataclass: `target: Expr`, `index: Expr` — array element
+access.
+
+`Binding`: a frozen dataclass: `id: int` — a loop binding introduced by
+`ForEachKey`/`ForEachIndex`/`CountRange`.
+
+`TypeIs`: a frozen dataclass: `target: Expr`, `types: tuple[TypeName, ...]`
+— a JSON type test, including the `integer` refinement (P2 discipline).
+
+`HasKey`: a frozen dataclass: `target: Expr`, `key: Expr | str` — object
+membership test: the key is a constant or a swept binding.
+
+`Cmp`: a frozen dataclass: `op: CmpOp`, `left: Expr`, `right: Expr` —
+numeric or string comparison of two expressions.
+
+`Helper`: a frozen dataclass: `name: HelperName`, `args: tuple[Expr, ...]`
+— a call into the closed helper set (core's own functions, never
+re-implemented by emitted code).
+
+`InConsts`: a frozen dataclass: `target: Expr`, `values: tuple[JsonValue,
+...]` — `json_equal(target, v)` for some `v` in `values` (D9d); the
+keyword states the membership, the emitter chooses the mechanism.
+
+`RegexTest`: a frozen dataclass: `source: str`, `target: Expr` — an
+unanchored search with a hoisted pattern, compiled through the engine's
+`RegexCache`.
+
+`FormatTest`: a frozen dataclass: `name: str`, `target: Expr` — a format
+predicate applied to `target`, hoisted like a regex and resolved by `name`
+from the engine's format table (M7).
+
+`Not`: a frozen dataclass: `expr: Expr`.
+
+`Logic`: a frozen dataclass: `op: Literal["and", "or"]`, `parts:
+tuple[Expr, ...]`.
+
+`ApplyExpr`: a frozen dataclass: `apply: LowerApply` — a subschema
+application used for its verdict as a value (`if`'s condition, `not`'s
+negated apply, `contains`' per-item probe); a bare use carries
+`fold="discard"`.
+
+`Cond`: a frozen dataclass: `test: Expr`, `then: Expr`, `orelse: Expr` —
+`then` when `test` holds, else `orelse`.
+
+`Covers`: a frozen dataclass: `fold: int`, `target: Expr` — whether the
+coverage bound by a `CoverageFold` covers `target` (a swept name or
+index).
+
+### Cursors and applications
+
+`Here`: a frozen dataclass, no fields — the current instance position. The
+module constant `HERE` is the shared value.
+
+`Child`: a frozen dataclass: `of: LowerCursor`, `segment: Expr | str |
+int` — a child of a cursor: a constant member/index or a swept binding.
+
+`Key`: a frozen dataclass: `binding: int` — `propertyNames`: the swept key
+string itself is the instance.
+
+`LowerApply`: a frozen dataclass: how a keyword's lowered body applies one
+subschema. Fields: `path: tuple[str | int, ...]` (relative to the
+keyword's value; loop bindings never appear in a path), `cursor:
+LowerCursor`, `fold: Fold`, `sibling: str | None = None` (a sibling
+keyword's value applied instead, e.g. `if` → `then`/`else`), `ref: str |
+None = None` (a reference resolved at plan time against the unit's
+lexical base; then `path` is ignored), `message: LowerMessage | None =
+None`, `params: LowerParams | None = None`, `resolution: Literal[
+"dynamic", "recursive"] | None = None` (marks a reference the plan
+resolved against the dynamic scope, D8; carried only so the serializer can
+find the planner's edge — the target is the plan's decision, never the
+IR's).
+
+### Statements
+
+`If`: a frozen dataclass: `cond: Expr`, `then: tuple[Stmt, ...]`, `orelse:
+tuple[Stmt, ...] = ()`.
+
+`ForEachKey`: a frozen dataclass: `target: Expr`, `binding: int`, `body:
+tuple[Stmt, ...]` — iterate an object's member names, binding each.
+
+`ForEachIndex`: a frozen dataclass: `target: Expr`, `binding: int`, `body:
+tuple[Stmt, ...]`, `start: int = 0` — iterate array indexes from `start`,
+binding each.
+
+`Fail`: a frozen dataclass: `message: LowerMessage`, `params: LowerParams
+| None = None` — this keyword's assertion failure at the current cursor.
+
+`Apply`: a frozen dataclass: `apply: LowerApply` — apply a subschema and
+fold its verdict per `apply.fold`.
+
+`CombineCheck`: a frozen dataclass: `message: LowerMessage`, `params:
+LowerParams | None = None`, `count: int | None = None`, `passing: int |
+None = None` — closes the immediately preceding run of
+`any_may_pass`/`exactly_one` applies: the keyword fails with `message`
+when the run's combined verdict fails. `count`/`passing` are bindings the
+message and params may reference.
+
+`CountRange`: a frozen dataclass: `target: Expr`, `binding: int`,
+`count_when: Expr`, `minimum: int`, `maximum: int | None`, `message:
+LowerMessage`, `params: LowerParams | None = None`, `matched: int | None =
+None`, `count: int | None = None` — `contains`' shape: probe every index,
+count the matches, fail when the count falls outside `[minimum, maximum]`
+(`None` = unbounded); `matched`, when set, is a list binding that collects
+the matching indexes.
+
+`Collect`: a frozen dataclass: `binding: int` — bind an empty list to
+accumulate dependency data.
+
+`Append`: a frozen dataclass: `binding: int`, `value: Expr`, `unique: bool
+= False` — append `value` to a `Collect` binding.
+
+`Produce`: a frozen dataclass: `value: Expr` — the keyword's dependency
+data at the current cursor: the value `ctx.produce()` would carry.
+Reached only along the keyword's accepting path; elided unless a tracked
+consumer reads it.
+
+`CoverageFold`: a frozen dataclass: `binding: int`, `half: Literal["names",
+"indexes"]`, `consumes: tuple[str, ...]`, `contains_id: str | None =
+None`, `prefix_id: str | None = None` — bind the runtime evaluated
+coverage a tracked consumer reads: the region channel's productions from
+the producers in `consumes`, folded by core's coverage folds.
+
+`Annotate`: a frozen dataclass, no fields — the keyword's own value as an
+annotation at the current cursor (§4 rule 2); elided when the artifact's
+selection rules the keyword out.
+
+### The lowering service
+
+`StaticCoverage`: a frozen dataclass: `names: frozenset[str]`, `patterns:
+tuple[str, ...]`, `covers_all_names: bool`, `prefix_count: int`,
+`covers_all_indexes: bool` — the statically known evaluated coverage of a
+schema object (D9a), for `unevaluated*` lowerings.
+
+`LoweringContext`: a `Protocol`: services available to one keyword's
+`lower()` (the plan-time mirror of `KeywordContext`, D3), implemented by
+the compiler.
+
+- `LoweringContext.instance -> Expr`: the instance expression at this
+  lowering site.
+- `LoweringContext.schema -> Mapping[str, JsonValue]`: the keyword's
+  containing schema object.
+- `LoweringContext.static_coverage() -> StaticCoverage | None`: the
+  planner's static coverage for this schema object; `None` means the
+  planner did not license a static consumer here (tracked at runtime
+  instead, `runtime_coverage()`).
+- `LoweringContext.runtime_coverage() -> bool`: whether the planner tracks
+  this schema object's consumers at runtime (M9): the consumer folds the
+  region channel instead of a static coverage. Exactly one of this and
+  `static_coverage()` is available to a consumer; neither means a planner
+  bug.
+- `LoweringContext.emit(*stmts) -> None`: appends statements to the
+  keyword's lowered body.
+- `LoweringContext.binding() -> int`: allocates a loop binding id.
+
+`LowerFn`: a type alias, `Callable[[JsonValue, LoweringContext], None]` —
+the shape of `KeywordBehavior.lower`.
+
+`lower_nothing(_value, _ctx) -> None`: the lowering of a keyword that
+asserts nothing (structural, annotation-only, and sibling-driven
+keywords).
+
+### Constructors
+
+Shorthands the built-in keyword modules use to build IR nodes without
+naming the dataclasses directly; a custom keyword's `lower()` reaches for
+the same names.
+
+`INSTANCE`: the shared `Instance()` value.
+
+`HERE`: the shared `Here()` value.
+
+`const(value) -> Const`
+
+`type_is(target, *types) -> TypeIs`
+
+`has_key(target, key) -> HasKey`
+
+`cmp(op, left, right) -> Cmp`
+
+`helper(name, *args) -> Helper`
+
+`in_consts(target, values) -> InConsts`
+
+`regex_test(source, target) -> RegexTest`
+
+`format_test(name, target) -> FormatTest`
+
+`not_(expr) -> Not`
+
+`and_(*parts) -> Logic` (`op="and"`)
+
+`or_(*parts) -> Logic` (`op="or"`)
+
+`child(of, segment) -> Child`
+
+`key(binding) -> Key`
+
+`when(cond, then, orelse=()) -> If`
+
+`fail(message, params=None) -> Fail`
+
+`apply(path, cursor, fold="all_must_pass", *, sibling=None, ref=None,
+message=None, params=None, resolution=None) -> Apply`
+
+`apply_expr(path, cursor, fold="discard", *, sibling=None, ref=None) ->
+ApplyExpr`
+
+`combine_check(message, params=None, *, count=None, passing=None) ->
+CombineCheck`
+
+`annotate() -> Annotate`
+
+`cond(test, then, orelse) -> Cond`
+
+`covers(fold, target) -> Covers`
+
+`collect(binding) -> Collect`
+
+`append(binding, value, *, unique=False) -> Append`
+
+`produce(value) -> Produce`
+
+`coverage_fold(binding, half, consumes, *, contains_id=None, prefix_id=None)
+-> CoverageFold`
+
+### Type aliases
+
+`TypeName`: `Literal["null", "boolean", "object", "array", "number",
+"string", "integer"]` — the spec's type names plus the `integer`
+refinement.
+
+`HelperName`: `Literal["json_equal", "is_multiple_of",
+"has_duplicate_items", "first_duplicate_pair", "length_of",
+"code_point_length", "json_type_name"]` — the closed helper set `Helper`
+may name.
+
+`CmpOp`: `Literal["<", "<=", ">", ">=", "==", "!="]`.
+
+`Expr`: the union of every expression node: `Instance | Const | Member |
+Item | Binding | TypeIs | HasKey | Cmp | Helper | InConsts | RegexTest |
+FormatTest | Not | Logic | ApplyExpr | Cond | Covers`.
+
+`LowerCursor`: `Here | Child | Key`.
+
+`Fold`: `Literal["all_must_pass", "any_may_pass", "exactly_one", "negate",
+"discard"]` — how an apply's verdict folds into its keyword's verdict.
+
+`LowerMessage`: `tuple[str | Expr, ...]` — an error message built from
+literal text and runtime-computed parts, exactly as `evaluate` reports it.
+
+`LowerParams`: `Mapping[str, Expr]` — structured error params, exactly as
+`evaluate` reports them.
+
+`Stmt`: the union of every statement: `If | ForEachKey | ForEachIndex |
+Fail | Apply | CombineCheck | CountRange | Collect | Append | Produce |
+CoverageFold | Annotate`.
+
 ## `json_schema_engine.compiler`
 
 Consumes only `analyze()` facts and each keyword's optional `lower()` IR from
@@ -553,7 +837,9 @@ PlannedUnit]` (insertion order is planning order, deterministic function
 numbering), `patterns: tuple[str, ...]` (every regex source any static unit
 tests), `formats: tuple[str, ...]` (every format name any static unit asserts,
 M7), `targets: tuple[PlannedUnit, ...]` (interpreted units in stable order;
-index = target-table slot).
+index = target-table slot), `coverage_ids: frozenset[str] = frozenset()` (M9:
+producer ids some tracked consumer reads; only their productions are recorded
+on a channel).
 
 `PlannedUnit`: a mutable, slotted dataclass: one schema node in the plan, keyed
 by its canonical location. Fields: `key: str`, `ref: SchemaRef` (internal
@@ -563,8 +849,13 @@ outgoing edges, in keyword order, static units only), `coverage: StaticCoverage
 | None = None` (static evaluated coverage licensed for this object's consumers,
 D9a; internal type), `reaches_interpreted: bool = False` (true when some apply
 path from here can reach an interpreted unit), `use_count: int = 0` (planned
-edges targeting this unit). Method `PlannedUnit.interpret(cause) -> None`:
-marks the unit interpreted with the given `FallbackCause` and clears its edges.
+edges targeting this unit), `tracked: bool = False` (M9: this unit owns a
+coverage channel its consumers fold at runtime, no static licence), `in_region:
+bool = False` (M9: reachable in place from a tracked unit, and produces into
+the channel it is handed). Property `PlannedUnit.takes_channel -> bool`:
+`tracked or in_region` — both take the channel as a parameter and never
+inline. Method `PlannedUnit.interpret(cause) -> None`: marks the unit
+interpreted with the given `FallbackCause` and clears its edges.
 
 `PlannedApplication`: a frozen dataclass: one application edge out of a unit,
 resolved at plan time. Fields: `keyword: str`, `app: SubschemaApplication`
@@ -585,7 +876,9 @@ coverage; a possible in-place cycle; or a reference into non-schema data.
 `CompilationExplanation`: a frozen dataclass: `total_units: int`,
 `static_units: int`, `interpreted_units: int`, `causes: Mapping[FallbackCause,
 int]`, `interpreted_keys: tuple[str, ...]`, `reaches_interpreted: int`,
-`resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...]`.
+`resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...] = ()`, `tracked_units:
+int = 0` (M9: consumers tracked at runtime), `region_units: int = 0` (M9: units
+reachable in place from a tracked consumer's region).
 
 `ResolvedDynamicSite`: a frozen dataclass: a dynamic-reference site the plan
 compiled as a static edge. Fields: `unit: str` (the site's unit key),

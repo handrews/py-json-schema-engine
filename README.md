@@ -23,8 +23,13 @@ interpreter core for 2020-12, 2019-09, draft-07, and draft-06 with every
 standard output format, the compiler tier (a flag validator and standalone
 modules, M6–M7), and the `json_schema_engine.formats` package — green on
 every official test-suite file for those drafts through both tiers, on the
-official output-tests, and on Bowtie. [DESIGN.md](DESIGN.md) is the design
-contract and carries the milestone status.
+official output-tests, and on Bowtie. An evaluator tier (`compile_evaluator`,
+M9) compiles a schema into a Python function serving every output format,
+not only the verdict; `$dynamicRef`/`$recursiveRef` sites whose target is
+the same on every reaching path resolve at compile time into ordinary
+static edges, rather than falling back to the interpreter.
+[DESIGN.md](DESIGN.md) is the design contract and carries the milestone
+status.
 
 The regular-expression translator lives in its own package,
 [`ecma-regex`](packages/ecma-regex/README.md) (`0.1.0`): ECMA-262 patterns
@@ -129,9 +134,25 @@ only the standard library and this package's pure helpers; it refuses,
 with `StandaloneUnsupportedError`, a schema that would need the
 interpreter at evaluation time. Compiled code assumes plain data as
 `json.loads` produces it (`dict`, `list`, `str`, `int`, `float`, `bool`,
-`None`); subclasses of those types belong to the interpreter. Errors,
-annotations, and the output formats are interpreter features today;
-compiled output beyond the verdict is a later milestone.
+`None`); subclasses of those types belong to the interpreter.
+
+`compile_evaluator` compiles a schema into an evaluator serving every
+output format the interpreter does — errors, annotations, dropped
+records, and the application trace, not only the verdict. The annotation
+selection is fixed at compile time; every other control (`output`,
+`error_params`, `verbose`, `trace`, `positions`) is chosen per call, same
+as `Engine.evaluate`.
+
+```python
+from json_schema_engine.compiler import compile_evaluator
+
+evaluator = compile_evaluator(engine, uri, annotations=True)
+compiled_result = evaluator.evaluate({}, output="list", error_params=True)
+interpreted_result = engine.evaluate(
+    uri, {}, output="list", error_params=True, annotations=True
+)
+assert compiled_result.errors == interpreted_result.errors
+```
 
 ## Formats
 
@@ -261,21 +282,26 @@ uv run python scripts/bowtie_check.py
 uv run python scripts/bench.py --budget-ms 250 --filter user
 ```
 
-`scripts/bench.py` times the compiler tier's flag and standalone artifacts
-against the interpreter and two competitors (fastjsonschema, jsonschema)
-over seven corpora in `packages/bench`: three small hand-authored schemas,
-the official OpenAPI 3.1 schema against a real document, a generated
-API-payload corpus, and two 2000-record corpora. It is report-only (it
-enforces no performance threshold) and, per the IP policy below, runs the
-competitors only, never reading or porting their source. `--filter` takes
-a regex over corpus/subject/partition names; omit `--out` to skip writing
-JSON; `--compare BEFORE AFTER` prints a before/after comparison of two
-results files. The committed run lives at
-`packages/bench/results/results.json` (`--budget-ms 250`). The interpreter
-is the reference semantics, so ratios are informational, not a
-compatibility claim. [`packages/bench/README.md`](packages/bench/README.md)
-covers corpus provenance and licensing, methodology, and the recorded
-exclusions.
+`scripts/bench.py` times every jse tier (the interpreter, the compiler's
+flag validator and evaluator, and the standalone artifact) against two
+competitors (fastjsonschema, jsonschema) over seven corpora in
+`packages/bench`: three small hand-authored schemas, the official OpenAPI
+3.1 schema against a real document, a generated API-payload corpus, and
+two 2000-record corpora. Every jse tier is timed against every corpus,
+`jse standalone` against `oas-document` included, since its `$dynamicRef`
+sites resolve at plan time and leave no interpreted unit. Two subjects
+measure the record-producing tier against the verdict-only tiers:
+`jse interpreter list` and `jse compiled evaluator (list)`, both timing
+`output="list"`. The bench is report-only (it enforces no performance
+threshold) and, per the IP policy below, runs the competitors only, never
+reading or porting their source. `--filter` takes a regex over
+corpus/subject/partition names; omit `--out` to skip writing JSON;
+`--compare BEFORE AFTER` prints a before/after comparison of two results
+files. The committed run lives at `packages/bench/results/results.json`
+(`--budget-ms 250`). The interpreter is the reference semantics, so ratios
+are informational, not a compatibility claim.
+[`packages/bench/README.md`](packages/bench/README.md) covers corpus
+provenance and licensing, methodology, and the recorded exclusions.
 
 ## IP policy
 

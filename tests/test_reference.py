@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "docs" / "reference.md"
 PACKAGES = (
     "json_schema_engine.core",
+    "json_schema_engine.core.lowering",
     "json_schema_engine.compiler",
     "json_schema_engine.formats",
     "ecma_regex",

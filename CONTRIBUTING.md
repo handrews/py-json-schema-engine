@@ -71,11 +71,24 @@ project dependency on Node.
 `test_kit` never imports the engine at all; `ecma_regex` never imports
 `json_schema_engine`.
 
-`scripts/bowtie_check.py` builds a local harness image
-(`localhost/json-schema-engine-bowtie`) and runs the official suite
-through [Bowtie](https://docs.bowtie.report/)'s own protocol; it needs a
-reachable container engine and fetches the pinned `bowtie-json-schema`
-release through `uvx`. The image is never pushed anywhere.
+`uv run pytest -q` includes the evaluator suite's four legs
+(`tests/suite/test_evaluator_{draft2020_12,draft2019_09,draft7,draft6}.py`,
+sharing their case runner with `tests/suite/test_evaluator_common.py`):
+every official test-suite case run through `compile_evaluator` for each
+dialect, comparing every output demand against the interpreter. Codegen
+goldens (`tests/compiler/test_goldens.py`) pin two modes per fixture,
+`<name>.flag.py` (`compile_validator`) and `<name>.evaluator.py`
+(`compile_evaluator`); re-pin both with `UPDATE_GOLDENS=1` as described
+below.
+
+`scripts/bowtie_check.py` builds a local harness image per tier
+(`localhost/json-schema-engine-bowtie` for the interpreter,
+`localhost/json-schema-engine-bowtie-compiled` for the compiled tier) and
+runs the official suite through [Bowtie](https://docs.bowtie.report/)'s
+own protocol; it needs a reachable container engine and fetches the
+pinned `bowtie-json-schema` release through `uvx`. `--tier
+interpreter|compiled|both` (the default) selects which image(s) to build
+and check; the images are never pushed anywhere.
 
 `scripts/bench.py` is report-only: it enforces no performance threshold
 and, per the IP policy below, only ever runs the competing validators

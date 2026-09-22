@@ -5,6 +5,36 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/) with the 0.x caveat that
 minor versions may change public API.
 
+## [0.0.3] - unreleased
+
+### Added
+
+- `compile_evaluator`: compiles a registered root schema into an evaluator
+  serving every output format the interpreter does (errors, annotations,
+  dropped records, the application trace), not only the verdict `flag`
+  level.
+- Plan-time resolution of `$dynamicRef`/`$recursiveRef`: a reference site
+  whose target is the same on every path that can reach it compiles as an
+  ordinary static edge instead of falling back to the interpreter;
+  `explain_compilation` reports such sites through `resolved_dynamic_sites`.
+- Runtime coverage tracking: an `unevaluated*` consumer whose evaluated
+  coverage depends on runtime branching (an `anyOf`/`oneOf` alternative, an
+  `if`'s condition) compiles directly instead of islanding, folding a
+  runtime coverage channel instead of a static licence.
+- Public `json_schema_engine.core.lowering`: the compiler lowering IR a
+  custom keyword's `lower()` is built from, previously private to the
+  engine's own keyword modules.
+
+### Changed
+
+- `first_duplicate_pair` returns a list.
+- Compiled error messages now match the interpreter's for `oneOf`,
+  `contains`, `uniqueItems`, and `type`.
+- A dialect refusing unknown keywords no longer compiles those units
+  silently: an unknown keyword under such a dialect now falls back to the
+  interpreter like any other unlowerable case, rather than being planned
+  as if the keyword were absent.
+
 ## [0.0.2] - unreleased
 
 The first functional release. Everything below is new relative to the
