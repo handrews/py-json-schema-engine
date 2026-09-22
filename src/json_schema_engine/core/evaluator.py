@@ -52,6 +52,7 @@ from json_schema_engine.core.dialect import (
 from json_schema_engine.core.errors import (
     InfiniteLoopError,
     InvalidSchemaError,
+    JsonSchemaEngineError,
     KeywordContractError,
     MaxDepthExceededError,
     UndeclaredConsumptionError,
@@ -66,6 +67,7 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.registry import DEFAULT_MAX_DEPTH, SchemaRegistry
+from json_schema_engine.core.uri import schema_location
 
 # Annotation elision (D5): when set, an annotation is recorded only if this
 # returns true for (keyword name, vocabulary URI), and dependency records are
@@ -487,7 +489,21 @@ def _evaluate_keyword(
     value = node[entry.name]
     ctx = _KeywordContext(state, schema_ref, entry, value, cursor, path_node)
     mark = len(state.errors)
-    ok = entry.behavior.evaluate(value, cursor, ctx)
+    try:
+        ok = entry.behavior.evaluate(value, cursor, ctx)
+    except JsonSchemaEngineError as error:
+        # The mirror of the registration walk's back-fill (registry.py): an
+        # error raised from inside a keyword has no location of its own, and
+        # the `$ref` family raises the most useful one there is. Without
+        # this an `UnresolvableReferenceError` reaches the caller with
+        # `schema_location` still `None`, naming neither the reference nor
+        # the schema that followed it.
+        if error.schema_location is None:
+            error.schema_location = schema_location(
+                schema_ref.base_uri,
+                f"{schema_ref.pointer}/{escape_segment(entry.name)}",
+            )
+        raise
     if ok:
         # Rule 6 keys on the keyword's verdict, so a keyword that reports
         # and still accepts would have its own error silently dropped.
