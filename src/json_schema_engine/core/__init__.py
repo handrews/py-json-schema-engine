@@ -23,6 +23,8 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.engine import Engine, create_engine
 from json_schema_engine.core.errors import (
+    DuplicateAnchorError,
+    DuplicateResourceError,
     FormatsRequiredError,
     FormatUnavailableError,
     InfiniteLoopError,
@@ -102,6 +104,8 @@ __all__ = [
     "DetailedOutputUnit",
     "Dialect",
     "DialectRegistry",
+    "DuplicateAnchorError",
+    "DuplicateResourceError",
     "Engine",
     "ErrorUnit",
     "FormatDefinition",

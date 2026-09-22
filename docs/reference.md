@@ -194,6 +194,21 @@ first offending character.
 nor a boolean (D19). Raised by the registration walk and, as a lazy backstop,
 by schema application.
 
+`DuplicateResourceError`: two different schemas claim one resource URI (P12) —
+either a single document minting the same `$id` twice, or a later registration
+that would rebind a URI an earlier one bound to a different schema.
+Re-registering an *equal* document is a no-op, not a duplicate.
+
+`DuplicateAnchorError`: two different schema objects claim one anchor name
+within a resource (P12). Covers `$anchor`, `$dynamicAnchor`, and the
+draft-07/06 `$id: "#name"` form alike, including a name claimed by an
+`$anchor` on one object and a `$dynamicAnchor` on another — which would
+otherwise leave `$ref` and `$dynamicRef` resolving the same fragment to
+different schemas. A single object carrying both under one name is fine.
+
+Registration is not atomic: a document that fails part-way through its walk
+stays partially indexed, so discard an engine whose registration raised.
+
 `ReadOnlyRegistryError`: registration was attempted on a compiled artifact's
 registry snapshot.
 

@@ -17,6 +17,8 @@ from json_schema_engine.core.dialect import (
     identifiers_legacy,
 )
 from json_schema_engine.core.errors import (
+    DuplicateAnchorError,
+    DuplicateResourceError,
     InvalidSchemaError,
     MaxDepthExceededError,
     UnknownDialectError,
@@ -354,3 +356,200 @@ def test_dialect_for_unknown_resource_is_typed() -> None:
     reg = make_registry()
     with pytest.raises(UnresolvableReferenceError):
         reg.dialect_for("urn:missing")
+
+
+# --- duplicate identifiers (P12) --------------------------------------
+
+
+def test_duplicate_id_in_one_document_is_rejected() -> None:
+    reg = make_registry()
+    with pytest.raises(DuplicateResourceError) as info:
+        reg.register(
+            {
+                "$id": "https://x.example/root",
+                "$defs": {
+                    "a": {"$id": "https://x.example/dup"},
+                    "b": {"$id": "https://x.example/dup"},
+                },
+            },
+            "https://x.example/root",
+        )
+    assert "https://x.example/dup" in str(info.value)
+    # The location blames the `$id`-bearing position, not the resource it
+    # tried to mint, so a reader can find the second one in the file.
+    assert info.value.schema_location == "https://x.example/root#/$defs/b"
+
+
+def test_duplicate_id_nested_inside_its_own_subtree_is_rejected() -> None:
+    # Left alone this builds a cycle in the resource-parent relation: the
+    # inner `A` is written last, from inside `B`'s subtree, so `A` would
+    # claim `B` as its parent while `B` claims `A`.
+    reg = make_registry()
+    with pytest.raises(DuplicateResourceError):
+        reg.register(
+            {
+                "$id": "https://x.example/r",
+                "$defs": {
+                    "a": {
+                        "$id": "https://x.example/a",
+                        "$defs": {
+                            "b": {
+                                "$id": "https://x.example/b",
+                                "$defs": {"c": {"$id": "https://x.example/a"}},
+                            }
+                        },
+                    }
+                },
+            },
+            "https://x.example/r",
+        )
+
+
+def test_identical_subschemas_claiming_one_id_are_still_two_resources() -> None:
+    # Value equality does not rescue this: they are two positions, so one
+    # would have to shadow the other whatever it holds.
+    reg = make_registry()
+    with pytest.raises(DuplicateResourceError):
+        reg.register(
+            {
+                "$id": "https://x.example/root",
+                "$defs": {
+                    "a": {"$id": "https://x.example/same", "$anchor": "x"},
+                    "b": {"$id": "https://x.example/same", "$anchor": "x"},
+                },
+            },
+            "https://x.example/root",
+        )
+
+
+def test_reregistering_an_equal_document_is_a_no_op() -> None:
+    reg = make_registry()
+    schema: JsonValue = {"$id": "https://x.example/s", "$defs": {"a": {}}}
+    assert reg.register(schema, "https://x.example/s") == "https://x.example/s"
+    # A separately-built but equal document: the check is `json_equal`, not
+    # identity, so a caller that re-parses the same text is not punished.
+    again: JsonValue = {"$id": "https://x.example/s", "$defs": {"a": {}}}
+    assert reg.register(again, "https://x.example/s") == "https://x.example/s"
+
+
+def test_reregistering_a_different_document_is_rejected() -> None:
+    reg = make_registry()
+    reg.register(
+        {"$id": "https://x.example/s", "$defs": {"a": {}}}, "https://x.example/s"
+    )
+    with pytest.raises(DuplicateResourceError) as info:
+        reg.register({"$id": "https://x.example/s"}, "https://x.example/s")
+    assert "already registered" in str(info.value)
+
+
+def test_two_documents_cannot_share_an_embedded_id() -> None:
+    # The loader-displacement case: a second document quietly rebinding a
+    # resource the caller registered themselves.
+    reg = make_registry()
+    reg.register(
+        {"$id": "urn:one", "$defs": {"i": {"$id": "https://x.example/shared"}}},
+        "urn:one",
+    )
+    with pytest.raises(DuplicateResourceError) as info:
+        reg.register(
+            {
+                "$id": "urn:two",
+                "$defs": {"i": {"$id": "https://x.example/shared", "$anchor": "a"}},
+            },
+            "urn:two",
+        )
+    assert "https://x.example/shared" in str(info.value)
+
+
+def test_duplicate_anchor_in_one_resource_is_rejected() -> None:
+    reg = make_registry()
+    with pytest.raises(DuplicateAnchorError) as info:
+        reg.register(
+            {
+                "$id": "https://x.example/root",
+                "$defs": {"a": {"$anchor": "dup"}, "b": {"$anchor": "dup"}},
+            },
+            "https://x.example/root",
+        )
+    assert "https://x.example/root#dup" in str(info.value)
+
+
+def test_plain_and_dynamic_anchors_collide_across_indexes() -> None:
+    # The nastiest shape: a dynamic anchor is also a plain anchor (D8), so
+    # left alone `$ref: "#n"` and `$dynamicRef: "#n"` resolve to different
+    # schemas. Checking the `_anchors` key catches both kinds at once.
+    reg = make_registry()
+    with pytest.raises(DuplicateAnchorError):
+        reg.register(
+            {
+                "$id": "https://x.example/root",
+                "$defs": {"a": {"$anchor": "n"}, "b": {"$dynamicAnchor": "n"}},
+            },
+            "https://x.example/root",
+        )
+
+
+def test_one_schema_may_carry_both_anchor_kinds_under_one_name() -> None:
+    # It names itself twice, which is not two schemas claiming one name.
+    reg = make_registry()
+    uri = reg.register(
+        {
+            "$id": "https://x.example/root",
+            "$defs": {"a": {"$anchor": "self", "$dynamicAnchor": "self"}},
+        },
+        "https://x.example/root",
+    )
+    hit = reg.resolve_ref("#self", uri)
+    assert reg.dynamic_anchor(uri, "self") is hit
+
+
+def test_the_same_anchor_name_in_different_resources_is_fine() -> None:
+    reg = make_registry()
+    uri = reg.register(
+        {
+            "$id": "https://x.example/root",
+            "$defs": {
+                "a": {"$id": "one", "$anchor": "n"},
+                "b": {"$id": "two", "$anchor": "n"},
+            },
+        },
+        "https://x.example/root",
+    )
+    assert uri == "https://x.example/root"
+    first = reg.resolve_ref("#n", "https://x.example/one")
+    second = reg.resolve_ref("#n", "https://x.example/two")
+    assert first is not second
+
+
+def test_legacy_id_beside_a_ref_claims_nothing() -> None:
+    # draft-07/06: a `$ref` sibling suppresses every identifier (D18), so
+    # two such `$id`s are not a duplicate — nothing was ever claimed.
+    dialects = DialectRegistry()
+    dialects.register_vocabulary(VOCAB, KEYWORDS)
+    dialects.register_dialect(DIALECT, [VOCAB], identifiers=identifiers_legacy)
+    reg = SchemaRegistry(dialects, DIALECT)
+    uri = reg.register(
+        {
+            "$defs": {
+                "a": {"$ref": "#/$defs/b", "$id": "https://z.example/"},
+                "b": {"$ref": "#/$defs/a", "$id": "https://z.example/"},
+            }
+        },
+        "urn:d7",
+    )
+    assert list(reg.resources()) == [uri]
+
+
+def test_a_failed_registration_leaves_the_document_partially_indexed() -> None:
+    # Registration is not atomic (DESIGN.md §7). Pinning the current
+    # behavior so that making it atomic is a visible, deliberate change.
+    reg = make_registry()
+    with pytest.raises(DuplicateAnchorError):
+        reg.register(
+            {
+                "$id": "https://x.example/half",
+                "$defs": {"a": {"$anchor": "n"}, "b": {"$anchor": "n"}},
+            },
+            "https://x.example/half",
+        )
+    assert reg.has("https://x.example/half")
