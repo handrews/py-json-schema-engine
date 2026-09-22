@@ -1,6 +1,6 @@
 # json-schema-engine (Python): engineering design
 
-**Status:** living design contract. M0–M8 complete (2026-09-21); M9 next. Derived from the
+**Status:** living design contract. M0–M9 complete (2026-09-21); M10 next. Derived from the
 TypeScript engine's design record
 ([handrews/json-schema-engine `DESIGN.md`](https://github.com/handrews/json-schema-engine/blob/main/DESIGN.md)),
 whose decisions were validated by a complete implementation (all official
@@ -52,16 +52,16 @@ not the intent), **N/A** (JavaScript-only).
 
 | #   | Decision                       | Status  | Choice for Python                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | --- | ------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Execution model                | amended | Two tiers, one keyword registry. The interpreter (`json_schema_engine.core`) is the reference semantics. The compiler (`json_schema_engine.compiler`, M6) consumes only `analyze()` facts and each keyword's optional `lower()` IR, never keyword names. **Amendment:** the compiler emits a Python `ast` tree, never source text; injection is unrepresentable because schema data only ever becomes `ast.Constant` nodes. The trampoline into the interpreter for dynamic islands is unchanged. Delivered at M6: `core/lowering.py` (the IR), `KeywordBehavior.lower`, `StaticFacts.applications`, `evaluate_fragment`; `json_schema_engine.compiler` (planner, `ast` emitter, runtime, standalone). The trampoline is one-way: interpreted code never re-enters compiled code, so island channel flow is strictly upward. |
+| D1  | Execution model                | amended | Two tiers, one keyword registry. The interpreter (`json_schema_engine.core`) is the reference semantics. The compiler (`json_schema_engine.compiler`, M6) consumes only `analyze()` facts and each keyword's optional `lower()` IR, never keyword names. **Amendment:** the compiler emits a Python `ast` tree, never source text; injection is unrepresentable because schema data only ever becomes `ast.Constant` nodes. The trampoline into the interpreter for dynamic islands is unchanged. Delivered at M6: `core/lowering.py` (the IR), `KeywordBehavior.lower`, `StaticFacts.applications`, `evaluate_fragment`; `json_schema_engine.compiler` (planner, `ast` emitter, runtime, standalone). The trampoline is one-way: interpreted code never re-enters compiled code, so island channel flow is strictly upward. M9: the compiled tier serves every output format through `compile_evaluator`: evaluator units take the shared core `EvalState`, a real `PathNode`, and a real `Cursor`, record through core's `channel_ops` helpers, and islands run on the same state (`apply_fragment`), so their records and trace nodes need no grafting; result assembly is the interpreter's own (`assemble_evaluation`). |
 | D2  | Keyword identity               | carried | Keywords identified by URI; a vocabulary is a named map of keyword URIs; a dialect is an ordered set of vocabularies; drafts are predefined dialects. All data, no privileged built-ins. `KeywordBehavior` is a frozen dataclass of callables (§3), not a class hierarchy.                                                                                                                                                                                                                        |
 | D3  | Keyword interface              | carried | `analyze(value, context) -> StaticFacts` + `evaluate(value, cursor, ctx) -> bool` (§3). Applicators request subschema application through the engine; the engine owns path, scope, and frame bookkeeping in exactly one place (`evaluator.py`).                                                                                                                                                                                                                                                 |
 | D4  | Keyword communication          | carried | Frame-scoped record channel (§4) with two record kinds: annotation records (the keyword's own value; output) and dependency records (computed data for other keywords; never output). Records merge to the parent frame only on success.                                                                                                                                                                                                                                                         |
 | D5  | Annotation selection           | carried | `annotations=False \| True \| AnnotationSelection`: allow-lists by keyword name and vocabulary URI, deny-lists subtracted after, a `keep` predicate over the rendered unit. Internal consumers always see the channel. The interpreter elides at annotate time what the selection rules out and dependency records nothing consumes. Producers declare `produces`, consumers declare `consumes`, or `UndeclaredProductionError` / `UndeclaredConsumptionError` is raised — never a silently empty channel. Complete at M5: every suite case is evaluated under `flag` (elided) and under `hierarchical`+verbose (nothing elided) and the verdicts must agree. |
 | D6  | Output                         | carried | Formats by name: `flag`, `basic`, `detailed`, `verbose` (draft-03 §13) and `list`, `hierarchical` (machines-oriented proposal); three levels (minimal, relevant, verbose); orthogonal controls `annotations`, `error_params`, `positions`, `trace`. Unsupported combinations raise `OutputOptionsError` before evaluation. Each format fixes its own document structure and field vocabulary (`basic` speaks draft-03's `keywordLocation`/`absoluteKeywordLocation`/`instanceLocation`; `list`/`hierarchical` speak the proposal's `evaluationPath`/`schemaLocation`/`instanceLocation`), while the flat `Result.errors`/`Result.annotations` surface always carries the engine's native `evaluationPath`/`schemaLocation`/`inputLocation`. Python-side option names are snake_case (P8). Complete at M5: tracing is opt-in in the evaluator (`TraceNode` per application, `KeywordTrace` per non-structural keyword); `records.to_render_node` turns the trace into the engine-free `RenderNode` tree that `output.py` renders; `verbose` (the format, or `verbose=True` on `list`/`hierarchical`) exposes `Result.dropped_errors`/`dropped_annotations`; `trace=True` renders `Result.trace` with decoded segments and `errorIndexes` into `Result.errors`. |
 | D7  | Async boundary                 | amended | `evaluate` (and later `compile`) are synchronous. **Amendment (P4):** loaders are synchronous callables by default; an `AsyncEngine` façade over `asyncio` loaders is a later milestone. Registration itself never awaits.                                                                                                                                                                                                                                                                       |
-| D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler marks dynamically reachable scope as an island → interpreter trampoline.                                                                                                                                                                                                                                                                |
-| D9  | Lowering catalogue             | carried | Same catalogue in intent (evaluated-set tracking, production elision, constant locations, small-set membership, lazy unit materialization, regex/format hoisting). Measured at M6 on CPython 3.12/3.14: `type(x) is T` tests (P9) run 3–4× faster than bool-guarded `isinstance` for numbers; `frozenset` membership beats an `==` chain from two members, so `InConsts` renders all-string and all-number sets as hoisted frozensets behind a type guard and everything else as a chain; binding helpers as default arguments gains nothing over globals in the exec namespace; one call level costs ~12 ns, so a single-use static child inlines unless the inline stack passes 32 or the loop nesting would pass 16 (CPython refuses more than 20 statically nested `for`/`while`/`try`/`with` blocks; `if` does not count). Consumers: static coverage only (D9a); runtime tracking is M9. |
-| D10 | Compiler output modes          | amended | Runtime compilation = `compile()` of an `ast.Module` (D1). Standalone emission = `ast.unparse` to a `.py` module importable without the compiler. There is no CSP; the security analogue is that only `json_schema_engine.compiler` may touch `ast`/`compile` (P5), and deployments can audit that with `sys.addaudithook`. CPython's cap on statically nested blocks means emission splits units into functions rather than nesting loops. Delivered at M6: `compile_validator` (runtime; `compile`/`exec` live only in `compiler/runtime_compile.py`, proven by `tests/test_fences.py` and an audit-hook probe) and `emit_standalone` (a module importing only `re`, core's errors, and core's pure helpers, with patterns pre-translated for `re`; refused with `StandaloneUnsupportedError` for any interpreted unit or a non-`re` backend). |
+| D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler (M9, after the TS engine's ADR 0004, extended to `$recursiveRef`): a site whose target is the same on every path that can reach it resolves at plan time and compiles as a static edge (reference applications carry a `resolution` fact; the scope-independent half of resolution lives on the registry, `dynamic_reference`/`recursive_reference`, shared by both tiers; the planner runs a per-anchor forward dataflow over the unit graph in rounds); a site whose target differs by path islands with cause `dynamic`. 2020-12 census: 58 sites resolved, 1 island; the OpenAPI 3.1 schema and the 2020-12 metaschema plan with no interpreted unit.                                                                                                                                                                                                                                                                |
+| D9  | Lowering catalogue             | carried | Same catalogue in intent (evaluated-set tracking, production elision, constant locations, small-set membership, lazy unit materialization, regex/format hoisting). Measured at M6 on CPython 3.12/3.14: `type(x) is T` tests (P9) run 3–4× faster than bool-guarded `isinstance` for numbers; `frozenset` membership beats an `==` chain from two members, so `InConsts` renders all-string and all-number sets as hoisted frozensets behind a type guard and everything else as a chain; binding helpers as default arguments gains nothing over globals in the exec namespace; one call level costs ~12 ns, so a single-use static child inlines unless the inline stack passes 32 or the loop nesting would pass 16 (CPython refuses more than 20 statically nested `for`/`while`/`try`/`with` blocks; `if` does not count). Consumers (D9a): static coverage when every contributor is unconditional, else runtime tracking (M9): the consumer's unit is *tracked* (owns a coverage channel it folds through core's `coverage.py`), its in-place closure is its *region* (units producing into the channel, every branch run, a failing application's productions cut at its mark, islands harvested through a coverage trampoline), and nested tracked consumers nest through their entry mark. Evaluator plans track every consumer, since a static licence models only the parent-success path. Outside regions flag code is unchanged. |
+| D10 | Compiler output modes          | amended | Runtime compilation = `compile()` of an `ast.Module` (D1). Standalone emission = `ast.unparse` to a `.py` module importable without the compiler. There is no CSP; the security analogue is that only `json_schema_engine.compiler` may touch `ast`/`compile` (P5), and deployments can audit that with `sys.addaudithook`. CPython's cap on statically nested blocks means emission splits units into functions rather than nesting loops. Delivered at M6: `compile_validator` (runtime; `compile`/`exec` live only in `compiler/runtime_compile.py`, proven by `tests/test_fences.py` and an audit-hook probe) and `emit_standalone` (a module importing only `re`, core's errors, and core's pure helpers, with patterns pre-translated for `re`; refused with `StandaloneUnsupportedError` for any interpreted unit or a non-`re` backend). M9: `compile_evaluator` (runtime only; standalone stays flag-only by owner decision, and now accepts tracked schemas). Rule for a later evaluator standalone: every helper emitted code calls is a namespace global with a `json_schema_engine.core` import path, never a method on the runtime object, so that module is prologue work only. |
 | D11 | Draft support                  | carried | Native in core: 2020-12, 2019-09, draft-07, draft-06 (M4), all coexisting in one registry with their own identifier syntax and `$ref` semantics (D18). draft-07/06 predate vocabularies, so their keywords live under registry-internal `urn:jse:vocab:draft-0X:*` names. draft-04 as a separately importable dialect module (`json_schema_engine.dialects.draft04`, M10), assembled through the public dialect-authoring surface.                                                                                                                                                                                                                 |
 | D12 | Testing strategy               | carried | Official suite as git submodule with a pytest runner in `test_kit`; both tiers pass the identical suite with exact-count pins; differential fuzzing (Hypothesis) as the compiler's primary correctness gate; Bowtie harness from M3; releases conformance-gated. At M6 the compiled legs import the interpreter legs' parameter sets, so the pins are the same numbers; the plan census pins exact static/interpreted counts per dialect (fallback is always correct, so only a pin notices a regression); the goldens pin emitted source byte for byte. |
 | D13 | Error model                    | carried | Keywords emit structured error data (keyword id, params, message) into units; rendering is presentation. Params are designed so a future compatibility adapter can reconstruct another library's error shape mechanically.                                                                                                                                                                                                                                                                       |
@@ -133,6 +133,8 @@ Modules of `json_schema_engine.core` (M1 set; later milestones add
 | `result.py`     | `OutputFormat`, `EvaluateOptions`, `resolve_output_demand`, `assemble_result`, `Result`.                                                    |
 | `loader.py`     | `LoadedDocument`, `Loader` protocol (P4).                                                                                                   |
 | `positions.py`  | `parse_json_with_ranges`, `ParsedDocument`: the positions-reporting JSON parser, public since M8 (D17).                                     |
+| `coverage.py`   | `fold_name_coverage`/`fold_index_coverage`: the evaluated-coverage folds both tiers use (M9).                                               |
+| `channel_ops.py`| The record, mark/cut, and trace operations a compiled evaluator performs on a shared `EvalState` (M9); every name a runtime helper.         |
 | `engine.py`     | `Engine`, `create_engine`: the public façade.                                                                                               |
 | `lowering.py`   | The compiler IR (data only) and the `LoweringContext` protocol; keyword modules describe their compiled form through it (D1, M6).           |
 | `formats.py`    | `FormatDefinition`/`FormatTable`: the format contract the `format` keyword, the compiler's runtime, and the formats package share (M7).       |
@@ -156,13 +158,13 @@ Modules of `json_schema_engine.compiler` (M6):
 
 | Module               | Responsibility                                                                                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `plan.py`            | `build_plan`: static vs interpreted units from `analyze()` facts alone; coverage licensing; cycle islanding; `explain_compilation`. |
+| `plan.py`            | `build_plan`: static vs interpreted units from `analyze()` facts alone; plan-time dynamic-reference resolution in rounds; coverage licensing or tracking (tracked/region units); cycle islanding; `explain_compilation`. |
 | `emit.py`            | The gated `ast` builder: minted identifier vocabulary, `const()` as the only data entry point, node helpers, hoists.                |
 | `serialize/`         | `units.py` (lower a unit to IR), `body.py` (IR → `ast`: expressions, statements, applications, inlining), `__init__` (assembly).    |
-| `runtime.py`         | The exec namespace: core's helpers, the pattern table, the depth budget, the one-way `frag` trampoline into `evaluate_fragment`.  |
+| `runtime.py`         | The exec namespace: core's helpers, the pattern table, the depth budget, the one-way trampolines (`frag`, `frag_cov` harvesting coverage, `frag_eval` on the shared state). |
 | `runtime_compile.py` | The only `compile`/`exec` site (D10, P5).                                                                                          |
 | `standalone.py`      | `emit_standalone`: the same module with a stdlib-plus-core prologue; refuses anything needing the interpreter.                    |
-| `__init__.py`        | `compile_validator`, `CompiledValidator`, `emit_standalone`, `build_plan`, `explain_compilation`.                                  |
+| `__init__.py`        | `compile_validator`, `CompiledValidator`, `compile_evaluator`, `CompiledEvaluator`, `emit_standalone`, `build_plan`, `explain_compilation`. |
 
 ## 3. Keyword behavior interface (normative for M1+)
 
@@ -189,6 +191,7 @@ class SubschemaApplication:                             # M6
     sibling: str | None = None                          # if -> then/else
     ref: str | None = None                              # reference keywords; path ignored
     inverted: bool = False                              # not: coverage analysis skips the edge
+    resolution: Literal["dynamic", "recursive"] | None = None  # M9: a scope-dependent reference the planner resolves or islands
 
 @dataclass(frozen=True, slots=True)
 class AnalyzeContext:
@@ -276,7 +279,38 @@ Carried verbatim from the TS design; these rules are language-independent.
    verbose output is requested. The interpreter never short-circuits; the
    compiler short-circuits `anyOf`/`oneOf` exactly in verdict-only regions
    (flag output, nothing consumes per `StaticFacts`, no retainable
-   annotation — D9b), and list output runs every branch.
+   annotation — D9b), and list output runs every branch. M9: inside a
+   tracked region (D9a) and in every evaluator artifact, every branch runs.
+
+### Compiled-tier contracts (normative, M9)
+
+- **Channels.** A compiled evaluator writes to one shared core
+  `EvalState`. Errors are flat and truncate only on keyword acceptance
+  (rule 6; an `if` condition's immediately). Annotations live in the root
+  frame and are cut at every application boundary (rule 3: compiled
+  applications nest, so a failed one's records are a contiguous suffix).
+  Runtime coverage (`ev`) is a per-region list of `(behavior_id, data)`
+  pairs cut at every in-place boundary; a tracked unit folds only what
+  its own region produced (`ev[mark:]`). The evaluator cuts the root
+  frame when the root fails.
+- **Trampoline.** Still one-way. A resolved dynamic site is a static edge,
+  not code inside an island. `frag_eval` runs an island on the shared
+  state with the caller's cursor and path node; `frag_cov` harvests a
+  flag-mode island's root-frame productions at its cursor into the
+  region's channel.
+- **Emitted code semantics live in core.** Every helper an artifact
+  calls is a core function bound under a fixed name (`channel_ops`,
+  `coverage`, `json_model`, `cursor`, `channel`), so the evaluator's
+  records are `ErrorRecord`/`AnnotationRecord`/`TraceNode` objects and
+  the interpreter's renderers run unchanged.
+- **The annotation selection is an artifact property.** Ruled-out
+  annotations are never emitted (their values never reach the module);
+  `keep` runs at evaluation. Every other output control is per call, and
+  `resolve_output_demand` rejects combinations exactly as the engine does.
+- **Messages are one builder.** A keyword's `Fail`/`CombineCheck`/
+  `CountRange` carries the message and params `evaluate` reports, with
+  runtime values as bindings; the evaluator suite legs and the whole-result
+  fuzz are the referee.
 
 In Python terms: "instance location" in rule 4 is **cursor identity** (P7),
 and "throws" is "raises".
@@ -372,6 +406,18 @@ Python-specific (measured 2026-09-20 on CPython 3.14):
 - `ruff format` rewrites `\uXXXX` escapes in string literals to the
   characters themselves, which `RUF001` then flags as ambiguous; named
   escapes (`\N{FULLWIDTH FULL STOP}`) survive formatting.
+- The interpreter's loop order is part of parity (M9): `patternProperties`
+  sweeps patterns outermost, so its lowering must too, or error order
+  differs. Whole-`Result` equality is the gate that notices.
+- A boolean subschema in an evaluator artifact is never folded to a
+  literal: the interpreter opens a trace node and, for `false`, records
+  an error, so the artifact calls `apply_true`/`apply_false`.
+- A dialect that refuses unknown keywords raises at evaluation in the
+  interpreter; a compiled unit holding one must island, or flag mode
+  silently accepts what the interpreter rejects.
+- Site identities (behavior id, keyword, vocabulary, `SchemaRef`) cannot
+  be `ast.Constant`s: they are hoisted from a namespace tuple, one `xN`
+  per keyword occurrence.
 - Publication (M8): a PEP 420 namespace package has nowhere to put one
   `py.typed`, so each portion carries its own, and only a strict pyright
   run against the installed wheel (not the source tree) proves they work.
@@ -547,6 +593,36 @@ target (runtime coverage tracking makes those consumers static). Public
 lowering of custom keywords (the IR in `core.lowering` is not exported)
 is likewise deferred to M9. Suite **15447** tests; Bowtie unchanged.
 
+**Status note (M9, completed 2026-09-21):** the compiled tier beyond the
+verdict, in three steps. (1) Plan-time resolution of `$dynamicRef` and
+`$recursiveRef` (the TS engine's ADR 0004, extended to 2019-09): the
+2020-12 census's dynamic islands fell 59 → **1** (58 sites resolved),
+2019-09's 49 → **2** (47 resolved); the 2020-12 metaschema and the
+OpenAPI 3.1 schema plan with no interpreted unit, and a seed corpus of
+stable and unstable shapes runs on every surface and in the fuzz.
+(2) Runtime coverage tracking: no `unlowerable` consumer island remains
+(census 2020-12 **1371** units / 1 interpreted; 2019-09 **1300** / 2);
+the OpenAPI schema compiles as 368 static units (8 tracked, 68 in
+regions), emits a standalone module, and its compiled flag validator
+runs at **220×** the interpreter (was 0.67×), 286× jsonschema. Flag
+goldens outside regions stayed byte-identical. (3) `compile_evaluator`:
+the four evaluator suite legs compare five demands under both
+optimization settings at the interpreter's pins (**1328/1288/942/852**)
+with zero divergence, the official output-tests pass through the
+artifact, the fuzz compares whole `Result`s (list and hierarchical,
+relevant and verbose, with traces; a planted-divergence self-test proves
+the comparison sees a corrupted param and a dropped annotation; the
+`deep` profile's 20 000 examples clean in 19 s), goldens pin every
+fixture in both modes (16), evaluator census pins add tracked/region
+counts (2020-12: 85/73), and the evaluator tier costs 2–3.5× the
+interpreter's own `list` output on the bench. Bowtie now runs both
+tiers at the same pins (1301/1261/929/841, zero failures). The lowering
+IR is public (`json_schema_engine.core.lowering`, 73 names, documented
+with a lowering guide). The compiled evaluator deviates from the plan in
+one place, on purpose: only the annotation selection is fixed at compile
+time; `error_params`, `verbose`, `trace`, and `positions` are per call,
+since the emitted code is the same for every level.
+
 ## 7. Open items (owner decisions)
 
 1. **First functional releases** — the release commits are on `main` after
@@ -557,8 +633,14 @@ is likewise deferred to M9. Suite **15447** tests; Bowtie unchanged.
    semantics is the expected answer; confirm when the RFC text settles.
 3. **Async façade timing** (P4) — after M3 unless a consumer needs it earlier.
 4. **Bowtie image publication** — the harness image is built locally by
-   `scripts/bowtie_check.py`; publishing it (ghcr.io) and listing the
-   implementation with Bowtie are owner-controlled.
+   `scripts/bowtie_check.py` (both tiers since M9); publishing it (ghcr.io)
+   and listing the implementation with Bowtie are owner-controlled.
+5. **Per-site dispatch for unstable dynamic sites** — compile one target
+   per possible resolution and select by the first declaring scope entry;
+   deferred until a real schema needs it (the suite's "multiple dynamic
+   paths" groups are the only known cases).
+6. **Evaluator standalone emission** — prologue-only work under D10's
+   helper convention; deferred (owner decision, M9).
 
 ### Resolved (owner, 2026-09-20)
 
