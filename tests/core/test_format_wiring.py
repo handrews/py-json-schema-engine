@@ -182,7 +182,9 @@ def test_vocabulary_without_a_table_is_a_clear_error(metaschema: str) -> None:
         engine.load_schema(
             {"$schema": metaschema, "format": "ipv4"}, "https://fmt.example/none"
         )
-    assert excinfo.value.schema_location == metaschema
+    # `base#pointer` with an empty pointer: the metaschema's own root
+    # (P10), not a bare URI that no location grammar would accept.
+    assert excinfo.value.schema_location == metaschema + "#"
 
 
 def test_lowered_shape() -> None:

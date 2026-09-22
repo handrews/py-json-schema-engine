@@ -25,10 +25,29 @@ minor versions may change public API.
 - Registration remains non-atomic, and these add two more ways to fail
   part-way: a document whose registration raises stays partially indexed, so
   discard that engine rather than continuing with it. Tracked as DESIGN.md §7
-  item 8.
+  item 7.
+- A document-level `schema_location` is now `uri#` rather than a bare `uri`,
+  so every location is a `base#pointer` (P10) that `Engine.locate` and
+  `Engine.location_chain` accept. Affects `SchemaValidationError`,
+  `UnknownVocabularyError`, and `FormatsRequiredError`.
 
 ### Added
 
+- **Location chains (DESIGN.md P11).** A canonical `base_uri#pointer` names a
+  position exactly and still may not locate it: in a bundled document the base
+  may be an embedded `$id` the reader never knew was there, and a relative
+  `$id` resolves to a URI that appears nowhere in their file.
+  `Engine.location_chain(location)` returns the position followed by each
+  enclosing resource, innermost first, with the pointer to the one below it and
+  the `$id` as written; the outermost hop names the retrieval URI when it
+  differs from the `$id`. Every hop's `.location` is a `$ref` value and an
+  `Engine.locate` argument, so the chain composes with source positions rather
+  than duplicating them. New exports: `LocationChain`, `LocationHop`,
+  `format_location_chain`.
+- Every error leaving `register_schema`, `load_schema`, `load`, or `evaluate`
+  carries its `location_chain`, in both the interpreter and the compiled tier.
+  `str(error)` appends the chain **only** past one hop, so a single-resource
+  schema's message is byte-identical to before.
 - `UnresolvableReferenceError` carries the resolution that failed:
   `reference` (as written in the schema), `resolved_against` (the base URI in
   force at that position), and `resolved_to` (the absolute URI the two

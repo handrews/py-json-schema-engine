@@ -30,7 +30,9 @@ assert message == (
     "schema 'https://ex.example/bad' fails its metaschema "
     "'https://json-schema.org/draft/2020-12/schema'"
 )
-assert location == "https://ex.example/bad"
+# A schema location is always `base#pointer` (P10). The failure is about
+# the document as a whole, so the pointer is empty rather than absent.
+assert location == "https://ex.example/bad#"
 # `errors` is the `list`-format output of the failed metaschema evaluation:
 # one entry per violated metaschema keyword, each with its own location.
 assert len(errors) >= 1
@@ -219,7 +221,9 @@ try:
     raised3 = False
 except FormatsRequiredError as error:
     raised3 = True
-    assert error.schema_location == FORMAT_ASSERTING_META["$id"]
+    # A schema location is always `base#pointer` (P10); a document-level
+    # error points at that document's root, so the pointer is empty.
+    assert error.schema_location == FORMAT_ASSERTING_META["$id"] + "#"
 assert raised3 is True
 ```
 

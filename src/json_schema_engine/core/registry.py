@@ -12,7 +12,7 @@
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
@@ -33,6 +33,7 @@ from json_schema_engine.core.json_model import (
     unescape_segment,
 )
 from json_schema_engine.core.loader import RangeLookup, SourceRange
+from json_schema_engine.core.locations import LocationChain, LocationHop
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.uri import (
     pointer_from_fragment,
@@ -69,14 +70,32 @@ class RecursiveReference:
 
 @dataclass(frozen=True, slots=True)
 class DocumentLocation:
-    """Where a schema resource physically lives (D17 bridge).
+    """Where a schema resource lives: its document, and its parent resource.
 
-    The registered document containing it and the JSON Pointer from that
-    document's root to the resource's root.
+    `(document_uri, pointer)` is the flat D17 bridge — the outermost
+    registered document and the pointer from that document's root. It is
+    what a source-range lookup needs, and all `Engine.locate` reads.
+
+    `(parent_uri, parent_pointer)` is the single `$id` hop a P11 location
+    chain follows: the resource lexically enclosing this one, and the
+    pointer to this resource's root *within that parent* rather than within
+    the document. A root resource is its own parent with an empty pointer,
+    which is how a chain knows it has finished.
+
+    Carrying the parent here rather than in a second map is what keeps
+    `snapshot()` correct for free: it already copies this one, and a
+    snapshot can still grow resources afterwards through lazy bundled
+    registration.
     """
 
     document_uri: str
     pointer: str
+    parent_uri: str
+    parent_pointer: str
+    # The `$id` exactly as written at this resource's root, when it has
+    # one. A relative `$id` resolves to a URI that appears nowhere in the
+    # document, so this is the only way back to the text.
+    declared_id: str | None = None
 
 
 def _resource_of(uri: str) -> str:
@@ -300,7 +319,10 @@ class SchemaRegistry:
         # document-scoped errors do (`SchemaValidationError`).
         self._claim_resource(base_uri, schema, base_uri)
         self._document_dialects[base_uri] = effective_dialect
-        self._resource_locations[base_uri] = DocumentLocation(base_uri, "")
+        # A root is its own parent: the terminating case for a chain.
+        self._resource_locations[base_uri] = DocumentLocation(
+            base_uri, "", base_uri, "", root_ids.base_id
+        )
         if get_range is not None:
             self._document_ranges[base_uri] = get_range
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
@@ -332,12 +354,15 @@ class SchemaRegistry:
         ids = dialect.identifiers(node)
         if pointer != "" and ids.base_id is not None:
             claimed_at = schema_location(base_uri, pointer)
+            # The enclosing resource and the pointer to this one within it,
+            # captured before the rebinding discards both (P11).
+            parent_uri, parent_pointer = base_uri, pointer
             base_uri = _resource_of(resolve(base_uri, ids.base_id))
             pointer = ""
             self._claim_resource(base_uri, node, claimed_at)
             self._document_dialects[base_uri] = dialect.uri
             self._resource_locations[base_uri] = DocumentLocation(
-                document_uri, doc_pointer
+                document_uri, doc_pointer, parent_uri, parent_pointer, ids.base_id
             )
         here = SchemaRef(node, base_uri, pointer)
         for anchor in ids.anchors:
@@ -534,6 +559,70 @@ class SchemaRegistry:
     def resources(self) -> Iterator[str]:
         """Every registered resource URI, in registration order."""
         return iter(self._documents)
+
+    def location_chain(self, location: str) -> LocationChain:
+        """The chain of enclosing `$id` resources for a schema location (P11).
+
+        Innermost first: the position, then each resource that lexically
+        contains the previous one, ending at a root. A position in a plain
+        single-resource document gives one hop, so the common case costs a
+        tuple and says nothing a reader did not already have.
+
+        Empty when the location's resource is unknown here — including a
+        lexical base that pointer navigation minted but registration never
+        indexed, which a draft-07 `$ref` sibling can produce. "No chain"
+        and "a chain of one" must not be confused: the latter asserts that
+        the position sits in a root resource, and saying that falsely is
+        the very thing this exists to stop.
+
+        Diagnostic only; nothing on the evaluation path calls it. Like any
+        other lookup it may lazily register a bundled metaschema.
+        """
+        resource, fragment = _split(location)
+        resource = self._canonical(resource)
+        if fragment and not fragment.startswith("/"):
+            hit = self._anchors.get(f"{resource}#{fragment}")
+            if hit is None:
+                return ()
+            resource, pointer = hit.base_uri, hit.pointer
+        else:
+            pointer = fragment or ""
+        if resource not in self._resource_locations:
+            return ()
+
+        hops = [LocationHop(resource, pointer, self._declared_id(resource))]
+        seen = {resource}
+        current = resource
+        while (entry := self._resource_locations.get(current)) is not None:
+            # A root is its own parent. The `seen` test is defense in
+            # depth: P12 rejects the duplicate `$id` that could once make
+            # this relation cyclic, so a repeat should now be unreachable.
+            if entry.parent_uri == current or entry.parent_uri in seen:
+                break
+            hops.append(
+                LocationHop(
+                    entry.parent_uri,
+                    entry.parent_pointer,
+                    self._declared_id(entry.parent_uri),
+                )
+            )
+            seen.add(entry.parent_uri)
+            current = entry.parent_uri
+        hops[-1] = replace(hops[-1], retrieval_uri=self._retrieval_uri(hops[-1]))
+        return tuple(hops)
+
+    def _declared_id(self, resource_uri: str) -> str | None:
+        entry = self._resource_locations.get(resource_uri)
+        return None if entry is None else entry.declared_id
+
+    def _retrieval_uri(self, outermost: LocationHop) -> str | None:
+        """The name the outermost resource was fetched under, when it
+        differs from the `$id` it declares — the one hop a reader can
+        match against what they actually passed to `register_schema`."""
+        for retrieval, canonical in self._aliases.items():
+            if canonical == outermost.resource_uri:
+                return retrieval
+        return None
 
     # --- resolution ------------------------------------------------------
 

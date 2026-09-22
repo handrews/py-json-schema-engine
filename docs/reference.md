@@ -68,6 +68,12 @@ same keyword-only parameters. Registration is synchronous and local;
   argument is a URI, as every `schemaLocation` the engine emits is; its
   fragment is decoded back into a plain-text pointer, and the
   `SourceLocation.pointer` returned is plain text too.
+- `Engine.location_chain(schema_location) -> LocationChain`: the enclosing
+  `$id` resources of a schema location (P11), innermost first, ending at a root
+  resource. Empty for a resource this engine never saw. A position in a plain
+  single-resource document gives one hop. This is the *identity* question —
+  which resource, inside which — where `locate` is the *physical* one; they
+  compose, since every hop's `.location` is a `locate` argument.
 - `Engine.evaluate(schema_uri, instance, *, output=OutputFormat.FLAG,
   annotations=False, error_params=False, verbose=None, trace=False,
   positions=False) -> Result`: evaluates `instance` against a registered schema
@@ -448,6 +454,24 @@ document's loader reported positions).
 
 `SourcePosition`: a `TypedDict` for a point in source text: `line: int`
 (1-based), `column: int` (1-based), `offset: int` (0-based).
+
+`LocationHop`: a frozen dataclass, one resource on the path from a position out
+to its document (P11). `resource_uri: str` (canonical, fragment-free);
+`pointer: str` (plain text, from this resource's root to whatever the hop
+*below* names — for the first hop, the position itself); `declared_id: str |
+None` (the `$id` exactly as written, which is the only way to find a relative
+one in the source text); `retrieval_uri: str | None` (set on the outermost hop
+only, when the document was fetched under a name other than its `$id`). The
+`LocationHop.location -> str` property is the hop's own canonical schema
+location, so it can be pasted into a `$ref` or handed to `Engine.locate`.
+
+`LocationChain`: a type alias, `tuple[LocationHop, ...]`, innermost first.
+
+`format_location_chain(chain, *, message=None) -> str`: renders a chain for a
+person. A one-hop chain formats to exactly `chain[0].location`, so the common
+single-resource case reads as it always did; beyond one hop each enclosing
+resource gets an indented line, and the `$id` as written is shown only when it
+differs from the URI it produced.
 
 `SourceRange`: a `TypedDict` for where a value sits in its document: `value:
 SourceSpan`, `key: NotRequired[SourceSpan]` (present for an object member:
