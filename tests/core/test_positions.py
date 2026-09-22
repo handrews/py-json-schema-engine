@@ -100,3 +100,44 @@ def test_positions_with_flag_is_rejected() -> None:
     uri = engine.register_schema({}, "urn:x")
     with pytest.raises(OutputOptionsError):
         engine.evaluate(uri, 1, positions=True)
+
+
+def test_locate_resolves_an_anchor_fragment() -> None:
+    # An anchor is a fragment, not a pointer: percent-decoding `#spot`
+    # yields `spot`, which has no leading `/` and names nothing. It has to
+    # go through the anchor index, as `location_chain` does, or the two
+    # public location APIs disagree about the same string.
+    engine = create_engine()
+    engine.register_schema(
+        {"$id": "https://anchor.example/s", "$defs": {"a": {"$anchor": "spot"}}},
+        "https://anchor.example/s",
+    )
+    by_anchor = engine.locate("https://anchor.example/s#spot")
+    assert by_anchor == {
+        "documentUri": "https://anchor.example/s",
+        "pointer": "/$defs/a",
+    }
+    assert by_anchor == engine.locate("https://anchor.example/s#/$defs/a")
+
+
+def test_locate_and_location_chain_agree_on_an_anchor() -> None:
+    engine = create_engine()
+    engine.register_schema(
+        {
+            "$id": "https://anchor.example/outer",
+            "$defs": {"i": {"$id": "inner/", "$defs": {"t": {"$anchor": "tag"}}}},
+        },
+        "https://anchor.example/outer",
+    )
+    location = "https://anchor.example/inner/#tag"
+    chain = engine.location_chain(location)
+    assert chain[0].pointer == "/$defs/t"
+    assert engine.locate(location) == engine.locate(chain[0].location)
+
+
+def test_locate_returns_none_for_an_unknown_anchor() -> None:
+    engine = create_engine()
+    engine.register_schema(
+        {"$id": "https://anchor.example/bare"}, "https://anchor.example/bare"
+    )
+    assert engine.locate("https://anchor.example/bare#nosuch") is None

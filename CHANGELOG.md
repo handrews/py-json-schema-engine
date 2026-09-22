@@ -59,6 +59,12 @@ minor versions may change public API.
 
 ### Fixed
 
+- **`Engine.locate` resolves an anchor fragment.** An anchor is a fragment,
+  not a pointer, so `locate("urn:x#spot")` percent-decoded it into `spot` —
+  a string with no leading `/` that names nothing — and returned a
+  `SourceLocation` holding it. It now goes through the anchor index, as
+  `Engine.location_chain` does, so both public location APIs answer the same
+  question about the same string. An unknown anchor returns `None`.
 - **An error raised during evaluation now carries a schema location.** The
   registration walk has always back-filled `schema_location` onto an error
   escaping a keyword's `analyze()`, but the evaluation tier had no equivalent,

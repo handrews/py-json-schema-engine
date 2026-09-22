@@ -578,15 +578,10 @@ class SchemaRegistry:
         Diagnostic only; nothing on the evaluation path calls it. Like any
         other lookup it may lazily register a bundled metaschema.
         """
-        resource, fragment = _split(location)
-        resource = self._canonical(resource)
-        if fragment and not fragment.startswith("/"):
-            hit = self._anchors.get(f"{resource}#{fragment}")
-            if hit is None:
-                return ()
-            resource, pointer = hit.base_uri, hit.pointer
-        else:
-            pointer = fragment or ""
+        position = self.position_of(location)
+        if position is None:
+            return ()
+        resource, pointer = position
         if resource not in self._resource_locations:
             return ()
 
@@ -610,6 +605,27 @@ class SchemaRegistry:
             current = entry.parent_uri
         hops[-1] = replace(hops[-1], retrieval_uri=self._retrieval_uri(hops[-1]))
         return tuple(hops)
+
+    def position_of(self, location: str) -> tuple[str, str] | None:
+        """Split a schema location into its resource and plain-text pointer.
+
+        An anchor-shaped fragment is resolved through the anchor index, so
+        `urn:x#spot` answers the same position as the pointer that names
+        the same node — an anchor is a fragment, not a pointer, and
+        percent-decoding one yields a string with no leading `/` that no
+        pointer walk could use.
+
+        `None` when an anchor names nothing. An unknown *resource* is not
+        this method's business: the caller knows whether it wants one.
+        """
+        resource, fragment = _split(location)
+        resource = self._canonical(resource)
+        if fragment and not fragment.startswith("/"):
+            hit = self._anchors.get(f"{resource}#{fragment}")
+            if hit is None:
+                return None
+            return hit.base_uri, hit.pointer
+        return resource, fragment or ""
 
     def _declared_id(self, resource_uri: str) -> str | None:
         entry = self._resource_locations.get(resource_uri)

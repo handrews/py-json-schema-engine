@@ -67,7 +67,9 @@ same keyword-only parameters. Registration is synchronous and local;
   Zero cost on the evaluation path; nothing calls this unless asked. The
   argument is a URI, as every `schemaLocation` the engine emits is; its
   fragment is decoded back into a plain-text pointer, and the
-  `SourceLocation.pointer` returned is plain text too.
+  `SourceLocation.pointer` returned is plain text too. An anchor-shaped
+  fragment is resolved through the anchor index, so `#spot` and the pointer
+  naming the same node give the same answer; an unknown anchor gives `None`.
 - `Engine.location_chain(schema_location) -> LocationChain`: the enclosing
   `$id` resources of a schema location (P11), innermost first, ending at a root
   resource. Empty for a resource this engine never saw. A position in a plain
