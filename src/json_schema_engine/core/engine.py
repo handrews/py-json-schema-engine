@@ -275,23 +275,12 @@ class Engine:
         expected to be given. An anchor-shaped fragment is resolved through
         the anchor index first, since an anchor is a fragment rather than a
         pointer and decoding one yields a string no pointer walk can use.
+
+        A location from a *failed* registration has no document to find,
+        since the registration was rolled back (§7); the error carries its
+        own `schema_source`, captured before the undo.
         """
-        position = self.schemas.position_of(schema_location)
-        if position is None:
-            return None
-        resource, within = position
-        location = self.schemas.document_location(resource)
-        if location is None:
-            return None
-        pointer = location.pointer + within
-        source: SourceLocation = {
-            "documentUri": location.document_uri,
-            "pointer": pointer,
-        }
-        found = self.schemas.range(location.document_uri, pointer)
-        if found is not None:
-            source["range"] = found
-        return source
+        return self.schemas.source_of(schema_location)
 
     def location_chain(self, schema_location: str) -> LocationChain:
         """The enclosing `$id` resources of a schema location (P11).

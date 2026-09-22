@@ -592,9 +592,10 @@ def test_legacy_id_beside_a_ref_claims_nothing() -> None:
     assert list(reg.resources()) == [uri]
 
 
-def test_a_failed_registration_leaves_the_document_partially_indexed() -> None:
-    # Registration is not atomic (DESIGN.md §7). Pinning the current
-    # behavior so that making it atomic is a visible, deliberate change.
+def test_a_failed_registration_leaves_the_registry_untouched() -> None:
+    # Registration is all-or-nothing (DESIGN.md §7). The half-indexed
+    # document this used to leave behind was still evaluable, while missing
+    # every anchor and sub-resource past the failure point.
     reg = make_registry()
     with pytest.raises(DuplicateAnchorError):
         reg.register(
@@ -604,4 +605,8 @@ def test_a_failed_registration_leaves_the_document_partially_indexed() -> None:
             },
             "https://x.example/half",
         )
-    assert reg.has("https://x.example/half")
+    assert not reg.has("https://x.example/half")
+    # Including the anchor the walk did successfully claim before failing.
+    assert list(reg.resources()) == []
+    with pytest.raises(UnresolvableReferenceError):
+        reg.resolve_ref("#n", "https://x.example/half")

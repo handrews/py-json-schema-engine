@@ -1,14 +1,16 @@
 # Every typed error the engine raises (DESIGN.md §2, module table).
 #
-# Dependency direction: all but a leaf of `core`. It imports `locations`,
-# which imports only `uri`; neither imports this module, so any module may
-# still raise these without creating a cycle.
+# Dependency direction: all but a leaf of `core`. It imports `locations`
+# (which imports only `uri`) and `loader` (which imports only `json_model`);
+# none of them imports this module, so any module may still raise these
+# without creating a cycle.
 #
 # One root (`JsonSchemaEngineError`) lets an embedding application catch
 # everything this library raises with a single `except` clause, and lets it
 # distinguish engine faults from bugs (`TypeError`, `KeyError`) that must not
 # be swallowed.
 
+from json_schema_engine.core.loader import SourceLocation
 from json_schema_engine.core.locations import LocationChain, format_location_chain
 
 
@@ -27,6 +29,13 @@ class JsonSchemaEngineError(Exception):
     leaves a public entry point, which also freezes it at the moment of
     failure rather than at the moment someone asks.
 
+    `schema_source` is the same position seen physically (D17): the
+    document it lives in, the pointer from that document's root, and the
+    source range when a loader reported one. It is captured rather than
+    looked up because a failed registration is rolled back (§7), so by the
+    time the error surfaces there is no longer a registered document for
+    `Engine.locate` to find.
+
     `str()` appends the chain only when it has more than one hop. A chain
     of one says nothing the location did not, so a single-resource
     document's message is exactly what it always was.
@@ -34,11 +43,13 @@ class JsonSchemaEngineError(Exception):
 
     schema_location: str | None
     location_chain: LocationChain | None
+    schema_source: SourceLocation | None
 
     def __init__(self, message: str, *, schema_location: str | None = None) -> None:
         super().__init__(message)
         self.schema_location = schema_location
         self.location_chain = None
+        self.schema_source = None
 
     def __str__(self) -> str:
         message = super().__str__()
@@ -86,10 +97,6 @@ class DuplicateResourceError(JsonSchemaEngineError):
     to whichever the walk reached last.
 
     Re-registering an equal document is not a duplicate; it is a no-op.
-
-    Registration is not atomic (see DESIGN.md §7): a document that fails
-    part-way through its walk stays partially indexed, so build a fresh
-    engine rather than continuing with one that raised.
     """
 
 
@@ -106,8 +113,6 @@ class DuplicateAnchorError(JsonSchemaEngineError):
     implementation to reject it, which is what this engine does. One object
     carrying both `$anchor` and `$dynamicAnchor` with the same name names
     itself twice and is fine.
-
-    Registration is not atomic; see `DuplicateResourceError`.
     """
 
 

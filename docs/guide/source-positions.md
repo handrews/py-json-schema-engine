@@ -167,6 +167,42 @@ assert engine.locate("urn:example:plain#/type") == {
 assert engine.locate("urn:example:missing#/x") is None
 ```
 
+## Positions on a failed registration
+
+Registration is all-or-nothing: a document whose registration raises leaves
+the registry exactly as it found it. That means `locate` has nothing to
+place such an error against afterwards — the document is not registered.
+The error carries the answer instead, captured before the rollback:
+
+```python
+from json_schema_engine.core import InvalidSchemaError, parse_json_with_ranges
+
+bad_text = '{"properties": {"ok": {"type": "string"}, "broken": 7}}'
+parsed = parse_json_with_ranges(bad_text, "urn:example:bad")
+
+failing = create_engine()
+try:
+    failing.register_schema(parsed.value, "urn:example:bad", get_range=parsed.get_range)
+    raise AssertionError("expected InvalidSchemaError")
+except InvalidSchemaError as error:
+    location = error.schema_location
+    captured = error.schema_source
+
+# Nothing was registered, so there is nothing to locate.
+assert not failing.schemas.has("urn:example:bad")
+assert location is not None
+assert failing.locate(location) is None
+
+# The error kept the answer anyway, range included.
+assert captured is not None
+assert captured["pointer"] == "/properties/broken"
+span = captured["range"]["value"]
+assert bad_text[span["start"]["offset"] : span["end"]["offset"]] == "7"
+```
+
+A `SourceRange` is plain integers, so an error held in a log buffer keeps
+nothing alive.
+
 ## Zero cost on the hot path
 
 Positions are a pure decoration step, applied only when a unit escapes to

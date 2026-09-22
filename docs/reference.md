@@ -191,7 +191,15 @@ populated when the error concerns a specific schema position.
 
 `JsonSchemaEngineError(message, *, schema_location=None)`: root of every error
 this engine raises. Catch this to see everything the library raises without
-also swallowing bugs (`TypeError`, `KeyError`).
+also swallowing bugs (`TypeError`, `KeyError`). Besides `schema_location` it
+carries two things a raise site cannot work out for itself, both filled in by
+the engine on the way out and both `None` when unavailable:
+`location_chain: LocationChain | None`, the position's enclosing `$id`
+resources (P11), and `schema_source: SourceLocation | None`, the same position
+seen physically (D17) — the document, the document-rooted pointer, and the
+source range when a loader reported one. `schema_source` is captured rather
+than looked up because a failed registration is rolled back, so there is no
+longer a registered document for `Engine.locate` to find.
 
 `JsonSyntaxError(message, *, line, column, offset)`: `parse_json_with_ranges`
 met text that is not an RFC 8259 document. Also a `ValueError`. Carries the

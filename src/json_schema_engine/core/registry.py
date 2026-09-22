@@ -12,7 +12,8 @@
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import Any, Final
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
@@ -32,7 +33,7 @@ from json_schema_engine.core.json_model import (
     json_type_of,
     unescape_segment,
 )
-from json_schema_engine.core.loader import RangeLookup, SourceRange
+from json_schema_engine.core.loader import RangeLookup, SourceLocation, SourceRange
 from json_schema_engine.core.locations import LocationChain, LocationHop
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.uri import (
@@ -66,6 +67,59 @@ class RecursiveReference:
 
     lexical: SchemaRef
     recursive: bool
+
+
+_MISSING: Final = object()
+
+
+@dataclass(slots=True)
+class _Registration:
+    """The undo journal for one registration (DESIGN.md §7).
+
+    Registration is all-or-nothing. A walk that raised part-way used to
+    leave the document registered and evaluable, missing every anchor and
+    sub-resource past the failure point, with partial contributions to
+    `_produced_ids`/`_consumed_ids` — which feed D5's elision predicate,
+    so the failure surfaced as a wrong answer rather than a loud one.
+
+    Journaled writes rather than a snapshot of the indexes, so the cost is
+    O(this document's writes) with no term in registry size: every lookup
+    may lazily register a bundled metaschema, and an O(registry) copy would
+    tax that path exactly as it grows.
+
+    `writes` holds `(index, key, prior)` for the dict indexes, with
+    `_MISSING` for a key that was absent. Restoring the prior value rather
+    than deleting the key is load-bearing twice over: a re-registration
+    rebinds entries an *earlier* registration owns (`_claim_resource`
+    allows an equal document, `_claim_anchor` only rejects collisions
+    inside the current walk), and `_documents` is ordered, which
+    `resources()` promises and delete-then-reinsert would break.
+
+    `adds` holds `(index, member)` for the set indexes, recorded only when
+    the member was new — a union cannot say who added what.
+    """
+
+    writes: list[tuple[dict[str, Any], str, Any]] = field(
+        default_factory=list[tuple[dict[str, Any], str, Any]]
+    )
+    adds: list[tuple[set[str], str]] = field(default_factory=list[tuple[set[str], str]])
+
+    def undo(self) -> None:
+        """Put every index back the way this registration found it."""
+        # Reverse order: one key can be written twice in a walk (an object
+        # carrying `$anchor` and `$dynamicAnchor` under one name), and only
+        # the first record holds the value from before this registration.
+        #
+        # `pop`/`discard` rather than `del`/`remove`: this runs with an
+        # exception already in flight, and raising a second one here would
+        # replace the failure being reported.
+        for index, key, prior in reversed(self.writes):
+            if prior is _MISSING:
+                index.pop(key, None)
+            else:
+                index[key] = prior
+        for members, member in self.adds:
+            members.discard(member)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +247,10 @@ class SchemaRegistry:
         # re-entrant.
         self._claimed_resources: set[str] = set()
         self._claimed_anchors: set[str] = set()
+        # The undo journal of the registration in progress, or `None` when
+        # none is. Doubles as the "a registration is in flight" flag that
+        # `_canonical` reads before starting a lazy bundled one.
+        self._journal: _Registration | None = None
         # Called for every regex a keyword declares during a walk. The
         # engine installs this after its trusted metaschemas register, so
         # the D20 screen applies only to caller schemas.
@@ -251,6 +309,29 @@ class SchemaRegistry:
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
 
+    def _put[V](self, index: dict[str, V], key: str, value: V) -> None:
+        """Write an index entry, journaled so it can be undone (§7).
+
+        The journal is handed the index object itself rather than a name
+        for it, so `_Registration.undo` needs no table mapping names back
+        to attributes: the writer already holds the one it means.
+        """
+        if self._journal is not None:
+            self._journal.writes.append((index, key, index.get(key, _MISSING)))
+        index[key] = value
+
+    def _add(self, index: set[str], member: str) -> None:
+        """Add a set member, journaled when it is genuinely new.
+
+        Recording only new members is what makes `_produced_ids` and
+        `_consumed_ids` undoable: they are unions, so the key alone cannot
+        say whether this registration put it there.
+        """
+        if member not in index:
+            if self._journal is not None:
+                self._journal.adds.append((index, member))
+            index.add(member)
+
     def _claim_resource(self, base_uri: str, node: JsonValue, where: str) -> None:
         """Bind a resource URI to a schema, or refuse to shadow another (P12).
 
@@ -274,7 +355,7 @@ class SchemaRegistry:
                 schema_location=where,
             )
         self._claimed_resources.add(base_uri)
-        self._documents[base_uri] = node
+        self._put(self._documents, base_uri, node)
 
     def _claim_anchor(self, key: str, here: SchemaRef) -> None:
         """Bind an anchor key, or refuse to shadow another object's (P12).
@@ -291,7 +372,7 @@ class SchemaRegistry:
                 schema_location=here.location,
             )
         self._claimed_anchors.add(key)
-        self._anchors[key] = here
+        self._put(self._anchors, key, here)
 
     def _register(
         self,
@@ -300,9 +381,52 @@ class SchemaRegistry:
         dialect_uri: str | None,
         get_range: RangeLookup | None,
     ) -> str:
-        self._reference_memo.clear()
-        self._claimed_resources.clear()
-        self._claimed_anchors.clear()
+        """Index a document, all of it or none of it (§7, `_Registration`)."""
+        # Saving the caller's journal and claim sets rather than asserting
+        # they are empty is the re-entrancy guard. A walk never calls back
+        # in here, but a custom `KeywordBehavior.analyze` or a custom
+        # dialect's identifier extractor is arbitrary caller code, and one
+        # that registers a schema must become its own transaction rather
+        # than clobbering this one's.
+        outer = (self._journal, self._claimed_resources, self._claimed_anchors)
+        journal = self._journal = _Registration()
+        self._claimed_resources = set()
+        self._claimed_anchors = set()
+        try:
+            return self._index(schema, retrieval_uri, dialect_uri, get_range)
+        except BaseException as error:
+            # `BaseException`, because a walk can raise far more than a
+            # typed engine error: `_step` raises bare `KeyError`/`TypeError`,
+            # `RecursionError` can fire anywhere, and caller code runs
+            # inside the walk. A half-indexed document is equally wrong
+            # whichever of them got us here, and the bare `raise` below
+            # means nothing is swallowed.
+            try:
+                # The only moment the chain and the source position can be
+                # read: they are derived from indexes the undo is about to
+                # remove. In a `try`, so a bug in the description cannot
+                # cost the rollback.
+                if isinstance(error, JsonSchemaEngineError):
+                    self._describe(error)
+            finally:
+                journal.undo()
+            raise
+        finally:
+            self._journal, self._claimed_resources, self._claimed_anchors = outer
+            # Un-clearing is impossible and unnecessary: the memo is a pure
+            # derived cache (D8), so "cleared, rebuilt on demand" is always
+            # a correct state. Cleared on both paths, because caller code
+            # inside the walk can memoize an answer computed against the
+            # half-built index that the rollback then takes away.
+            self._reference_memo.clear()
+
+    def _index(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+    ) -> str:
         effective_dialect = effective_dialect_uri(
             schema, retrieval_uri, dialect_uri, self._default_dialect_uri
         )
@@ -314,17 +438,21 @@ class SchemaRegistry:
         if root_ids.base_id is not None:
             base_uri = _resource_of(resolve(base_uri, root_ids.base_id))
         if base_uri != retrieval_resource:
-            self._aliases[retrieval_resource] = base_uri
+            # Journaled like the rest: this runs *before* the claim below,
+            # so a duplicate root used to leave an alias behind.
+            self._put(self._aliases, retrieval_resource, base_uri)
         # A resource-level error names the bare resource URI, as the other
         # document-scoped errors do (`SchemaValidationError`).
         self._claim_resource(base_uri, schema, base_uri)
-        self._document_dialects[base_uri] = effective_dialect
+        self._put(self._document_dialects, base_uri, effective_dialect)
         # A root is its own parent: the terminating case for a chain.
-        self._resource_locations[base_uri] = DocumentLocation(
-            base_uri, "", base_uri, "", root_ids.base_id
+        self._put(
+            self._resource_locations,
+            base_uri,
+            DocumentLocation(base_uri, "", base_uri, "", root_ids.base_id),
         )
         if get_range is not None:
-            self._document_ranges[base_uri] = get_range
+            self._put(self._document_ranges, base_uri, get_range)
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
         return base_uri
 
@@ -360,9 +488,13 @@ class SchemaRegistry:
             base_uri = _resource_of(resolve(base_uri, ids.base_id))
             pointer = ""
             self._claim_resource(base_uri, node, claimed_at)
-            self._document_dialects[base_uri] = dialect.uri
-            self._resource_locations[base_uri] = DocumentLocation(
-                document_uri, doc_pointer, parent_uri, parent_pointer, ids.base_id
+            self._put(self._document_dialects, base_uri, dialect.uri)
+            self._put(
+                self._resource_locations,
+                base_uri,
+                DocumentLocation(
+                    document_uri, doc_pointer, parent_uri, parent_pointer, ids.base_id
+                ),
             )
         here = SchemaRef(node, base_uri, pointer)
         for anchor in ids.anchors:
@@ -372,9 +504,9 @@ class SchemaRegistry:
         if ids.dynamic_anchor is not None:
             key = f"{base_uri}#{ids.dynamic_anchor}"
             self._claim_anchor(key, here)
-            self._dynamic_anchors[key] = here
+            self._put(self._dynamic_anchors, key, here)
         if ids.recursive_anchor and pointer == "":
-            self._recursive_roots.add(base_uri)
+            self._add(self._recursive_roots, base_uri)
 
         # draft-07/06 (D18, owner ruling): a `$ref` makes every sibling act
         # as if absent — at registration as much as at evaluation, so no
@@ -398,8 +530,10 @@ class SchemaRegistry:
                         base_uri, f"{pointer}/{escape_segment(name)}"
                     )
                 raise
-            self._produced_ids.update(facts.produces)
-            self._consumed_ids.update(facts.consumes)
+            for behavior_id in facts.produces:
+                self._add(self._produced_ids, behavior_id)
+            for behavior_id in facts.consumes:
+                self._add(self._consumed_ids, behavior_id)
             if self.on_regex is not None and facts.regexes:
                 keyword_location = schema_location(
                     base_uri, f"{pointer}/{escape_segment(name)}"
@@ -410,8 +544,9 @@ class SchemaRegistry:
                 # Unresolvable now is not an error: evaluation reports it if
                 # the reference is actually followed.
                 with suppress(ValueError):
-                    self._pending_resources.add(
-                        _resource_of(resolve(base_uri, reference))
+                    self._add(
+                        self._pending_resources,
+                        _resource_of(resolve(base_uri, reference)),
                     )
             for rel_path in facts.subschemas:
                 child: JsonValue = value
@@ -436,6 +571,12 @@ class SchemaRegistry:
             resource_uri not in self._documents
             and resource_uri not in self._aliases
             and resource_uri in self._bundled
+            # A lookup made while a registration is in flight — the
+            # diagnostic capture on its way out, or caller code inside a
+            # walk — must not start a second one: it would write indexes
+            # the rollback about to run knows nothing about. Tested last,
+            # so an already-registered resource never reaches it.
+            and self._journal is None
         ):
             self._register_bundled(resource_uri)
         return self._aliases.get(resource_uri, resource_uri)
@@ -471,6 +612,51 @@ class SchemaRegistry:
         """The source range of a document-rooted pointer, if its loader knows."""
         lookup = self._document_ranges.get(document_uri)
         return None if lookup is None else lookup(pointer)
+
+    def source_of(self, location: str) -> SourceLocation | None:
+        """Where a schema location sits in its document (D17).
+
+        The containing document, the document-rooted pointer, and the
+        source range when that document's loader reported positions.
+        `None` for a resource this registry has no location for.
+        `Engine.locate` is this method; it lives here because the registry
+        owns all three pieces, and because a failing registration has to
+        capture one before its rollback takes the indexes away.
+        """
+        position = self.position_of(location)
+        if position is None:
+            return None
+        resource, within = position
+        entry = self.document_location(resource)
+        if entry is None:
+            return None
+        pointer = entry.pointer + within
+        source: SourceLocation = {
+            "documentUri": entry.document_uri,
+            "pointer": pointer,
+        }
+        found = self.range(entry.document_uri, pointer)
+        if found is not None:
+            source["range"] = found
+        return source
+
+    def _describe(self, error: JsonSchemaEngineError) -> None:
+        """Record what the indexes know about a failure, before the undo.
+
+        A rolled-back registration's resources are gone by the time the
+        error reaches a caller, so this is the only moment its chain (P11)
+        and its source position (D17) can be derived. Each is filled only
+        when still empty: an inner frame's answer is the more specific one.
+        """
+        location = error.schema_location
+        if location is None:
+            return
+        if error.location_chain is None:
+            chain = self.location_chain(location)
+            if chain:
+                error.location_chain = chain
+        if error.schema_source is None:
+            error.schema_source = self.source_of(location)
 
     def take_unresolved(self) -> list[str]:
         """External resources referenced but not registered; drained per call."""
