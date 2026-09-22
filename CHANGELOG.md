@@ -27,6 +27,17 @@ minor versions may change public API.
   discard that engine rather than continuing with it. Tracked as DESIGN.md §7
   item 8.
 
+### Added
+
+- `UnresolvableReferenceError` carries the resolution that failed:
+  `reference` (as written in the schema), `resolved_against` (the base URI in
+  force at that position), and `resolved_to` (the absolute URI the two
+  produced). A relative `$ref` under an embedded `$id` resolves somewhere that
+  looks unrelated to anything in the document, and previously the message named
+  only the URI that came out. A pointer miss also names the failing segment and
+  the prefix that matched, so `#/a/b/c/d` failing at `b` no longer reads exactly
+  like the same pointer failing at `d`.
+
 ### Fixed
 
 - **An error raised during evaluation now carries a schema location.** The

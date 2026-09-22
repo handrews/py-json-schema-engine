@@ -322,8 +322,60 @@ def test_pointer_escapes_and_array_indexes() -> None:
 def test_unresolvable_references_are_typed(ref: str) -> None:
     reg = make_registry()
     reg.register({"$defs": {"a": {"allOf": [True]}}}, "urn:doc")
-    with pytest.raises(UnresolvableReferenceError):
+    with pytest.raises(UnresolvableReferenceError) as info:
         reg.resolve_ref(ref, "urn:doc")
+    # Whichever way it failed, the attempt is reported: what was written,
+    # what it resolved against, and what came out.
+    assert info.value.reference == ref
+    assert info.value.resolved_against == "urn:doc"
+    assert info.value.resolved_to is not None
+
+
+def test_a_pointer_miss_names_the_failing_segment() -> None:
+    # `#/$defs/a/b/c/d` failing at `c` must not read like it failed at `d`.
+    reg = make_registry()
+    reg.register({"$defs": {"a": {"$defs": {"b": {}}}}}, "urn:deep")
+    with pytest.raises(UnresolvableReferenceError) as info:
+        reg.resolve_ref("#/$defs/a/$defs/b/c/d", "urn:deep")
+    message = str(info.value)
+    assert "no 'c' at /$defs/a/$defs/b" in message
+    assert "(object)" in message
+
+
+def test_a_pointer_miss_into_a_scalar_names_what_it_stood_on() -> None:
+    reg = make_registry()
+    reg.register({"$defs": {"a": {"title": "t"}}}, "urn:scalar")
+    with pytest.raises(UnresolvableReferenceError) as info:
+        reg.resolve_ref("#/$defs/a/title/nope", "urn:scalar")
+    assert "no 'nope' at /$defs/a/title (string)" in str(info.value)
+
+
+def test_the_resolution_attempt_survives_an_embedded_id() -> None:
+    # The case the attributes exist for: the reference is a plain relative
+    # name, but the base in force is an embedded `$id` the reader may never
+    # have seen, so the URI that failed looks unrelated to the document.
+    reg = make_registry()
+    reg.register(
+        {
+            "$id": "https://x.example/bundle",
+            "$defs": {"i": {"$id": "sub/", "$ref": "other.json"}},
+        },
+        "https://x.example/bundle",
+    )
+    with pytest.raises(UnresolvableReferenceError) as info:
+        reg.resolve_ref("other.json", "https://x.example/sub/")
+    assert info.value.reference == "other.json"
+    assert info.value.resolved_against == "https://x.example/sub/"
+    assert info.value.resolved_to == "https://x.example/sub/other.json"
+
+
+def test_root_ref_reports_the_uri_it_was_given() -> None:
+    reg = make_registry()
+    with pytest.raises(UnresolvableReferenceError) as info:
+        reg.root_ref("urn:absent")
+    assert info.value.reference == "urn:absent"
+    # Nothing resolved it against anything: the caller named it directly.
+    assert info.value.resolved_against is None
 
 
 def test_empty_fragment_and_root_ref() -> None:
