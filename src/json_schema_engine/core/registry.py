@@ -10,7 +10,7 @@
 # Dependency direction: imports `dialect`, `ref`, `uri`, `json_model`, and
 # `errors`. The evaluator and the engine façade build on this.
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Any, Final
@@ -693,6 +693,16 @@ class SchemaRegistry:
         missing = sorted(r for r in self._pending_resources if not self.has(r))
         self._pending_resources.clear()
         return missing
+
+    def restore_unresolved(self, uris: Iterable[str]) -> None:
+        """Put drained resources back on the pending list.
+
+        `take_unresolved` empties the set before its caller has fetched
+        anything, so a fetch that raises would otherwise drop every URI the
+        loop had not reached yet — permanently, since a later drain has no
+        record of them. The engine hands back what it did not get to.
+        """
+        self._pending_resources.update(uris)
 
     def dynamic_anchor(self, resource_uri: str, name: str) -> SchemaRef | None:
         """The `$dynamicAnchor` target for a name in a resource (D8)."""

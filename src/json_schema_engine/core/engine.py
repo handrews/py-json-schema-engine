@@ -248,8 +248,23 @@ class Engine:
         # Each registration may reveal new references; a miss is left for
         # evaluation to report if the reference is actually followed.
         while missing := self.schemas.take_unresolved():
-            for uri in missing:
-                self._fetch(uri)
+            for index, uri in enumerate(missing):
+                try:
+                    self._fetch(uri)
+                except BaseException:
+                    # `take_unresolved` emptied the set before we fetched
+                    # anything, so without this the URIs after the failure
+                    # are lost for good. Atomicity is per document (§7): a
+                    # batch keeps whatever registered, and the rest stays
+                    # queued for a later drain.
+                    #
+                    # The one that raised is *not* requeued: it has already
+                    # been reported to this caller, and putting it back
+                    # would raise the same error again inside some later,
+                    # unrelated drain. Evaluation still reports it if the
+                    # reference is actually followed.
+                    self.schemas.restore_unresolved(missing[index + 1 :])
+                    raise
 
     def _fetch(self, uri: str) -> bool:
         for loader in self._loaders:

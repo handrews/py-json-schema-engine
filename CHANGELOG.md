@@ -33,6 +33,13 @@ minor versions may change public API.
 - Because a failed registration is rolled back, `Engine.locate` can no longer
   place an error from one: there is no registered document to place it
   against. The error carries `schema_source` instead (below).
+- A failed drain keeps the rest of its queue. `Engine.load`/`load_schema` take
+  the pending references in one batch and clear them before fetching, so a
+  registration that raised part-way through discarded every URI the loop had
+  not reached yet — permanently, since nothing queued them again. The
+  unattempted ones now stay pending for a later drain. The one that raised is
+  not requeued: it has already been reported, and evaluation still reports it
+  if the reference is actually followed.
 - **`validate_schemas` now checks a document before registering it**, so one
   that fails its metaschema is no longer registered. Previously the check ran
   after the walk and nothing removed the document, leaving a caller who asked

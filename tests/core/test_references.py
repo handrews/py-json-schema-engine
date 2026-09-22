@@ -4,6 +4,7 @@
 import pytest
 
 from json_schema_engine.core import (
+    InvalidSchemaError,
     JsonValue,
     LoadedDocument,
     SchemaValidationError,
@@ -265,3 +266,44 @@ def test_bundled_metaschemas_are_complete() -> None:
         # keyed fragment-free.
         assert isinstance(document, dict)
         assert str(document.get("$id")).rstrip("#") == uri
+
+
+# --- a failed drain keeps its queue ----------------------------------------
+
+
+def test_a_failed_drain_leaves_the_rest_of_the_queue_pending() -> None:
+    # `take_unresolved` empties the pending set before the drain loop has
+    # fetched anything, so a failure part-way used to discard every URI the
+    # loop had not reached — and nothing ever queued them again.
+    good: JsonValue = {"$id": "https://q.example/good", "type": "string"}
+    attempts: list[str] = []
+
+    def loader(uri: str) -> LoadedDocument | None:
+        attempts.append(uri)
+        if uri == "https://q.example/bad":
+            # A document that cannot register: a non-schema value in a
+            # schema position.
+            return LoadedDocument({"properties": {"a": 1}}, uri)
+        if uri == "https://q.example/good":
+            return LoadedDocument(good, uri)
+        return None
+
+    engine = create_engine(loaders=[loader])
+    # Sorted order puts "bad" before "good", so the failure happens first.
+    with pytest.raises(InvalidSchemaError):
+        engine.load_schema(
+            {
+                "$defs": {
+                    "a": {"$ref": "https://q.example/bad"},
+                    "b": {"$ref": "https://q.example/good"},
+                }
+            },
+            "https://q.example/root",
+        )
+    assert attempts == ["https://q.example/bad"]
+    assert not engine.schemas.has("https://q.example/good")
+
+    # The unreached URI is still queued, so a later drain picks it up.
+    # The one that raised is not: it was already reported to this caller,
+    # and requeuing it would raise the same error inside a later drain.
+    assert engine.schemas.take_unresolved() == ["https://q.example/good"]
