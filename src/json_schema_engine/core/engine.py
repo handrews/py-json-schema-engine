@@ -69,9 +69,7 @@ from json_schema_engine.core.result import (
     resolve_output_demand,
 )
 from json_schema_engine.core.uri import (
-    pointer_from_fragment,
     schema_location,
-    split_fragment,
 )
 
 
@@ -274,15 +272,18 @@ class Engine:
         plain-text pointer before it is joined to the document-rooted one
         (P10) — the ranges a loader reports are keyed by plain pointers,
         and the locations the engine emits are the argument this is
-        expected to be given.
+        expected to be given. An anchor-shaped fragment is resolved through
+        the anchor index first, since an anchor is a fragment rather than a
+        pointer and decoding one yields a string no pointer walk can use.
         """
-        resource, fragment = split_fragment(schema_location)
+        position = self.schemas.position_of(schema_location)
+        if position is None:
+            return None
+        resource, within = position
         location = self.schemas.document_location(resource)
         if location is None:
             return None
-        pointer = location.pointer + (
-            "" if fragment is None else pointer_from_fragment(fragment)
-        )
+        pointer = location.pointer + within
         source: SourceLocation = {
             "documentUri": location.document_uri,
             "pointer": pointer,
