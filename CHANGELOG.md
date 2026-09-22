@@ -5,6 +5,34 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/) with the 0.x caveat that
 minor versions may change public API.
 
+## [Unreleased]
+
+### Changed
+
+- **A schema location is now a URI (DESIGN.md P10).** The JSON Pointer in
+  `schemaLocation`, `absoluteKeywordLocation`, and the `schema_location`
+  carried by a raised error is percent-encoded per RFC 3986's `fragment`
+  production, so a property named `a b` is reported at
+  `#/properties/a%20b` and one named `100%` at `#/properties/100%25`.
+  Previously the pointer was emitted raw, which produced strings that were
+  not URIs, could not be used as a `$ref`, and did not survive being handed
+  back to `Engine.locate` — while the registry already percent-decoded on
+  the way in. Ordinary pointers are unaffected: `/`, `:`, `@`, and the
+  sub-delimiters stay literal, so `#/properties/count/type` reads exactly
+  as before.
+- `Engine.locate` decodes the fragment of the location it is given, and
+  still returns a plain-text `pointer`.
+- `evaluationPath`, `keywordLocation`, `inputLocation`, `instanceLocation`,
+  and `SourceLocation.pointer` are unchanged: they are JSON Pointers, not
+  URIs, and are never encoded.
+
+### Added
+
+- `json_schema_engine.core.uri.pointer_fragment`,
+  `pointer_from_fragment`, and `schema_location`: the single pair of
+  conversions between a plain-text JSON Pointer and its URI fragment form,
+  plus the builder every emitted schema location goes through.
+
 ## [0.0.3] - 2026-09-21
 
 ### Added

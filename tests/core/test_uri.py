@@ -1,13 +1,18 @@
 """RFC 3986 §5 reference resolution, including the §5.4 example tables."""
 
+import re
+
 import pytest
 
 from json_schema_engine.core.uri import (
     has_scheme,
     is_absolute,
     merge,
+    pointer_fragment,
+    pointer_from_fragment,
     remove_dot_segments,
     resolve,
+    schema_location,
     split_fragment,
     strip_fragment,
 )
@@ -247,3 +252,87 @@ def test_has_scheme(uri: str, expected: bool) -> None:
 )
 def test_is_absolute(uri: str, expected: bool) -> None:
     assert is_absolute(uri) is expected
+
+
+# --- pointer <-> fragment (P10) --------------------------------------------
+
+# Left column is the plain-text JSON Pointer (RFC 6901 escaping already
+# applied); right column is its URI fragment form (RFC 3986 `fragment`).
+FRAGMENT_CASES: list[tuple[str, str]] = [
+    # The root pointer and every ordinary one survive untouched, which is
+    # what keeps locations readable in the common case.
+    ("", ""),
+    ("/properties/a", "/properties/a"),
+    ("/$defs/x", "/$defs/x"),
+    ("/items/0/allOf/1", "/items/0/allOf/1"),
+    # `~0`/`~1` are pointer syntax, not URI syntax: RFC 6901 escaping has
+    # already happened and must not be touched again.
+    ("/properties/a~1b", "/properties/a~1b"),
+    ("/properties/a~0b", "/properties/a~0b"),
+    # `sub-delims`, `:` and `@` are all legal in a fragment, so a member
+    # name made of them costs nothing.
+    ("/properties/c:d@e", "/properties/c:d@e"),
+    ("/properties/!$&'()*+,;=", "/properties/!$&'()*+,;="),
+    ("/properties/-._~", "/properties/-._~"),
+    # The characters RFC 3986 excludes from a fragment.
+    ("/properties/a b", "/properties/a%20b"),
+    ('/properties/a"b', "/properties/a%22b"),
+    ("/properties/a<b>c", "/properties/a%3Cb%3Ec"),
+    ("/properties/a\\b", "/properties/a%5Cb"),
+    ("/properties/a^b", "/properties/a%5Eb"),
+    ("/properties/a`b", "/properties/a%60b"),
+    ("/properties/{x}", "/properties/%7Bx%7D"),
+    ("/properties/a|b", "/properties/a%7Cb"),
+    # `#` would end the fragment and `%` would make the rest of it a
+    # percent-escape: the two that corrupt rather than merely offend.
+    ("/properties/a#b", "/properties/a%23b"),
+    ("/properties/100%", "/properties/100%25"),
+    ("/properties/%2F", "/properties/%252F"),
+    # Controls, and non-ASCII as UTF-8 bytes (a URI, not an IRI — P10).
+    ("/properties/a\nb", "/properties/a%0Ab"),
+    ("/properties/名前", "/properties/%E5%90%8D%E5%89%8D"),
+    ("/properties/é", "/properties/%C3%A9"),
+]
+
+
+@pytest.mark.parametrize(("pointer", "fragment"), FRAGMENT_CASES)
+def test_pointer_fragment(pointer: str, fragment: str) -> None:
+    assert pointer_fragment(pointer) == fragment
+
+
+@pytest.mark.parametrize(("pointer", "fragment"), FRAGMENT_CASES)
+def test_pointer_from_fragment_is_the_inverse(pointer: str, fragment: str) -> None:
+    assert pointer_from_fragment(fragment) == pointer
+    assert pointer_from_fragment(pointer_fragment(pointer)) == pointer
+
+
+def test_encoded_fragment_is_a_legal_uri_fragment() -> None:
+    # RFC 3986: `fragment = *( pchar / "/" / "?" )`. Nothing outside that
+    # production may survive encoding, for any of the cases above.
+    legal = re.compile(r"^(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9A-Fa-f]{2})*$")
+    for pointer, _ in FRAGMENT_CASES:
+        assert legal.match(pointer_fragment(pointer)), pointer
+
+
+def test_schema_location_joins_base_and_encoded_pointer() -> None:
+    assert schema_location("https://x.example/s", "") == "https://x.example/s#"
+    assert (
+        schema_location("https://x.example/s", "/properties/a")
+        == "https://x.example/s#/properties/a"
+    )
+    assert (
+        schema_location("urn:uuid:deadbeef", "/properties/100%")
+        == "urn:uuid:deadbeef#/properties/100%25"
+    )
+
+
+def test_schema_location_round_trips_through_split_fragment() -> None:
+    # The pair that `Engine.locate` and `SchemaRegistry._split` rely on:
+    # splitting an emitted location and decoding its fragment gives back
+    # the base and pointer it was built from.
+    for pointer, _ in FRAGMENT_CASES:
+        base = "https://round.example/s"
+        resource, fragment = split_fragment(schema_location(base, pointer))
+        assert resource == base
+        assert fragment is not None
+        assert pointer_from_fragment(fragment) == pointer

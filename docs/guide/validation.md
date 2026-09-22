@@ -47,6 +47,17 @@ canonical URI of the failing keyword), `inputLocation` (a JSON Pointer into
 the instance), and `error` (the message). `error_params=True` adds
 `keyword`, `vocabulary`, and a structured `params` object.
 
+The two kinds of location are spelled differently, and the difference only
+shows when a name holds an awkward character. `schemaLocation` is a **URI**,
+so its pointer is fragment-encoded: a property named `a b` appears as
+`#/properties/a%20b`, and one named `100%` as `#/properties/100%25`. That is
+what lets the string be pasted into a `$ref` or handed back to
+`Engine.locate` unchanged. `evaluationPath` and `inputLocation` are
+**plain-text** JSON Pointers and are never encoded, because neither is a
+URI: the same property reads `/properties/a b` and `/a b`. An interface
+showing schema locations to people can decode them for display; the engine
+emits the form that round-trips.
+
 ```python
 named_uri = engine.register_schema(
     {

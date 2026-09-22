@@ -37,6 +37,12 @@ section; the engine's own concept is the input location, so the flat
 surface keeps `inputLocation` while every rendered document keeps the field
 name its source specifies.
 
+The schema-location row is spelled as a URI in every column: its JSON
+Pointer is percent-encoded into a URI fragment, so a property named `a b`
+appears as `#/properties/a%20b`. The evaluation-path and input-location
+rows are plain-text JSON Pointers in every column and are never encoded.
+See [Read error details](validation.md#read-error-details).
+
 ## Flag
 
 ```python

@@ -66,7 +66,7 @@ from json_schema_engine.core.result import (
     assemble_result,
     resolve_output_demand,
 )
-from json_schema_engine.core.uri import split_fragment
+from json_schema_engine.core.uri import pointer_from_fragment, split_fragment
 
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
@@ -232,12 +232,20 @@ class Engine:
         the source range when that document's loader reported positions;
         None for a resource the registry never saw. Zero cost on the
         evaluation path: nothing calls this unless asked.
+
+        `schema_location` is a URI, so its fragment is decoded back into a
+        plain-text pointer before it is joined to the document-rooted one
+        (P10) — the ranges a loader reports are keyed by plain pointers,
+        and the locations the engine emits are the argument this is
+        expected to be given.
         """
         resource, fragment = split_fragment(schema_location)
         location = self.schemas.document_location(resource)
         if location is None:
             return None
-        pointer = location.pointer + (fragment or "")
+        pointer = location.pointer + (
+            "" if fragment is None else pointer_from_fragment(fragment)
+        )
         source: SourceLocation = {
             "documentUri": location.document_uri,
             "pointer": pointer,

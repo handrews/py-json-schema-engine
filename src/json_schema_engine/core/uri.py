@@ -22,8 +22,14 @@
 # and host, and percent-encoding normalization, are deliberately out of scope
 # for now — the registry compares identifiers as the schema author wrote
 # them, which matches every current implementation's observable behavior.
+#
+# `pointer_fragment`/`pointer_from_fragment` are the exception, and not a
+# contradiction of it: they convert between two representations that are
+# *known* to differ (a plain-text JSON Pointer and its URI fragment form,
+# RFC 6901 §6), rather than rewriting a URI a schema author supplied.
 
 import re
+from urllib.parse import quote, unquote
 
 # RFC 3986 Appendix B, verbatim. It matches any string, so parsing never
 # fails; an unusable result is the caller's judgment to make (see `resolve`).
@@ -187,6 +193,61 @@ def split_fragment(uri: str) -> tuple[str, str | None]:
 def strip_fragment(uri: str) -> str:
     """Return `uri` without its fragment, `#` included."""
     return split_fragment(uri)[0]
+
+
+# RFC 3986: `fragment = *( pchar / "/" / "?" )`, where
+# `pchar = unreserved / pct-encoded / sub-delims / ":" / "@"`. `quote`
+# already leaves `unreserved` (ALPHA / DIGIT / "-" / "." / "_" / "~")
+# alone, so this adds the rest. `/` is on the list because a JSON Pointer
+# is made of it; `%` is deliberately *not*, so a literal percent in a
+# member name becomes `%25` and survives the round trip.
+_FRAGMENT_SAFE = "/?:@!$&'()*+,;="
+
+
+def pointer_fragment(pointer: str) -> str:
+    """Encode a plain-text JSON Pointer as a URI fragment (RFC 6901 §6).
+
+    The pointer arrives already RFC 6901-escaped (`~0`/`~1` applied by
+    `escape_segment`); what remains is RFC 3986's requirement that a
+    fragment contain only `pchar / "/" / "?"`. Space, `"`, `<`, `>`, `\\`,
+    `^`, `` ` ``, `{`, `|`, `}`, `#`, `%`, the control characters, and every
+    non-ASCII character (as UTF-8 bytes) are percent-encoded; everything an
+    ordinary pointer is made of is left alone, so `/properties/foo` reads
+    unchanged.
+
+    Non-ASCII is encoded rather than passed through because a schema
+    location is a URI, not an IRI (P10): it is built to be pasted into a
+    `$ref` or fed back to `Engine.locate`. A human-facing UI that would
+    rather show `#/properties/名前` decodes for display.
+    """
+    return quote(pointer, safe=_FRAGMENT_SAFE)
+
+
+def pointer_from_fragment(fragment: str) -> str:
+    """Decode a URI fragment into a plain-text JSON Pointer.
+
+    The exact inverse of `pointer_fragment`, and the only way a fragment
+    becomes a pointer: every lookup that navigates a pointer (`resolve_ref`,
+    `Engine.locate`) goes through it, so the encoding decision lives in one
+    pair of functions rather than at each call site.
+
+    Malformed percent-escapes and byte sequences that are not UTF-8 are
+    replaced rather than rejected, matching `unquote`'s default — a
+    reference that decodes to a member name nothing holds fails as an
+    ordinary unresolvable reference, with the location to say where.
+    """
+    return unquote(fragment)
+
+
+def schema_location(base_uri: str, pointer: str) -> str:
+    """Build the canonical `schemaLocation` for a position (P10).
+
+    `base_uri` is fragment-free and already a URI; `pointer` is plain text.
+    Every schema location the engine emits — `SchemaRef.location`, the
+    `schema_location` on a raised error, the `schemaLocation` of an output
+    unit — is built here, so none of them can drift apart.
+    """
+    return f"{base_uri}#{pointer_fragment(pointer)}"
 
 
 def has_scheme(uri: str) -> bool:

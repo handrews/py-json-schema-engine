@@ -33,6 +33,7 @@ from json_schema_engine.core.output import (
     make_record_predicate,
 )
 from json_schema_engine.core.ref import SchemaRef
+from json_schema_engine.core.uri import schema_location
 
 
 def _keyword_suffix(keyword_name: str | None) -> str:
@@ -43,6 +44,10 @@ def _keyword_suffix(keyword_name: str | None) -> str:
     here, at render time, once per unit — which is why several annotation
     records with different `keyword_name`s can hold the very same
     `path_node`.
+
+    Plain text, as an `evaluationPath` stays (P10). `_schema_location`
+    takes the same suffix and fragment-encodes the whole pointer, since a
+    `schemaLocation` is a URI.
     """
     return "" if keyword_name is None else "/" + escape_segment(keyword_name)
 
@@ -52,7 +57,16 @@ def _evaluation_path(path_node: PathNode | None, keyword_name: str | None) -> st
 
 
 def _schema_location(schema_ref: SchemaRef, keyword_name: str | None) -> str:
-    return schema_ref.location + _keyword_suffix(keyword_name)
+    """The unit's `schemaLocation`: a URI, keyword segment included.
+
+    Built from the ref's parts rather than by appending to `.location`,
+    because the suffix has to be fragment-encoded too (P10) and an unknown
+    keyword's name is whatever the schema author wrote — a keyword holding
+    a space or a `%` must not break the URI the rest of the location is.
+    """
+    return schema_location(
+        schema_ref.base_uri, schema_ref.pointer + _keyword_suffix(keyword_name)
+    )
 
 
 def render_error(record: ErrorRecord, *, error_params: bool) -> ErrorUnit:
