@@ -49,6 +49,11 @@ _PARTITION_NAMES = ("compile", "hot", "valid", "invalid")
 
 _MIN_BATCH_SECONDS = 0.005
 
+# The plain interpreter subjects have no separate cold-artifact build step
+# worth reporting (`prepare` just registers the schema) — `jse interpreter
+# flag` and its `list`-output counterpart both skip the "compile" partition.
+_NO_COMPILE_PARTITION = {"jse interpreter flag", "jse interpreter list"}
+
 # .../packages/bench/src/json_schema_engine/bench/harness.py -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SUBJECT_PACKAGES = ("json-schema-engine", "ecma-regex", "fastjsonschema", "jsonschema")
@@ -305,7 +310,7 @@ def run(budget_ms: int = 250, filter_regex: str | None = None) -> Results:
                 exclusions.append(Exclusion(corpus.name, subject.name, reason))
                 continue
 
-            if subject.name != "jse interpreter flag":
+            if subject.name not in _NO_COMPILE_PARTITION:
                 task = _task_name(corpus.name, "compile", subject.name)
                 if _matches(pattern, task):
                     timed = _time_task(

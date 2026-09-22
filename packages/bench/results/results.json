@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-09-21T21:25:20.483075+00:00",
+  "generated_at": "2026-09-22T00:32:14.513336+00:00",
   "python": "3.12.11",
   "platform": "macOS-26.6-arm64-arm-64bit",
   "machine": "Apple M4 Pro",
-  "commit": "836f691",
+  "commit": "fb5e01f",
   "subjects": {
     "json-schema-engine": "0.0.2",
     "ecma-regex": "0.1.0",
@@ -56,11 +56,6 @@
     },
     {
       "corpus": "oas-document",
-      "subject": "jse standalone",
-      "reason": "the schema needs the interpreter at evaluation time (unlowerable: 1); interpreted units: https://spec.openapis.org/oas/3.1/schema/2025-09-15#"
-    },
-    {
-      "corpus": "oas-document",
       "subject": "fastjsonschema",
       "reason": "fastjsonschema disagrees with the oracle on oas-document#1: got True, expected False"
     }
@@ -71,8 +66,8 @@
       "corpus": "user",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 25154.88882407128,
-      "mean_ns": 39753.70382249821,
+      "ops_per_sec": 25599.71022933896,
+      "mean_ns": 39062.942159944214,
       "samples": 6400
     },
     {
@@ -80,8 +75,8 @@
       "corpus": "user",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 22518.419840499744,
-      "mean_ns": 44408.08933677858,
+      "ops_per_sec": 22936.051976032573,
+      "mean_ns": 43599.482641780174,
       "samples": 5800
     },
     {
@@ -89,17 +84,17 @@
       "corpus": "user",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 27245.39740490911,
-      "mean_ns": 36703.44701302903,
-      "samples": 7000
+      "ops_per_sec": 28177.26379390939,
+      "mean_ns": 35489.6063476594,
+      "samples": 7200
     },
     {
       "task": "user | compile | jse compiled flag",
       "corpus": "user",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 730.9247057621944,
-      "mean_ns": 1368129.9757917186,
+      "ops_per_sec": 726.4036510104863,
+      "mean_ns": 1376645.0631256038,
       "samples": 185
     },
     {
@@ -107,44 +102,107 @@
       "corpus": "user",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 2306387.6746948506,
-      "mean_ns": 433.57845299459734,
-      "samples": 580000
+      "ops_per_sec": 2396445.2305894457,
+      "mean_ns": 417.28472958008444,
+      "samples": 600000
     },
     {
       "task": "user | valid | jse compiled flag",
       "corpus": "user",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 1806611.3966962271,
-      "mean_ns": 553.5224685445428,
-      "samples": 460000
+      "ops_per_sec": 1866243.8970891444,
+      "mean_ns": 535.8356437546776,
+      "samples": 470000
     },
     {
       "task": "user | invalid | jse compiled flag",
       "corpus": "user",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 3224099.5345867625,
-      "mean_ns": 310.1641215702019,
-      "samples": 820000
+      "ops_per_sec": 3328645.8671001215,
+      "mean_ns": 300.4224660495917,
+      "samples": 840000
+    },
+    {
+      "task": "user | hot | jse interpreter list",
+      "corpus": "user",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 14040.383798039404,
+      "mean_ns": 71223.12426670558,
+      "samples": 3600
+    },
+    {
+      "task": "user | valid | jse interpreter list",
+      "corpus": "user",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 12979.427637635798,
+      "mean_ns": 77044.99981958757,
+      "samples": 3300
+    },
+    {
+      "task": "user | invalid | jse interpreter list",
+      "corpus": "user",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 15139.143099906347,
+      "mean_ns": 66053.9366991112,
+      "samples": 3800
+    },
+    {
+      "task": "user | compile | jse compiled evaluator (list)",
+      "corpus": "user",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 238.2659415284159,
+      "mean_ns": 4196990.948791306,
+      "samples": 60
+    },
+    {
+      "task": "user | hot | jse compiled evaluator (list)",
+      "corpus": "user",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 32401.64917563216,
+      "mean_ns": 30862.62660827942,
+      "samples": 8200
+    },
+    {
+      "task": "user | valid | jse compiled evaluator (list)",
+      "corpus": "user",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 30672.313415452405,
+      "mean_ns": 32602.692416940743,
+      "samples": 7800
+    },
+    {
+      "task": "user | invalid | jse compiled evaluator (list)",
+      "corpus": "user",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 34574.60811639123,
+      "mean_ns": 28922.95978116718,
+      "samples": 8800
     },
     {
       "task": "user | compile | jse standalone",
       "corpus": "user",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 478.19481696445564,
-      "mean_ns": 2091197.9062172275,
-      "samples": 120
+      "ops_per_sec": 503.9046972802173,
+      "mean_ns": 1984502.2390095089,
+      "samples": 130
     },
     {
       "task": "user | hot | jse standalone",
       "corpus": "user",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 2362041.9747129246,
-      "mean_ns": 423.3625018969178,
+      "ops_per_sec": 2328775.935875393,
+      "mean_ns": 429.4101397196452,
       "samples": 600000
     },
     {
@@ -152,53 +210,53 @@
       "corpus": "user",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 1863310.036160665,
-      "mean_ns": 536.6793397734773,
-      "samples": 470000
+      "ops_per_sec": 1790175.840315355,
+      "mean_ns": 558.6043434838454,
+      "samples": 450000
     },
     {
       "task": "user | invalid | jse standalone",
       "corpus": "user",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 3342340.2377410876,
-      "mean_ns": 299.19156305758014,
-      "samples": 840000
+      "ops_per_sec": 3187660.005840179,
+      "mean_ns": 313.70974262245,
+      "samples": 800000
     },
     {
       "task": "user | compile | fastjsonschema",
       "corpus": "user",
       "partition": "compile",
       "subject": "fastjsonschema",
-      "ops_per_sec": 967.1467874867438,
-      "mean_ns": 1033969.2101946898,
-      "samples": 245
+      "ops_per_sec": 1017.9503459748506,
+      "mean_ns": 982366.1870681322,
+      "samples": 260
     },
     {
       "task": "user | hot | fastjsonschema",
       "corpus": "user",
       "partition": "hot",
       "subject": "fastjsonschema",
-      "ops_per_sec": 869526.2712288372,
-      "mean_ns": 1150.051508606835,
-      "samples": 220000
+      "ops_per_sec": 884630.2806341869,
+      "mean_ns": 1130.4157475630443,
+      "samples": 225000
     },
     {
       "task": "user | valid | fastjsonschema",
       "corpus": "user",
       "partition": "valid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 1017880.7570748997,
-      "mean_ns": 982.4333479627968,
-      "samples": 260000
+      "ops_per_sec": 1044642.1579123648,
+      "mean_ns": 957.2655980095819,
+      "samples": 270000
     },
     {
       "task": "user | invalid | fastjsonschema",
       "corpus": "user",
       "partition": "invalid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 809252.7239430298,
-      "mean_ns": 1235.7079196812176,
+      "ops_per_sec": 813033.2721243595,
+      "mean_ns": 1229.9619637793157,
       "samples": 205000
     },
     {
@@ -206,8 +264,8 @@
       "corpus": "user",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 498206.28873073583,
-      "mean_ns": 2007.2006769478319,
+      "ops_per_sec": 494874.33763855114,
+      "mean_ns": 2020.7150056958199,
       "samples": 125000
     },
     {
@@ -215,17 +273,17 @@
       "corpus": "user",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 66972.91612076957,
-      "mean_ns": 14931.408962344422,
-      "samples": 17000
+      "ops_per_sec": 68449.58280029299,
+      "mean_ns": 14609.292841383389,
+      "samples": 17500
     },
     {
       "task": "user | valid | jsonschema",
       "corpus": "user",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 56934.63887879321,
-      "mean_ns": 17564.000048000235,
+      "ops_per_sec": 57050.46214574467,
+      "mean_ns": 17528.34179406536,
       "samples": 14500
     },
     {
@@ -233,17 +291,17 @@
       "corpus": "user",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 78454.97390466319,
-      "mean_ns": 12746.164458803833,
-      "samples": 20000
+      "ops_per_sec": 81508.92304709415,
+      "mean_ns": 12268.595420187567,
+      "samples": 20500
     },
     {
       "task": "event | hot | jse interpreter flag",
       "corpus": "event",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 18552.134488189822,
-      "mean_ns": 53902.1534495987,
+      "ops_per_sec": 18934.350807603052,
+      "mean_ns": 52814.06318924079,
       "samples": 4800
     },
     {
@@ -251,98 +309,161 @@
       "corpus": "event",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 18892.0038193222,
-      "mean_ns": 52932.4474822109,
-      "samples": 4800
+      "ops_per_sec": 19293.870792005957,
+      "mean_ns": 51829.93142124341,
+      "samples": 4900
     },
     {
       "task": "event | invalid | jse interpreter flag",
       "corpus": "event",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 19481.38445366777,
-      "mean_ns": 51331.054134180355,
-      "samples": 4900
+      "ops_per_sec": 19057.557433168182,
+      "mean_ns": 52472.6216099225,
+      "samples": 4800
     },
     {
       "task": "event | compile | jse compiled flag",
       "corpus": "event",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 1332.2305358026422,
-      "mean_ns": 750620.8371042329,
-      "samples": 340
+      "ops_per_sec": 1202.5507642681284,
+      "mean_ns": 831565.7265484333,
+      "samples": 310
     },
     {
       "task": "event | hot | jse compiled flag",
       "corpus": "event",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 6026478.538934786,
-      "mean_ns": 165.9343833284032,
-      "samples": 1550000
+      "ops_per_sec": 5748186.865038574,
+      "mean_ns": 173.96790039693488,
+      "samples": 1450000
     },
     {
       "task": "event | valid | jse compiled flag",
       "corpus": "event",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 4559314.208788685,
-      "mean_ns": 219.33123145414436,
-      "samples": 1150000
+      "ops_per_sec": 4291632.705191035,
+      "mean_ns": 233.01155264066023,
+      "samples": 1100000
     },
     {
       "task": "event | invalid | jse compiled flag",
       "corpus": "event",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 7388071.835372658,
-      "mean_ns": 135.35331305418464,
-      "samples": 1850000
+      "ops_per_sec": 6932489.032181578,
+      "mean_ns": 144.24833495702063,
+      "samples": 1750000
+    },
+    {
+      "task": "event | hot | jse interpreter list",
+      "corpus": "event",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 10894.240284178739,
+      "mean_ns": 91791.62327200174,
+      "samples": 2800
+    },
+    {
+      "task": "event | valid | jse interpreter list",
+      "corpus": "event",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 11160.336107709212,
+      "mean_ns": 89603.0361764133,
+      "samples": 2800
+    },
+    {
+      "task": "event | invalid | jse interpreter list",
+      "corpus": "event",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 10755.92047480891,
+      "mean_ns": 92972.05221459821,
+      "samples": 2700
+    },
+    {
+      "task": "event | compile | jse compiled evaluator (list)",
+      "corpus": "event",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 299.4003601277545,
+      "mean_ns": 3340009.342584955,
+      "samples": 76
+    },
+    {
+      "task": "event | hot | jse compiled evaluator (list)",
+      "corpus": "event",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 27115.251485297813,
+      "mean_ns": 36879.613694241816,
+      "samples": 6800
+    },
+    {
+      "task": "event | valid | jse compiled evaluator (list)",
+      "corpus": "event",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 30525.17424466334,
+      "mean_ns": 32759.845758286807,
+      "samples": 7800
+    },
+    {
+      "task": "event | invalid | jse compiled evaluator (list)",
+      "corpus": "event",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 26316.66381074488,
+      "mean_ns": 37998.73749923074,
+      "samples": 6600
     },
     {
       "task": "event | compile | jse standalone",
       "corpus": "event",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 789.0267445967464,
-      "mean_ns": 1267384.1626383364,
-      "samples": 200
+      "ops_per_sec": 851.6412725750615,
+      "mean_ns": 1174203.308602405,
+      "samples": 215
     },
     {
       "task": "event | hot | jse standalone",
       "corpus": "event",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 6110606.913597114,
-      "mean_ns": 163.64986557633645,
-      "samples": 1550000
+      "ops_per_sec": 5255710.545189057,
+      "mean_ns": 190.26923027855378,
+      "samples": 1350000
     },
     {
       "task": "event | valid | jse standalone",
       "corpus": "event",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 4507733.435194906,
-      "mean_ns": 221.84097936943823,
-      "samples": 1150000
+      "ops_per_sec": 4312086.575161174,
+      "mean_ns": 231.90629004535302,
+      "samples": 1080000
     },
     {
       "task": "event | invalid | jse standalone",
       "corpus": "event",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 7358179.632941173,
-      "mean_ns": 135.90317848767782,
-      "samples": 1850000
+      "ops_per_sec": 7029507.555832523,
+      "mean_ns": 142.25747565635376,
+      "samples": 1800000
     },
     {
       "task": "event | compile | jsonschema",
       "corpus": "event",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 482307.6639773109,
-      "mean_ns": 2073.3653530478477,
+      "ops_per_sec": 495926.29392198956,
+      "mean_ns": 2016.4286755025385,
       "samples": 125000
     },
     {
@@ -350,8 +471,8 @@
       "corpus": "event",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 31880.431690088873,
-      "mean_ns": 31367.203861009333,
+      "ops_per_sec": 31665.334253104633,
+      "mean_ns": 31580.27614699677,
       "samples": 8000
     },
     {
@@ -359,17 +480,17 @@
       "corpus": "event",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 18995.99912500533,
-      "mean_ns": 52642.66403780008,
-      "samples": 4800
+      "ops_per_sec": 18587.10668762626,
+      "mean_ns": 53800.73492910634,
+      "samples": 4700
     },
     {
       "task": "event | invalid | jsonschema",
       "corpus": "event",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 46962.7569289442,
-      "mean_ns": 21293.46881217013,
+      "ops_per_sec": 46945.394965172076,
+      "mean_ns": 21301.34384303043,
       "samples": 12000
     },
     {
@@ -377,143 +498,206 @@
       "corpus": "profile",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 66753.19524512497,
-      "mean_ns": 14980.556306374425,
-      "samples": 17000
+      "ops_per_sec": 64686.64642927459,
+      "mean_ns": 15459.141186015173,
+      "samples": 16500
     },
     {
       "task": "profile | valid | jse interpreter flag",
       "corpus": "profile",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 61902.12201188099,
-      "mean_ns": 16154.535054679842,
-      "samples": 15500
+      "ops_per_sec": 59545.528429777754,
+      "mean_ns": 16793.872291843098,
+      "samples": 15000
     },
     {
       "task": "profile | invalid | jse interpreter flag",
       "corpus": "profile",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 72912.47360446499,
-      "mean_ns": 13715.074397623539,
-      "samples": 18500
+      "ops_per_sec": 71200.60635417506,
+      "mean_ns": 14044.824211547771,
+      "samples": 18000
     },
     {
       "task": "profile | compile | jse compiled flag",
       "corpus": "profile",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 2353.015015330434,
-      "mean_ns": 424986.663274467,
-      "samples": 600
+      "ops_per_sec": 2197.464406949752,
+      "mean_ns": 455069.94190093665,
+      "samples": 560
     },
     {
       "task": "profile | hot | jse compiled flag",
       "corpus": "profile",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 10236563.090535339,
-      "mean_ns": 97.68903792764132,
-      "samples": 2600000
+      "ops_per_sec": 9818713.7889022,
+      "mean_ns": 101.84633359313011,
+      "samples": 2500000
     },
     {
       "task": "profile | valid | jse compiled flag",
       "corpus": "profile",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 9415730.948960287,
-      "mean_ns": 106.20524369490644,
-      "samples": 2400000
+      "ops_per_sec": 9161328.345726684,
+      "mean_ns": 109.15447654121596,
+      "samples": 2300000
     },
     {
       "task": "profile | invalid | jse compiled flag",
       "corpus": "profile",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 11747524.064860925,
-      "mean_ns": 85.12432019536695,
-      "samples": 3000000
+      "ops_per_sec": 11426882.712366268,
+      "mean_ns": 87.51293114418613,
+      "samples": 2900000
+    },
+    {
+      "task": "profile | hot | jse interpreter list",
+      "corpus": "profile",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 34577.79025126544,
+      "mean_ns": 28920.29805066572,
+      "samples": 8800
+    },
+    {
+      "task": "profile | valid | jse interpreter list",
+      "corpus": "profile",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 34340.07118631867,
+      "mean_ns": 29120.498748366223,
+      "samples": 8600
+    },
+    {
+      "task": "profile | invalid | jse interpreter list",
+      "corpus": "profile",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 36590.47705627847,
+      "mean_ns": 27329.515230477504,
+      "samples": 9200
+    },
+    {
+      "task": "profile | compile | jse compiled evaluator (list)",
+      "corpus": "profile",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 550.9091676036805,
+      "mean_ns": 1815181.2654520783,
+      "samples": 140
+    },
+    {
+      "task": "profile | hot | jse compiled evaluator (list)",
+      "corpus": "profile",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 67718.20209201914,
+      "mean_ns": 14767.078408861862,
+      "samples": 17000
+    },
+    {
+      "task": "profile | valid | jse compiled evaluator (list)",
+      "corpus": "profile",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 68073.3426786929,
+      "mean_ns": 14690.038136073521,
+      "samples": 17500
+    },
+    {
+      "task": "profile | invalid | jse compiled evaluator (list)",
+      "corpus": "profile",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 67997.36443329738,
+      "mean_ns": 14706.452350531306,
+      "samples": 17500
     },
     {
       "task": "profile | compile | jse standalone",
       "corpus": "profile",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 1248.5468269763096,
-      "mean_ns": 800931.1131900176,
-      "samples": 320
+      "ops_per_sec": 1131.1935777453475,
+      "mean_ns": 884021.9920565342,
+      "samples": 290
     },
     {
       "task": "profile | hot | jse standalone",
       "corpus": "profile",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 10105631.494037565,
-      "mean_ns": 98.95472644040218,
-      "samples": 2600000
+      "ops_per_sec": 9597694.980357435,
+      "mean_ns": 104.19168373725066,
+      "samples": 2400000
     },
     {
       "task": "profile | valid | jse standalone",
       "corpus": "profile",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 9406219.38486339,
-      "mean_ns": 106.31263838149607,
-      "samples": 2400000
+      "ops_per_sec": 9122166.660148388,
+      "mean_ns": 109.62307939062947,
+      "samples": 2300000
     },
     {
       "task": "profile | invalid | jse standalone",
       "corpus": "profile",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 11843067.609380923,
-      "mean_ns": 84.43758264183998,
-      "samples": 3000000
+      "ops_per_sec": 11377719.055452874,
+      "mean_ns": 87.89107861832298,
+      "samples": 2900000
     },
     {
       "task": "profile | compile | fastjsonschema",
       "corpus": "profile",
       "partition": "compile",
       "subject": "fastjsonschema",
-      "ops_per_sec": 2995.5249799181656,
-      "mean_ns": 333831.30059136375,
-      "samples": 760
+      "ops_per_sec": 2959.1059146694056,
+      "mean_ns": 337939.91456764773,
+      "samples": 740
     },
     {
       "task": "profile | hot | fastjsonschema",
       "corpus": "profile",
       "partition": "hot",
       "subject": "fastjsonschema",
-      "ops_per_sec": 1813895.5909818192,
-      "mean_ns": 551.2996475495722,
-      "samples": 460000
+      "ops_per_sec": 1720273.468360906,
+      "mean_ns": 581.3029256056656,
+      "samples": 440000
     },
     {
       "task": "profile | valid | fastjsonschema",
       "corpus": "profile",
       "partition": "valid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 3037723.8073783373,
-      "mean_ns": 329.1938515183957,
-      "samples": 760000
+      "ops_per_sec": 2879132.4308131225,
+      "mean_ns": 347.3268507199513,
+      "samples": 740000
     },
     {
       "task": "profile | invalid | fastjsonschema",
       "corpus": "profile",
       "partition": "invalid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 1342440.4304047371,
-      "mean_ns": 744.9120105079868,
-      "samples": 340000
+      "ops_per_sec": 1257917.6743066064,
+      "mean_ns": 794.9645834742114,
+      "samples": 320000
     },
     {
       "task": "profile | compile | jsonschema",
       "corpus": "profile",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 535970.2200005138,
-      "mean_ns": 1865.7753037081825,
+      "ops_per_sec": 523788.64932695345,
+      "mean_ns": 1909.1669918486364,
       "samples": 135000
     },
     {
@@ -521,17 +705,17 @@
       "corpus": "profile",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 165181.88830197172,
-      "mean_ns": 6053.932487875933,
-      "samples": 42000
+      "ops_per_sec": 162745.31538393223,
+      "mean_ns": 6144.570107231053,
+      "samples": 41000
     },
     {
       "task": "profile | valid | jsonschema",
       "corpus": "profile",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 153949.24084896522,
-      "mean_ns": 6495.6474905976875,
+      "ops_per_sec": 152096.7894478215,
+      "mean_ns": 6574.7607403840775,
       "samples": 39000
     },
     {
@@ -539,107 +723,206 @@
       "corpus": "profile",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 184306.19693217747,
-      "mean_ns": 5425.75353756547,
-      "samples": 47000
+      "ops_per_sec": 180812.13461338868,
+      "mean_ns": 5530.602258184682,
+      "samples": 46000
     },
     {
       "task": "oas-document | hot | jse interpreter flag",
       "corpus": "oas-document",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 519.2998020096184,
-      "mean_ns": 1925669.9042251478,
-      "samples": 130
+      "ops_per_sec": 354.6687967178884,
+      "mean_ns": 2819531.9386819997,
+      "samples": 90
     },
     {
       "task": "oas-document | valid | jse interpreter flag",
       "corpus": "oas-document",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 513.8510878339351,
-      "mean_ns": 1946089.0979434436,
-      "samples": 130
+      "ops_per_sec": 360.5260590911364,
+      "mean_ns": 2773724.6026568436,
+      "samples": 92
     },
     {
       "task": "oas-document | invalid | jse interpreter flag",
       "corpus": "oas-document",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 498.08246693801055,
-      "mean_ns": 2007699.6609568596,
-      "samples": 125
+      "ops_per_sec": 365.58047449442813,
+      "mean_ns": 2735375.8468171177,
+      "samples": 92
     },
     {
       "task": "oas-document | compile | jse compiled flag",
       "corpus": "oas-document",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 693.9479612020655,
-      "mean_ns": 1441030.2442099366,
-      "samples": 175
+      "ops_per_sec": 30.85609754743506,
+      "mean_ns": 32408505.270723253,
+      "samples": 8
     },
     {
       "task": "oas-document | hot | jse compiled flag",
       "corpus": "oas-document",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 346.61726072532815,
-      "mean_ns": 2885026.550343768,
-      "samples": 88
+      "ops_per_sec": 78128.00043706901,
+      "mean_ns": 12799.508427269757,
+      "samples": 20000
     },
     {
       "task": "oas-document | valid | jse compiled flag",
       "corpus": "oas-document",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 351.84229911767096,
-      "mean_ns": 2842182.4280586503,
-      "samples": 90
+      "ops_per_sec": 40059.270376369466,
+      "mean_ns": 24963.010823828914,
+      "samples": 10200
     },
     {
       "task": "oas-document | invalid | jse compiled flag",
       "corpus": "oas-document",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 325.83628071311585,
-      "mean_ns": 3069025.947053621,
-      "samples": 82
+      "ops_per_sec": 1499865.5537151268,
+      "mean_ns": 666.7264259273285,
+      "samples": 380000
+    },
+    {
+      "task": "oas-document | hot | jse interpreter list",
+      "corpus": "oas-document",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 260.8883426389034,
+      "mean_ns": 3833057.42941571,
+      "samples": 66
+    },
+    {
+      "task": "oas-document | valid | jse interpreter list",
+      "corpus": "oas-document",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 266.44719276212464,
+      "mean_ns": 3753088.8940262445,
+      "samples": 68
+    },
+    {
+      "task": "oas-document | invalid | jse interpreter list",
+      "corpus": "oas-document",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 263.2488625927149,
+      "mean_ns": 3798686.878078363,
+      "samples": 66
+    },
+    {
+      "task": "oas-document | compile | jse compiled evaluator (list)",
+      "corpus": "oas-document",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 9.220360831038759,
+      "mean_ns": 108455625.36269426,
+      "samples": 3
+    },
+    {
+      "task": "oas-document | hot | jse compiled evaluator (list)",
+      "corpus": "oas-document",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 906.6087909859332,
+      "mean_ns": 1103011.5855290839,
+      "samples": 230
+    },
+    {
+      "task": "oas-document | valid | jse compiled evaluator (list)",
+      "corpus": "oas-document",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 912.276521076864,
+      "mean_ns": 1096158.8694835487,
+      "samples": 230
+    },
+    {
+      "task": "oas-document | invalid | jse compiled evaluator (list)",
+      "corpus": "oas-document",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 897.3170121502983,
+      "mean_ns": 1114433.3456953366,
+      "samples": 225
+    },
+    {
+      "task": "oas-document | compile | jse standalone",
+      "corpus": "oas-document",
+      "partition": "compile",
+      "subject": "jse standalone",
+      "ops_per_sec": 27.469113505468783,
+      "mean_ns": 36404523.93197587,
+      "samples": 7
+    },
+    {
+      "task": "oas-document | hot | jse standalone",
+      "corpus": "oas-document",
+      "partition": "hot",
+      "subject": "jse standalone",
+      "ops_per_sec": 76604.1450604716,
+      "mean_ns": 13054.123888604152,
+      "samples": 19500
+    },
+    {
+      "task": "oas-document | valid | jse standalone",
+      "corpus": "oas-document",
+      "partition": "valid",
+      "subject": "jse standalone",
+      "ops_per_sec": 39334.892331841096,
+      "mean_ns": 25422.721169888973,
+      "samples": 10000
+    },
+    {
+      "task": "oas-document | invalid | jse standalone",
+      "corpus": "oas-document",
+      "partition": "invalid",
+      "subject": "jse standalone",
+      "ops_per_sec": 1498176.0652807823,
+      "mean_ns": 667.4782912197866,
+      "samples": 380000
     },
     {
       "task": "oas-document | compile | jsonschema",
       "corpus": "oas-document",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 470333.5455143294,
-      "mean_ns": 2126.1507063172758,
-      "samples": 120000
+      "ops_per_sec": 485798.56580331054,
+      "mean_ns": 2058.466348797083,
+      "samples": 125000
     },
     {
       "task": "oas-document | hot | jsonschema",
       "corpus": "oas-document",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 266.392937355996,
-      "mean_ns": 3753853.2737586927,
-      "samples": 67
+      "ops_per_sec": 272.9256309525844,
+      "mean_ns": 3664001.7887280467,
+      "samples": 69
     },
     {
       "task": "oas-document | valid | jsonschema",
       "corpus": "oas-document",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 134.7572482127466,
-      "mean_ns": 7420751.1155263465,
-      "samples": 34
+      "ops_per_sec": 138.17159529687203,
+      "mean_ns": 7237377.536616155,
+      "samples": 35
     },
     {
       "task": "oas-document | invalid | jsonschema",
       "corpus": "oas-document",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 226851.1931553876,
-      "mean_ns": 4408.176065069334,
+      "ops_per_sec": 224066.04423881913,
+      "mean_ns": 4462.969850684548,
       "samples": 58000
     },
     {
@@ -647,8 +930,8 @@
       "corpus": "api-payload",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 7628.987429300535,
-      "mean_ns": 131078.99433145157,
+      "ops_per_sec": 7682.377501100844,
+      "mean_ns": 130168.03715473568,
       "samples": 1950
     },
     {
@@ -656,62 +939,125 @@
       "corpus": "api-payload",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 7729.44057963679,
-      "mean_ns": 129375.4689873029,
-      "samples": 1950
+      "ops_per_sec": 7804.534006506138,
+      "mean_ns": 128130.64805231988,
+      "samples": 2000
     },
     {
       "task": "api-payload | invalid | jse interpreter flag",
       "corpus": "api-payload",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 7880.44708195547,
-      "mean_ns": 126896.35367132723,
-      "samples": 2000
+      "ops_per_sec": 7558.398623247839,
+      "mean_ns": 132303.157037026,
+      "samples": 1900
     },
     {
       "task": "api-payload | compile | jse compiled flag",
       "corpus": "api-payload",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 412.98774508430256,
-      "mean_ns": 2421379.355447633,
-      "samples": 105
+      "ops_per_sec": 403.7910300094204,
+      "mean_ns": 2476528.5151992356,
+      "samples": 102
     },
     {
       "task": "api-payload | hot | jse compiled flag",
       "corpus": "api-payload",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 502676.267095726,
-      "mean_ns": 1989.3519257983337,
-      "samples": 130000
+      "ops_per_sec": 491397.5174292144,
+      "mean_ns": 2035.0123159587383,
+      "samples": 125000
     },
     {
       "task": "api-payload | valid | jse compiled flag",
       "corpus": "api-payload",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 408233.7611035713,
-      "mean_ns": 2449.576922047597,
-      "samples": 104000
+      "ops_per_sec": 398171.4647886338,
+      "mean_ns": 2511.4808278158307,
+      "samples": 100000
     },
     {
       "task": "api-payload | invalid | jse compiled flag",
       "corpus": "api-payload",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 674973.6930385742,
-      "mean_ns": 1481.5392219187581,
-      "samples": 170000
+      "ops_per_sec": 650875.1560723118,
+      "mean_ns": 1536.3929482797782,
+      "samples": 165000
+    },
+    {
+      "task": "api-payload | hot | jse interpreter list",
+      "corpus": "api-payload",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 4597.240170616603,
+      "mean_ns": 217521.80936543836,
+      "samples": 1150
+    },
+    {
+      "task": "api-payload | valid | jse interpreter list",
+      "corpus": "api-payload",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 4670.507034847564,
+      "mean_ns": 214109.51584888,
+      "samples": 1200
+    },
+    {
+      "task": "api-payload | invalid | jse interpreter list",
+      "corpus": "api-payload",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 4579.142008188184,
+      "mean_ns": 218381.52173744596,
+      "samples": 1150
+    },
+    {
+      "task": "api-payload | compile | jse compiled evaluator (list)",
+      "corpus": "api-payload",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 125.43297382153747,
+      "mean_ns": 7972385.3268660605,
+      "samples": 32
+    },
+    {
+      "task": "api-payload | hot | jse compiled evaluator (list)",
+      "corpus": "api-payload",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 11249.666550046659,
+      "mean_ns": 88891.52363328071,
+      "samples": 2900
+    },
+    {
+      "task": "api-payload | valid | jse compiled evaluator (list)",
+      "corpus": "api-payload",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 11647.281466563232,
+      "mean_ns": 85856.94463302693,
+      "samples": 3000
+    },
+    {
+      "task": "api-payload | invalid | jse compiled evaluator (list)",
+      "corpus": "api-payload",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 11152.149927759372,
+      "mean_ns": 89668.80883755429,
+      "samples": 2800
     },
     {
       "task": "api-payload | compile | jse standalone",
       "corpus": "api-payload",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 321.01592758825984,
-      "mean_ns": 3115110.2299279557,
+      "ops_per_sec": 320.65616621759347,
+      "mean_ns": 3118605.2393622515,
       "samples": 82
     },
     {
@@ -719,8 +1065,8 @@
       "corpus": "api-payload",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 493053.61854353664,
-      "mean_ns": 2028.1769819557667,
+      "ops_per_sec": 494011.91259482055,
+      "mean_ns": 2024.2426842451096,
       "samples": 125000
     },
     {
@@ -728,17 +1074,17 @@
       "corpus": "api-payload",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 399952.68728092196,
-      "mean_ns": 2500.295739474834,
-      "samples": 102000
+      "ops_per_sec": 379275.74630563596,
+      "mean_ns": 2636.6041323247678,
+      "samples": 96000
     },
     {
       "task": "api-payload | invalid | jse standalone",
       "corpus": "api-payload",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 653088.0490764328,
-      "mean_ns": 1531.187106262554,
+      "ops_per_sec": 651981.1770563623,
+      "mean_ns": 1533.786611010631,
       "samples": 165000
     },
     {
@@ -746,8 +1092,8 @@
       "corpus": "api-payload",
       "partition": "compile",
       "subject": "fastjsonschema",
-      "ops_per_sec": 445.1381037682738,
-      "mean_ns": 2246493.8218826833,
+      "ops_per_sec": 447.43461926492137,
+      "mean_ns": 2234963.4045815985,
       "samples": 115
     },
     {
@@ -755,62 +1101,62 @@
       "corpus": "api-payload",
       "partition": "hot",
       "subject": "fastjsonschema",
-      "ops_per_sec": 354176.28229686234,
-      "mean_ns": 2823.4527549809877,
-      "samples": 90000
+      "ops_per_sec": 336631.3088570655,
+      "mean_ns": 2970.6090125580163,
+      "samples": 86000
     },
     {
       "task": "api-payload | valid | fastjsonschema",
       "corpus": "api-payload",
       "partition": "valid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 304044.6189769787,
-      "mean_ns": 3288.99094930444,
-      "samples": 78000
+      "ops_per_sec": 296697.1481384219,
+      "mean_ns": 3370.440215803683,
+      "samples": 76000
     },
     {
       "task": "api-payload | invalid | fastjsonschema",
       "corpus": "api-payload",
       "partition": "invalid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 425109.2053172505,
-      "mean_ns": 2352.3367348719726,
-      "samples": 110000
+      "ops_per_sec": 402055.14544794516,
+      "mean_ns": 2487.2209977212488,
+      "samples": 102000
     },
     {
       "task": "api-payload | compile | jsonschema",
       "corpus": "api-payload",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 506161.38164255215,
-      "mean_ns": 1975.6544775401169,
-      "samples": 130000
+      "ops_per_sec": 484308.0244825711,
+      "mean_ns": 2064.8016333580017,
+      "samples": 125000
     },
     {
       "task": "api-payload | hot | jsonschema",
       "corpus": "api-payload",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 30185.382223874854,
-      "mean_ns": 33128.618103403016,
-      "samples": 7600
+      "ops_per_sec": 28833.003924800185,
+      "mean_ns": 34682.47715736161,
+      "samples": 7400
     },
     {
       "task": "api-payload | valid | jsonschema",
       "corpus": "api-payload",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 18626.426439234834,
-      "mean_ns": 53687.16341066868,
-      "samples": 4700
+      "ops_per_sec": 17820.267898711943,
+      "mean_ns": 56115.87915983465,
+      "samples": 4500
     },
     {
       "task": "api-payload | invalid | jsonschema",
       "corpus": "api-payload",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 88746.58876453598,
-      "mean_ns": 11268.03873727719,
+      "ops_per_sec": 88291.21198695079,
+      "mean_ns": 11326.155542499488,
       "samples": 22500
     },
     {
@@ -818,26 +1164,26 @@
       "corpus": "records-uniform",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1222.4211483419804,
-      "mean_ns": 818048.6744329814,
-      "samples": 310
+      "ops_per_sec": 1186.954169464866,
+      "mean_ns": 842492.5121168295,
+      "samples": 300
     },
     {
       "task": "records-uniform | valid | jse interpreter flag",
       "corpus": "records-uniform",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1209.207351838331,
-      "mean_ns": 826988.0252379563,
-      "samples": 310
+      "ops_per_sec": 1194.2538484824397,
+      "mean_ns": 837342.9160565138,
+      "samples": 300
     },
     {
       "task": "records-uniform | invalid | jse interpreter flag",
       "corpus": "records-uniform",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1193.709552451192,
-      "mean_ns": 837724.7195069989,
+      "ops_per_sec": 1174.300817928575,
+      "mean_ns": 851570.5556298295,
       "samples": 300
     },
     {
@@ -845,26 +1191,26 @@
       "corpus": "records-uniform",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 75.42559684912723,
-      "mean_ns": 13258098.600138174,
-      "samples": 19
+      "ops_per_sec": 68.8698642773896,
+      "mean_ns": 14520138.967782259,
+      "samples": 18
     },
     {
       "task": "records-uniform | hot | jse compiled flag",
       "corpus": "records-uniform",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 115822.67470110468,
-      "mean_ns": 8633.887989382292,
-      "samples": 29000
+      "ops_per_sec": 116357.05401873613,
+      "mean_ns": 8594.23615038395,
+      "samples": 30000
     },
     {
       "task": "records-uniform | valid | jse compiled flag",
       "corpus": "records-uniform",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 101551.09552859256,
-      "mean_ns": 9847.259596706583,
+      "ops_per_sec": 102839.20371765364,
+      "mean_ns": 9723.91815426258,
       "samples": 26000
     },
     {
@@ -872,35 +1218,98 @@
       "corpus": "records-uniform",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 195434.44671817074,
-      "mean_ns": 5116.805234657867,
-      "samples": 49000
+      "ops_per_sec": 196595.61222057225,
+      "mean_ns": 5086.583513766527,
+      "samples": 50000
+    },
+    {
+      "task": "records-uniform | hot | jse interpreter list",
+      "corpus": "records-uniform",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 742.0367792291277,
+      "mean_ns": 1347642.0953673753,
+      "samples": 190
+    },
+    {
+      "task": "records-uniform | valid | jse interpreter list",
+      "corpus": "records-uniform",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 744.0138650631081,
+      "mean_ns": 1344060.9738034636,
+      "samples": 190
+    },
+    {
+      "task": "records-uniform | invalid | jse interpreter list",
+      "corpus": "records-uniform",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 740.4740630082104,
+      "mean_ns": 1350486.1952050736,
+      "samples": 190
+    },
+    {
+      "task": "records-uniform | compile | jse compiled evaluator (list)",
+      "corpus": "records-uniform",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 18.116130733561356,
+      "mean_ns": 55199425.015598536,
+      "samples": 5
+    },
+    {
+      "task": "records-uniform | hot | jse compiled evaluator (list)",
+      "corpus": "records-uniform",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1773.3699101411783,
+      "mean_ns": 563898.1434620089,
+      "samples": 450
+    },
+    {
+      "task": "records-uniform | valid | jse compiled evaluator (list)",
+      "corpus": "records-uniform",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1774.2386582737447,
+      "mean_ns": 563622.0332235098,
+      "samples": 450
+    },
+    {
+      "task": "records-uniform | invalid | jse compiled evaluator (list)",
+      "corpus": "records-uniform",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1756.112272284945,
+      "mean_ns": 569439.6740926261,
+      "samples": 440
     },
     {
       "task": "records-uniform | compile | jse standalone",
       "corpus": "records-uniform",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 66.2719252365883,
-      "mean_ns": 15089345.849393046,
-      "samples": 17
+      "ops_per_sec": 61.38373305860605,
+      "mean_ns": 16290960.978949443,
+      "samples": 16
     },
     {
       "task": "records-uniform | hot | jse standalone",
       "corpus": "records-uniform",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 116695.37990805757,
-      "mean_ns": 8569.319546222687,
-      "samples": 30000
+      "ops_per_sec": 115792.19146921941,
+      "mean_ns": 8636.160930297498,
+      "samples": 29000
     },
     {
       "task": "records-uniform | valid | jse standalone",
       "corpus": "records-uniform",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 102670.18045369988,
-      "mean_ns": 9739.926389346903,
+      "ops_per_sec": 101465.87374382076,
+      "mean_ns": 9855.5303680209,
       "samples": 26000
     },
     {
@@ -908,8 +1317,8 @@
       "corpus": "records-uniform",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 197374.26099526935,
-      "mean_ns": 5066.516753286123,
+      "ops_per_sec": 198970.06307268387,
+      "mean_ns": 5025.881705805659,
       "samples": 50000
     },
     {
@@ -917,8 +1326,8 @@
       "corpus": "records-uniform",
       "partition": "compile",
       "subject": "fastjsonschema",
-      "ops_per_sec": 95.38325194921481,
-      "mean_ns": 10484020.82718288,
+      "ops_per_sec": 93.52917767353988,
+      "mean_ns": 10691850.659592697,
       "samples": 24
     },
     {
@@ -926,107 +1335,107 @@
       "corpus": "records-uniform",
       "partition": "hot",
       "subject": "fastjsonschema",
-      "ops_per_sec": 70681.83195516,
-      "mean_ns": 14147.90721092787,
-      "samples": 18000
+      "ops_per_sec": 68838.03663597502,
+      "mean_ns": 14526.85243317059,
+      "samples": 17500
     },
     {
       "task": "records-uniform | valid | fastjsonschema",
       "corpus": "records-uniform",
       "partition": "valid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 70649.4531254782,
-      "mean_ns": 14154.391233912773,
-      "samples": 18000
+      "ops_per_sec": 67696.40445418976,
+      "mean_ns": 14771.83327626656,
+      "samples": 17000
     },
     {
       "task": "records-uniform | invalid | fastjsonschema",
       "corpus": "records-uniform",
       "partition": "invalid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 72789.46379981987,
-      "mean_ns": 13738.252046341831,
-      "samples": 18500
+      "ops_per_sec": 71312.40609043468,
+      "mean_ns": 14022.80549518764,
+      "samples": 18000
     },
     {
       "task": "records-uniform | compile | jsonschema",
       "corpus": "records-uniform",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 514610.57077793026,
-      "mean_ns": 1943.2169815095572,
-      "samples": 130000
+      "ops_per_sec": 520282.08854849084,
+      "mean_ns": 1922.0342618171815,
+      "samples": 135000
     },
     {
       "task": "records-uniform | hot | jsonschema",
       "corpus": "records-uniform",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 3320.927080148353,
-      "mean_ns": 301120.73401964846,
-      "samples": 840
+      "ops_per_sec": 3106.0780400016015,
+      "mean_ns": 321949.4124492392,
+      "samples": 780
     },
     {
       "task": "records-uniform | valid | jsonschema",
       "corpus": "records-uniform",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 2990.063474010952,
-      "mean_ns": 334441.06076402887,
-      "samples": 760
+      "ops_per_sec": 2790.812137231459,
+      "mean_ns": 358318.63659300975,
+      "samples": 700
     },
     {
       "task": "records-uniform | invalid | jsonschema",
       "corpus": "records-uniform",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 4724.111878490297,
-      "mean_ns": 211679.99948374927,
-      "samples": 1200
+      "ops_per_sec": 4438.551392163896,
+      "mean_ns": 225298.73187127322,
+      "samples": 1150
     },
     {
       "task": "records-sparse | hot | jse interpreter flag",
       "corpus": "records-sparse",
       "partition": "hot",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1236.3276844562486,
-      "mean_ns": 808847.0496717962,
-      "samples": 310
+      "ops_per_sec": 1185.0102255159227,
+      "mean_ns": 843874.5746389031,
+      "samples": 300
     },
     {
       "task": "records-sparse | valid | jse interpreter flag",
       "corpus": "records-sparse",
       "partition": "valid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1212.0584043617225,
-      "mean_ns": 825042.7507464924,
-      "samples": 310
+      "ops_per_sec": 1197.1529740630917,
+      "mean_ns": 835315.1365493735,
+      "samples": 300
     },
     {
       "task": "records-sparse | invalid | jse interpreter flag",
       "corpus": "records-sparse",
       "partition": "invalid",
       "subject": "jse interpreter flag",
-      "ops_per_sec": 1248.3036938784649,
-      "mean_ns": 801087.1111764573,
-      "samples": 320
+      "ops_per_sec": 1188.2646871638883,
+      "mean_ns": 841563.3408973615,
+      "samples": 300
     },
     {
       "task": "records-sparse | compile | jse compiled flag",
       "corpus": "records-sparse",
       "partition": "compile",
       "subject": "jse compiled flag",
-      "ops_per_sec": 74.95564267003635,
-      "mean_ns": 13341223.7475185,
-      "samples": 19
+      "ops_per_sec": 67.92617572020994,
+      "mean_ns": 14721865.163129918,
+      "samples": 17
     },
     {
       "task": "records-sparse | hot | jse compiled flag",
       "corpus": "records-sparse",
       "partition": "hot",
       "subject": "jse compiled flag",
-      "ops_per_sec": 92967.01162022025,
-      "mean_ns": 10756.503651909372,
+      "ops_per_sec": 92787.16457355818,
+      "mean_ns": 10777.352714633687,
       "samples": 23500
     },
     {
@@ -1034,8 +1443,8 @@
       "corpus": "records-sparse",
       "partition": "valid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 84123.77306579961,
-      "mean_ns": 11887.246179719303,
+      "ops_per_sec": 84287.62585139503,
+      "mean_ns": 11864.13770584866,
       "samples": 21500
     },
     {
@@ -1043,26 +1452,89 @@
       "corpus": "records-sparse",
       "partition": "invalid",
       "subject": "jse compiled flag",
-      "ops_per_sec": 150377.70138054487,
-      "mean_ns": 6649.92210161137,
-      "samples": 38000
+      "ops_per_sec": 143534.4942064351,
+      "mean_ns": 6966.966411305798,
+      "samples": 36000
+    },
+    {
+      "task": "records-sparse | hot | jse interpreter list",
+      "corpus": "records-sparse",
+      "partition": "hot",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 741.2277875398214,
+      "mean_ns": 1349112.940462012,
+      "samples": 190
+    },
+    {
+      "task": "records-sparse | valid | jse interpreter list",
+      "corpus": "records-sparse",
+      "partition": "valid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 737.310171758319,
+      "mean_ns": 1356281.3023659023,
+      "samples": 185
+    },
+    {
+      "task": "records-sparse | invalid | jse interpreter list",
+      "corpus": "records-sparse",
+      "partition": "invalid",
+      "subject": "jse interpreter list",
+      "ops_per_sec": 749.8313036617704,
+      "mean_ns": 1333633.305406884,
+      "samples": 190
+    },
+    {
+      "task": "records-sparse | compile | jse compiled evaluator (list)",
+      "corpus": "records-sparse",
+      "partition": "compile",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 17.971855259482275,
+      "mean_ns": 55642558.07548761,
+      "samples": 5
+    },
+    {
+      "task": "records-sparse | hot | jse compiled evaluator (list)",
+      "corpus": "records-sparse",
+      "partition": "hot",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1765.69634116173,
+      "mean_ns": 566348.7977451748,
+      "samples": 450
+    },
+    {
+      "task": "records-sparse | valid | jse compiled evaluator (list)",
+      "corpus": "records-sparse",
+      "partition": "valid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1767.3618234868743,
+      "mean_ns": 565815.0961001714,
+      "samples": 450
+    },
+    {
+      "task": "records-sparse | invalid | jse compiled evaluator (list)",
+      "corpus": "records-sparse",
+      "partition": "invalid",
+      "subject": "jse compiled evaluator (list)",
+      "ops_per_sec": 1783.8947114369603,
+      "mean_ns": 560571.2005247672,
+      "samples": 450
     },
     {
       "task": "records-sparse | compile | jse standalone",
       "corpus": "records-sparse",
       "partition": "compile",
       "subject": "jse standalone",
-      "ops_per_sec": 65.9304544468994,
-      "mean_ns": 15167497.454539817,
-      "samples": 17
+      "ops_per_sec": 60.94685626209691,
+      "mean_ns": 16407737.18827404,
+      "samples": 16
     },
     {
       "task": "records-sparse | hot | jse standalone",
       "corpus": "records-sparse",
       "partition": "hot",
       "subject": "jse standalone",
-      "ops_per_sec": 95063.20082115753,
-      "mean_ns": 10519.317584112287,
+      "ops_per_sec": 94059.58199402726,
+      "mean_ns": 10631.559048003206,
       "samples": 24000
     },
     {
@@ -1070,8 +1542,8 @@
       "corpus": "records-sparse",
       "partition": "valid",
       "subject": "jse standalone",
-      "ops_per_sec": 84631.27281084155,
-      "mean_ns": 11815.963139714197,
+      "ops_per_sec": 84495.83411617497,
+      "mean_ns": 11834.902992082196,
       "samples": 21500
     },
     {
@@ -1079,17 +1551,17 @@
       "corpus": "records-sparse",
       "partition": "invalid",
       "subject": "jse standalone",
-      "ops_per_sec": 149329.34459944972,
-      "mean_ns": 6696.607439631694,
-      "samples": 38000
+      "ops_per_sec": 144890.31666356034,
+      "mean_ns": 6901.772478847085,
+      "samples": 37000
     },
     {
       "task": "records-sparse | compile | fastjsonschema",
       "corpus": "records-sparse",
       "partition": "compile",
       "subject": "fastjsonschema",
-      "ops_per_sec": 95.61762401325976,
-      "mean_ns": 10458323.03740705,
+      "ops_per_sec": 93.41676199801401,
+      "mean_ns": 10704716.997376332,
       "samples": 24
     },
     {
@@ -1097,17 +1569,17 @@
       "corpus": "records-sparse",
       "partition": "hot",
       "subject": "fastjsonschema",
-      "ops_per_sec": 59351.60305142213,
-      "mean_ns": 16848.74457617601,
-      "samples": 15000
+      "ops_per_sec": 57881.02589192308,
+      "mean_ns": 17276.818864047527,
+      "samples": 14500
     },
     {
       "task": "records-sparse | valid | fastjsonschema",
       "corpus": "records-sparse",
       "partition": "valid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 57664.65130505264,
-      "mean_ns": 17341.64652639422,
+      "ops_per_sec": 56984.95486730673,
+      "mean_ns": 17548.491568144025,
       "samples": 14500
     },
     {
@@ -1115,8 +1587,8 @@
       "corpus": "records-sparse",
       "partition": "invalid",
       "subject": "fastjsonschema",
-      "ops_per_sec": 64732.27255664331,
-      "mean_ns": 15448.244909445444,
+      "ops_per_sec": 64285.02531154326,
+      "mean_ns": 15555.72227208,
       "samples": 16500
     },
     {
@@ -1124,36 +1596,36 @@
       "corpus": "records-sparse",
       "partition": "compile",
       "subject": "jsonschema",
-      "ops_per_sec": 515634.6411055924,
-      "mean_ns": 1939.3576774746182,
-      "samples": 130000
+      "ops_per_sec": 523685.5419092014,
+      "mean_ns": 1909.54288398778,
+      "samples": 135000
     },
     {
       "task": "records-sparse | hot | jsonschema",
       "corpus": "records-sparse",
       "partition": "hot",
       "subject": "jsonschema",
-      "ops_per_sec": 3151.256853607085,
-      "mean_ns": 317333.7009502575,
-      "samples": 800
+      "ops_per_sec": 3047.701881078741,
+      "mean_ns": 328116.08189382614,
+      "samples": 780
     },
     {
       "task": "records-sparse | valid | jsonschema",
       "corpus": "records-sparse",
       "partition": "valid",
       "subject": "jsonschema",
-      "ops_per_sec": 2973.39831696467,
-      "mean_ns": 336315.5196175763,
-      "samples": 760
+      "ops_per_sec": 2824.5512546978916,
+      "mean_ns": 354038.5391614917,
+      "samples": 720
     },
     {
       "task": "records-sparse | invalid | jsonschema",
       "corpus": "records-sparse",
       "partition": "invalid",
       "subject": "jsonschema",
-      "ops_per_sec": 4092.9382427544874,
-      "mean_ns": 244323.2564699082,
-      "samples": 1050
+      "ops_per_sec": 3869.0132639900944,
+      "mean_ns": 258463.83348107338,
+      "samples": 1000
     }
   ]
 }

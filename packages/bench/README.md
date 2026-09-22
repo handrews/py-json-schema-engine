@@ -1,11 +1,33 @@
 # json-schema-engine-bench
 
 Internal benchmark harness for [json-schema-engine](../../README.md). Not
-published; not for external use. It times the compiler tier's flag and
-standalone artifacts against the interpreter and two competitors
-(`fastjsonschema`, `jsonschema`) over seven named corpora, using an
-oracle-first methodology so a wrong verdict is never mistaken for speed.
-Report-only: nothing here gates CI.
+published; not for external use. It times every jse tier — the
+interpreter and the compiler's flag validator, evaluator, and standalone
+artifacts — against two competitors (`fastjsonschema`, `jsonschema`) over
+seven named corpora, using an oracle-first methodology so a wrong verdict
+is never mistaken for speed. Report-only: nothing here gates CI.
+
+## Subjects
+
+- **jse interpreter flag** — `Engine.evaluate(uri, instance).valid`, the
+  reference semantics and every other subject's oracle.
+- **jse compiled flag** — `compile_validator(engine, uri).validate`, the
+  compiler's verdict-only artifact.
+- **jse interpreter list** — `Engine.evaluate(uri, instance,
+  output="list").valid`: the interpreter's cost for a record-producing
+  output format, against the two verdict-only tiers above.
+- **jse compiled evaluator (list)** — `compile_evaluator(engine,
+  uri).evaluate(instance, output="list").valid`: the compiler's
+  record-producing artifact (M9), tracking every `unevaluated*` consumer
+  at runtime rather than shortcutting on a static coverage model — what
+  serving Bowtie's annotation protocol, or any embedder that wants
+  error/annotation records, would actually cost.
+- **jse standalone** — `emit_standalone`'s self-contained module, timed
+  over every corpus since M9 (the OAS 3.1 schema's `$dynamicRef` sites now
+  resolve at plan time, so `oas-document` has no interpreted unit left to
+  block standalone emission).
+- **fastjsonschema**, **jsonschema** — the two competitors, executed only,
+  never read or ported (see IP policy below).
 
 ## Provenance and licensing
 
@@ -54,7 +76,15 @@ strictly typed.
 - **Partitions.** Each surviving pair is timed over `hot` (every
   instance, round-robin), `valid`, and `invalid`, plus a `compile`
   partition timing `prepare` itself (the cold artifact build) for every
-  subject except the plain interpreter.
+  subject except the two plain-interpreter subjects (`jse interpreter
+  flag`, `jse interpreter list`), which have no separate compile step
+  worth reporting.
+- **Ratio lines.** Each corpus's table is followed by five ratios:
+  compiled flag validator vs. the interpreter, `fastjsonschema`, and
+  `jsonschema` (all `hot`); the interpreter vs. `jsonschema` (`hot`); and
+  the compiled evaluator's `list` output vs. the interpreter's `list`
+  output (`hot`) — what the record-producing tier costs against the
+  verdict-only tiers.
 - **Exclusions are recorded, not hidden.** `results.json`'s `exclusions`
   list names every corpus/subject pair that never got timed and why —
   a schema `jse standalone` cannot emit, or a subject whose verdicts

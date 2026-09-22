@@ -1,10 +1,14 @@
-# Bench subjects (M6 Step 5): each subject's `prepare(schema)` builds
-# whatever cold artifact that subject needs (a registered jse engine, a
-# compiled jse validator, an imported standalone module, a
+# Bench subjects (M6 Step 5; M9 Step 4 adds the two `list`-output
+# subjects): each subject's `prepare(schema)` builds whatever cold
+# artifact that subject needs (a registered jse engine, a compiled jse
+# validator, a compiled jse evaluator, an imported standalone module, a
 # fastjsonschema-compiled function, a jsonschema validator instance) and
 # returns a plain `validate(instance) -> bool` callable. The harness times
 # `prepare` itself as the "compile" partition and the returned callable as
-# the hot/valid/invalid partitions.
+# the hot/valid/invalid partitions. `jse interpreter list` and `jse
+# compiled evaluator (list)` both discard their `Result.valid` and time
+# `output="list"` throughout, so the report shows what the
+# record-producing tier costs against the verdict-only `flag` tiers.
 #
 # IP POLICY (DESIGN.md D15): fastjsonschema and jsonschema are executed
 # here as competitors only — never read, never ported. Their imports are
@@ -28,7 +32,11 @@ from typing import Any, cast
 import fastjsonschema  # type: ignore[import-untyped]
 import jsonschema  # type: ignore[import-untyped]
 
-from json_schema_engine.compiler import compile_validator, emit_standalone
+from json_schema_engine.compiler import (
+    compile_evaluator,
+    compile_validator,
+    emit_standalone,
+)
 from json_schema_engine.core import JsonValue, create_engine
 
 Validate = Callable[[JsonValue], bool]
@@ -62,6 +70,27 @@ def _jse_compiled_flag(schema: JsonValue) -> Validate:
     engine = create_engine()
     uri = engine.register_schema(schema, _fresh_uri())
     return compile_validator(engine, uri).validate
+
+
+def _jse_interpreter_list(schema: JsonValue) -> Validate:
+    # The interpreter's cost for a record-producing output format (`list`,
+    # M5), against the two verdict-only tiers above and the compiled
+    # evaluator below: what serving Bowtie's annotation protocol, or any
+    # embedder that wants error/annotation records, would actually cost.
+    engine = create_engine()
+    uri = engine.register_schema(schema, _fresh_uri())
+    return lambda instance: engine.evaluate(uri, instance, output="list").valid
+
+
+def _jse_compiled_evaluator_list(schema: JsonValue) -> Validate:
+    # The compiled tier's record-producing counterpart (M9's
+    # `compile_evaluator`): every consumer is tracked at runtime (no
+    # static coverage shortcut), so this is the compiler's cost for the
+    # same `list` output the interpreter subject above times.
+    engine = create_engine()
+    uri = engine.register_schema(schema, _fresh_uri())
+    evaluate = compile_evaluator(engine, uri).evaluate
+    return lambda instance: evaluate(instance, output="list").valid
 
 
 def _jse_standalone(schema: JsonValue) -> Validate:
@@ -118,6 +147,8 @@ def _jsonschema(schema: JsonValue) -> Validate:
 SUBJECTS: list[Subject] = [
     Subject("jse interpreter flag", _jse_interpreter_flag),
     Subject("jse compiled flag", _jse_compiled_flag),
+    Subject("jse interpreter list", _jse_interpreter_list),
+    Subject("jse compiled evaluator (list)", _jse_compiled_evaluator_list),
     Subject("jse standalone", _jse_standalone),
     Subject("fastjsonschema", _fastjsonschema),
     Subject("jsonschema", _jsonschema),
