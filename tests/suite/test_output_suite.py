@@ -27,6 +27,7 @@ from typing import Any, cast
 
 import pytest
 
+from json_schema_engine.compiler import compile_evaluator
 from json_schema_engine.core import DIALECT_2019_09, DIALECT_2020_12, create_engine
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.test_kit import OutputCase, collect_output_params, count_params
@@ -74,6 +75,9 @@ def _render(
     uri = engine.register_schema(schema, RETRIEVAL_URI)
     result = engine.evaluate(uri, data, output=format_name, annotations=True)
     assert result.output_document is not None
+    # The compiled evaluator (M9) must render the same document.
+    evaluator = compile_evaluator(engine, uri, annotations=True)
+    assert evaluator.evaluate(data, output=format_name) == result
     # `OutputDocument` is a union of specific TypedDicts (one per format);
     # here it is only ever handed to another engine as an opaque JSON
     # instance, so it is treated as the general `JsonValue` it structurally

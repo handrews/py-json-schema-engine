@@ -190,7 +190,12 @@ def is_multiple_of(instance: int | float, divisor: int | float) -> bool:
     return (_exact(instance) / _exact(divisor)).denominator == 1
 
 
-def first_duplicate_pair(items: Sequence[JsonValue]) -> tuple[int, int] | None:
+def json_type_name(value: JsonValue) -> str:
+    """The spec's name for an instance's primitive type (`json_type_of`)."""
+    return json_type_of(value).value
+
+
+def first_duplicate_pair(items: Sequence[JsonValue]) -> list[int] | None:
     """The first `(j, i)` with `j < i` and `json_equal(items[j], items[i])`.
 
     Buckets by `canonical_key` for near-linear detection and confirms each
@@ -205,7 +210,7 @@ def first_duplicate_pair(items: Sequence[JsonValue]) -> tuple[int, int] | None:
             continue
         for j in bucket:
             if json_equal(items[j], item):
-                return (j, i)
+                return [j, i]
         bucket.append(i)
     return None
 

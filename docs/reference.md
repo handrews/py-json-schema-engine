@@ -509,6 +509,21 @@ one registered root schema: classifies every reachable schema node as a static
 (compilable) or interpreted (trampoline) unit. Conservative by design; anything
 uncertain falls back to the interpreter.
 
+`compile_evaluator(engine, schema_uri, *, annotations=False, max_depth=None,
+conservative=False) -> CompiledEvaluator`: compiles a registered root schema
+into an evaluator serving every output format but `flag` (M9). The
+annotation selection is fixed at compile time (ruled-out annotations are
+never recorded); every consumer is tracked at runtime and every branch
+runs, so the errors, annotations, dropped records, output document, and
+trace equal `Engine.evaluate`'s. Interpreted islands run on the same
+state.
+
+`CompiledEvaluator`: a frozen dataclass: `evaluate(instance, *,
+output="list", error_params=False, verbose=None, trace=False,
+positions=False) -> Result` (the engine's own output controls, rejected the
+same way with `OutputOptionsError`), `plan: CompilationPlan`, `module:
+ast.Module`, `source: str`, `annotations: AnnotationsOption`.
+
 `compile_validator(engine, schema_uri, *, max_depth=None, conservative=False)
 -> CompiledValidator`: compiles a registered root schema into a verdict-only
 validator. `max_depth` defaults to the engine's; `conservative=True` turns the

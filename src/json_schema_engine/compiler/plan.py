@@ -450,7 +450,16 @@ def _plan_round(
             for format_name in facts.formats:
                 formats[format_name] = None
             present.append((entry.name, facts))
-        # Unknown keywords are annotations: nothing to assert in flag mode.
+        # Unknown keywords are annotations (recorded by the evaluator tier);
+        # a dialect that refuses them raises at evaluation time in the
+        # interpreter, which only the interpreter can reproduce.
+        if (
+            not ref_only
+            and not dialect.allow_unknown_keywords
+            and any(name not in dialect.keywords for name in node)
+        ):
+            unit.interpret("unlowerable")
+            return unit
 
         # Resolve every edge before any child is planned, so a unit that
         # islands never leaves half-planned children behind.

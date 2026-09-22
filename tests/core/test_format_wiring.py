@@ -26,6 +26,7 @@ from json_schema_engine.core.keywords.format import (
 )
 from json_schema_engine.core.lowering import (
     INSTANCE,
+    Annotate,
     Const,
     Fail,
     FormatTest,
@@ -186,7 +187,9 @@ def test_vocabulary_without_a_table_is_a_clear_error(metaschema: str) -> None:
 
 def test_lowered_shape() -> None:
     behavior = asserting_format(FORMAT_ASSERTION_ID, TABLE, refuse_unknown=False)
-    (stmt,) = lower(behavior, "ipv4")
+    # The keyword annotates first (its own value), then asserts (M9).
+    annotation, stmt = lower(behavior, "ipv4")
+    assert annotation == Annotate()
     assert isinstance(stmt, If)
     assert stmt.cond == Logic(
         "and", (TypeIs(INSTANCE, ("string",)), Not(FormatTest("ipv4", INSTANCE)))
@@ -194,9 +197,9 @@ def test_lowered_shape() -> None:
     assert stmt.then == (
         Fail(("must match format 'ipv4'",), {"format": Const("ipv4")}),
     )
-    assert lower(behavior, "no-such") == ()
-    assert lower(behavior, 5) == ()
-    (int32,) = lower(behavior, "int32")
+    assert lower(behavior, "no-such") == (Annotate(),)
+    assert lower(behavior, 5) == (Annotate(),)
+    _, int32 = lower(behavior, "int32")
     assert isinstance(int32, If)
     assert isinstance(int32.cond, Logic)
     assert int32.cond.parts[0] == TypeIs(INSTANCE, ("integer",))

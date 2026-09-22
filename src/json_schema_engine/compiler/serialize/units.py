@@ -76,19 +76,23 @@ class _Lowering:
 
 @dataclass(frozen=True, slots=True)
 class KeywordIR:
-    """One present keyword's lowered statements and its behavior id."""
+    """One present keyword's lowered statements and its identity."""
 
     name: str
     behavior_id: str
+    vocabulary_uri: str
+    structural: bool
     stmts: tuple[Stmt, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class UnitIR:
     """A unit's lowered body: one statement list per present keyword, in
-    dialect evaluation order."""
+    dialect evaluation order, plus the unknown keywords (annotations with
+    the keyword's value, in node order; empty under `ref_ignores_siblings`)."""
 
     keywords: tuple[KeywordIR, ...]
+    unknown: tuple[str, ...] = ()
 
 
 def lower_unit(registry: SchemaRegistry, unit: PlannedUnit) -> UnitIR:
@@ -109,8 +113,19 @@ def lower_unit(registry: SchemaRegistry, unit: PlannedUnit) -> UnitIR:
         ctx = _Lowering(node, unit.coverage, unit.tracked, next_binding)
         lower(node[entry.name], ctx)
         next_binding = ctx.next_binding
-        keywords.append(KeywordIR(entry.name, entry.behavior.id, tuple(ctx.stmts)))
-    return UnitIR(tuple(keywords))
+        keywords.append(
+            KeywordIR(
+                entry.name,
+                entry.behavior.id,
+                entry.vocabulary_uri,
+                entry.behavior.structural,
+                tuple(ctx.stmts),
+            )
+        )
+    unknown = (
+        () if ref_only else tuple(name for name in node if name not in dialect.keywords)
+    )
+    return UnitIR(tuple(keywords), unknown)
 
 
 def _exprs_of(expr: Expr) -> Iterator[Expr]:

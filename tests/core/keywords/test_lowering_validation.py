@@ -22,6 +22,7 @@ from json_schema_engine.core.lowering import (
     Const,
     Fail,
     If,
+    Item,
     Stmt,
     and_,
     cmp,
@@ -375,10 +376,24 @@ def test_object_bound_messages_match_evaluate() -> None:
 def test_unique_items_true_lowers_to_an_array_guard_and_duplicate_check() -> None:
     behavior = VALIDATION_VOCABULARY["uniqueItems"]
     stmts = lower(behavior, True)
+    # The message and params name the colliding pair through the helper
+    # `evaluate` uses (M9), computed only on the failure path.
+    pair = helper("first_duplicate_pair", INSTANCE)
     assert stmts == (
         when(
             and_(type_is(INSTANCE, "array"), helper("has_duplicate_items", INSTANCE)),
-            (fail(("items are not unique",)),),
+            (
+                fail(
+                    (
+                        "items at ",
+                        Item(pair, Const(0)),
+                        " and ",
+                        Item(pair, Const(1)),
+                        " are not unique",
+                    ),
+                    {"duplicates": pair},
+                ),
+            ),
         ),
     )
 

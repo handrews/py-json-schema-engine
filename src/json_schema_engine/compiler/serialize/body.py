@@ -21,8 +21,10 @@ from json_schema_engine.compiler.serialize.units import (
     lower_unit,
     uses_object_test,
 )
-from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.dialect import unknown_keyword_id
+from json_schema_engine.core.json_model import JsonValue, escape_segment
 from json_schema_engine.core.lowering import (
+    Annotate,
     Append,
     Apply,
     ApplyExpr,
@@ -53,6 +55,8 @@ from json_schema_engine.core.lowering import (
     Logic,
     LowerApply,
     LowerCursor,
+    LowerMessage,
+    LowerParams,
     Member,
     Not,
     Produce,
@@ -150,6 +154,12 @@ def _is_swept_key(body: BodyContext, target: Expr) -> bool:
     return isinstance(target, Binding) and target.id in body.key_bindings
 
 
+def _vocabulary_of(body: BodyContext) -> str | None:
+    dialect = body.fn.module.registry.dialect_for(body.unit.ref.base_uri)
+    entry = dialect.keywords.get(body.keyword)
+    return entry.vocabulary_uri if entry is not None else None
+
+
 def expression(body: BodyContext, expr: Expr) -> ast.expr:
     match expr:
         case Instance():
@@ -192,11 +202,13 @@ def expression(body: BodyContext, expr: Expr) -> ast.expr:
             rendered = [expression(body, p) for p in parts]
             return e.and_(*rendered) if op == "and" else e.or_(*rendered)
         case ApplyExpr(apply):
-            if body.channel is not None and isinstance(apply.cursor, Here):
-                # An in-place application inside a tracked region needs a
-                # channel mark around it; only `If` conditions are hoisted.
+            if (body.channel is not None or body.evaluator) and isinstance(
+                apply.cursor, Here
+            ):
+                # An in-place application inside an expression needs marks
+                # around it; only `If` conditions are hoisted.
                 raise SerializeError(
-                    "in-place application inside an expression in a tracked region"
+                    "in-place application inside an expression needs a statement"
                 )
             return apply_expression(body, apply)
         case Cond(test, then, orelse):
@@ -229,6 +241,10 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
             return e.call(e.load(e.H_MOF), *(expression(body, a) for a in args))
         case "has_duplicate_items":
             return e.call(e.load(e.H_DUP), *(expression(body, a) for a in args))
+        case "first_duplicate_pair":
+            return e.call(e.load(e.H_FDP), *(expression(body, a) for a in args))
+        case "json_type_name":
+            return e.call(e.load(e.H_TYPE), *(expression(body, a) for a in args))
         case "length_of" | "code_point_length":
             # `len` counts code points on `str` and elements on containers.
             (arg,) = args
@@ -267,11 +283,48 @@ def _target_of(body: BodyContext, apply: LowerApply) -> PlannedUnit:
     return body.fn.module.plan.units[key]
 
 
-def _call(
-    body: BodyContext, target: PlannedUnit, value: ast.expr, in_place: bool
-) -> ast.expr:
-    """The verdict of applying `target` to `value` as an expression: a
-    boolean literal, a unit call, or the trampoline.
+def _path_arg(body: BodyContext, apply: LowerApply) -> ast.expr:
+    """The applied subschema's evaluation-path node: one synthetic node
+    holding every segment the interpreter would mint (`materialize_path`
+    joins them identically)."""
+    head = apply.sibling if apply.sibling is not None else body.keyword
+    joined = "/".join(escape_segment(str(s)) for s in (head, *apply.path))
+    return e.call(e.load(e.H_PATH), e.load(body.path), e.const(joined))
+
+
+def _cursor_arg(body: BodyContext, cursor: LowerCursor) -> ast.expr:
+    """The applied subschema's cursor: a real `Cursor` chain, as the
+    interpreter's `child_cursor` would build it."""
+    match cursor:
+        case Here():
+            return e.load(body.cursor)
+        case Child(of, segment):
+            index = (
+                e.const(segment)
+                if isinstance(segment, str | int)
+                else expression(body, segment)
+            )
+            return e.call(
+                e.load(e.H_CHILD),
+                _cursor_arg(body, of),
+                index,
+                cursor_value(body, cursor),
+            )
+        case Key(binding):
+            name = e.load(body.binding_name(binding))
+            return e.call(e.load(e.H_CHILD), e.load(body.cursor), name, name)
+
+
+def _unit_site(body: BodyContext, unit: PlannedUnit) -> ast.expr:
+    return e.load(
+        body.fn.module.site_name(unit.key, None, (None, None, None, unit.ref))
+    )
+
+
+def _call(body: BodyContext, target: PlannedUnit, apply: LowerApply) -> ast.expr:
+    """The verdict of applying `target` as an expression: a boolean literal
+    (flag mode) or traced boolean application (evaluator mode), a unit
+    call, or the trampoline.
 
     A target that takes a coverage channel (M9) receives this body's
     channel when applied in place inside a region, and a fresh list
@@ -279,7 +332,40 @@ def _call(
     """
     module = body.fn.module
     node = target.ref.node
+    value = cursor_value(body, apply.cursor)
+    in_place = isinstance(apply.cursor, Here)
     shares_channel = in_place and body.channel is not None
+    channel: ast.expr | None = None
+    if target.takes_channel or target.kind == "interpreted":
+        if shares_channel:
+            assert body.channel is not None
+            channel = e.load(body.channel)
+        elif target.takes_channel:
+            channel = e.list_literal()
+    if body.evaluator:
+        located = [_path_arg(body, apply), _cursor_arg(body, apply.cursor)]
+        if target.kind == "interpreted":
+            body.fn.called_unit = True
+            slot = module.target_slot(target.key)
+            return e.call(
+                e.load(e.H_FRAGE),
+                e.load(e.STATE),
+                e.subscript(e.load(e.TARGETS), e.const(slot)),
+                e.load(e.SCOPE),
+                e.load(e.DEPTH),
+                *located,
+                channel if channel is not None else ast.Constant(value=None),
+            )
+        if isinstance(node, bool):
+            helper = e.H_TRUE if node else e.H_FALSE
+            return e.call(
+                e.load(helper), e.load(e.STATE), _unit_site(body, target), *located
+            )
+        body.fn.called_unit = True
+        args = [value, e.load(e.DEPTH), e.load(e.SCOPE), e.load(e.STATE), *located]
+        if channel is not None:
+            args.append(channel)
+        return e.call(e.load(module.function_name(target.key)), *args)
     if target.kind == "interpreted":
         body.fn.called_unit = True
         slot = module.target_slot(target.key)
@@ -289,30 +375,20 @@ def _call(
             e.load(e.SCOPE),
             e.load(e.DEPTH),
         ]
-        if shares_channel:
-            assert body.channel is not None
-            return e.call(e.load(e.H_FRAGC), *args, e.load(body.channel))
+        if channel is not None and shares_channel:
+            return e.call(e.load(e.H_FRAGC), *args, channel)
         return e.call(e.load(e.H_FRAG), *args)
     if isinstance(node, bool):
         return ast.Constant(value=node)
     body.fn.called_unit = True
     args = [value, e.load(e.DEPTH), e.load(e.SCOPE)]
-    if target.takes_channel:
-        if shares_channel:
-            assert body.channel is not None
-            args.append(e.load(body.channel))
-        else:
-            args.append(e.list_literal())
+    if channel is not None:
+        args.append(channel)
     return e.call(e.load(module.function_name(target.key)), *args)
 
 
 def apply_expression(body: BodyContext, apply: LowerApply) -> ast.expr:
-    return _call(
-        body,
-        _target_of(body, apply),
-        cursor_value(body, apply.cursor),
-        isinstance(apply.cursor, Here),
-    )
+    return _call(body, _target_of(body, apply), apply)
 
 
 def _can_inline(body: BodyContext, target: PlannedUnit) -> UnitIR | None:
@@ -337,6 +413,85 @@ def _can_inline(body: BodyContext, target: PlannedUnit) -> UnitIR | None:
     return ir
 
 
+def _message(body: BodyContext, message: LowerMessage) -> ast.expr:
+    """The interpreter's message text: constant parts joined with the
+    `str()` of expression parts."""
+    parts: list[ast.expr] = []
+    for part in message:
+        if isinstance(part, str):
+            parts.append(e.const(part))
+        else:
+            parts.append(e.call(e.load("str"), expression(body, part)))
+    if all(isinstance(p, ast.Constant) for p in parts):
+        return e.const("".join(str(p.value) for p in parts))  # type: ignore[union-attr]
+    out = parts[0]
+    for part in parts[1:]:
+        out = ast.BinOp(left=out, op=ast.Add(), right=part)
+    return out
+
+
+def _params(body: BodyContext, params: LowerParams | None) -> ast.expr:
+    if params is None:
+        return ast.Constant(value=None)
+    return ast.Dict(
+        keys=[e.const(k) for k in params],
+        values=[expression(body, v) for v in params.values()],
+    )
+
+
+def _slot(body: BodyContext, sibling: str | None = None) -> str:
+    """The verdict variable a failure clears: this keyword's, or the
+    sibling keyword's for an `if`-driven `then`/`else`."""
+    name = sibling if sibling is not None else body.keyword
+    slot = body.slots.get(name)
+    if slot is None:
+        raise SerializeError(f"no verdict slot for keyword {name!r}")
+    return slot
+
+
+def _record_error(
+    body: BodyContext,
+    message: LowerMessage,
+    params: LowerParams | None,
+    sibling: str | None = None,
+) -> list[ast.stmt]:
+    """`H_ERR(st, xK, pn, cu, message, params)` then clear the slot."""
+    return [
+        e.expr_stmt(
+            e.call(
+                e.load(e.H_ERR),
+                e.load(e.STATE),
+                e.load(body.site),
+                e.load(body.path),
+                e.load(body.cursor),
+                _message(body, message),
+                _params(body, params),
+            )
+        ),
+        e.assign(_slot(body, sibling), ast.Constant(value=False)),
+    ]
+
+
+def _ann_mark(body: BodyContext) -> tuple[str, ast.stmt]:
+    """`mN = H_AMARK(st)`: where an application starts recording, so a
+    failed application's annotations can be cut (§4 rule 3)."""
+    name = body.fn.module.names.fresh("m")
+    return name, e.assign(name, e.call(e.load(e.H_AMARK), e.load(e.STATE)))
+
+
+def _ann_cut(mark: str) -> ast.stmt:
+    return e.expr_stmt(e.call(e.load(e.H_ACUT), e.load(e.STATE), e.load(mark)))
+
+
+def _err_mark(body: BodyContext) -> tuple[str, ast.stmt]:
+    name = body.fn.module.names.fresh("m")
+    return name, e.assign(name, e.call(e.load(e.H_EMARK), e.load(e.STATE)))
+
+
+def _err_drop(mark: str) -> ast.stmt:
+    return e.expr_stmt(e.call(e.load(e.H_DROP), e.load(e.STATE), e.load(mark)))
+
+
 def _mark(body: BodyContext) -> tuple[str, ast.stmt]:
     """`mN = len(ev)`: where a region's in-place application starts writing,
     so a failed application's productions can be discarded (§4 rule 3)."""
@@ -354,23 +509,82 @@ def _in_region(body: BodyContext, apply: LowerApply) -> bool:
     return body.channel is not None and isinstance(apply.cursor, Here)
 
 
+def _evaluator_apply(body: BodyContext, apply: LowerApply) -> list[ast.stmt]:
+    """An `Apply` statement in evaluator mode: every application runs, its
+    annotations are marked and cut on failure, a failure clears the
+    keyword's (or sibling's) verdict slot, and the unit continues."""
+    verdict = apply_expression(body, apply)
+    ann, marked = _ann_mark(body)
+    cuts: list[ast.stmt] = [_ann_cut(ann)]
+    out: list[ast.stmt] = [marked]
+    if _in_region(body, apply):
+        mark, ev_marked = _mark(body)
+        cuts.append(_truncate(body, mark))
+        out.append(ev_marked)
+    if apply.fold == "all_must_pass":
+        out.append(
+            e.if_(
+                e.not_(verdict),
+                [
+                    e.assign(_slot(body, apply.sibling), ast.Constant(value=False)),
+                    *cuts,
+                ],
+            )
+        )
+        return out
+    if apply.fold == "negate":
+        assert apply.message is not None
+        out.append(
+            e.if_(verdict, _record_error(body, apply.message, apply.params), cuts)
+        )
+        return out
+    if apply.fold == "discard":
+        return _evaluator_discard(body, apply)[0]
+    raise SerializeError(f"a {apply.fold} apply must be closed by a combine check")
+
+
+def _evaluator_discard(
+    body: BodyContext, apply: LowerApply
+) -> tuple[list[ast.stmt], str]:
+    """A `discard` application in evaluator mode (`if`'s condition, or a
+    bare application): its errors are never relevant (rule 6), its records
+    merge only when it passes. Returns the statements and the variable
+    holding its verdict."""
+    verdict = apply_expression(body, apply)
+    ann, marked = _ann_mark(body)
+    cuts: list[ast.stmt] = [_ann_cut(ann)]
+    out: list[ast.stmt] = [marked]
+    if _in_region(body, apply):
+        mark, ev_marked = _mark(body)
+        cuts.append(_truncate(body, mark))
+        out.append(ev_marked)
+    err, err_marked = _err_mark(body)
+    temp = body.fn.module.names.fresh("t")
+    out.append(err_marked)
+    out.append(e.assign(temp, verdict))
+    out.append(_err_drop(err))
+    out.append(e.if_(e.not_(e.load(temp)), cuts))
+    return out, temp
+
+
 def apply_statements(body: BodyContext, apply: LowerApply) -> list[ast.stmt]:
     """An `Apply` statement: fold the verdict into the keyword's verdict."""
+    if body.evaluator:
+        return _evaluator_apply(body, apply)
     target = _target_of(body, apply)
     value = cursor_value(body, apply.cursor)
-    in_place = isinstance(apply.cursor, Here)
     false = ast.Constant(value=False)
     if apply.fold == "all_must_pass":
         ir = _can_inline(body, target)
         if ir is not None:
             return inline_body(body, target, ir, apply.cursor, value)
-        verdict = _call(body, target, value, in_place)
+        verdict = _call(body, target, apply)
         if isinstance(verdict, ast.Constant):
             return [] if verdict.value else [e.return_(false)]
         # A failure fails this unit, and the caller discards the channel
         # span, so no mark is needed here.
         return [e.if_(e.not_(verdict), [e.return_(false)])]
-    verdict = _call(body, target, value, in_place)
+    verdict = _call(body, target, apply)
     if apply.fold == "negate":
         if isinstance(verdict, ast.Constant):
             return [e.return_(false)] if verdict.value else []
@@ -440,11 +654,77 @@ def edges_of(unit: PlannedUnit) -> dict[EdgeKey, str]:
 
 
 def unit_statements(body: BodyContext, ir: UnitIR) -> list[ast.stmt]:
+    if body.evaluator:
+        return _evaluator_unit_statements(body, ir)
     out: list[ast.stmt] = []
     for keyword in ir.keywords:
         body.keyword = keyword.name
         body.behavior_id = keyword.behavior_id
         out.extend(statements(body, keyword.stmts))
+    return out
+
+
+def _has_sibling_apply(stmts: tuple[Stmt, ...]) -> bool:
+    for stmt in stmts:
+        match stmt:
+            case Apply(apply) if apply.sibling is not None:
+                return True
+            case If(_, then, orelse):
+                if _has_sibling_apply(then) or _has_sibling_apply(orelse):
+                    return True
+            case ForEachKey(_, _, loop_body) | ForEachIndex(_, _, loop_body, _):
+                if _has_sibling_apply(loop_body):
+                    return True
+            case _:
+                pass
+    return False
+
+
+def _evaluator_unit_statements(body: BodyContext, ir: UnitIR) -> list[ast.stmt]:
+    """Every present keyword runs, in dialect order, with its own verdict
+    slot: rule 6 marks the errors at its start and drops them when it
+    accepts (a keyword driving sibling applications leaves theirs alone;
+    its own condition dropped immediately). Unknown keywords annotate."""
+    module = body.fn.module
+    out: list[ast.stmt] = []
+    for keyword in ir.keywords:
+        if not keyword.structural:
+            slot = module.names.fresh("w")
+            body.slots[keyword.name] = slot
+            out.append(e.assign(slot, ast.Constant(value=True)))
+    for keyword in ir.keywords:
+        body.keyword = keyword.name
+        body.behavior_id = keyword.behavior_id
+        body.site = module.site_name(
+            body.unit.key,
+            keyword.name,
+            (keyword.behavior_id, keyword.name, keyword.vocabulary_uri, body.unit.ref),
+        )
+        if not keyword.stmts:
+            continue
+        err, marked = _err_mark(body)
+        out.append(marked)
+        out.extend(statements(body, keyword.stmts))
+        if not keyword.structural and not _has_sibling_apply(keyword.stmts):
+            out.append(e.if_(e.load(body.slots[keyword.name]), [_err_drop(err)]))
+    for name in ir.unknown:
+        if module.record is None or not module.record(name, None):
+            continue
+        site = module.site_name(
+            body.unit.key, name, (unknown_keyword_id(name), name, None, body.unit.ref)
+        )
+        out.append(
+            e.expr_stmt(
+                e.call(
+                    e.load(e.H_ANN),
+                    e.load(e.STATE),
+                    e.load(site),
+                    e.load(body.path),
+                    e.load(body.cursor),
+                    _const_operand(body, body.schema[name]),
+                )
+            )
+        )
     return out
 
 
@@ -456,7 +736,14 @@ def _if_statement(
     then_stmts = statements(body, then)
     else_stmts = statements(body, orelse)
     out: list[ast.stmt] = []
-    if (
+    if isinstance(cond, ApplyExpr) and body.evaluator:
+        # `if`'s condition: an application whose errors are irrelevant and
+        # whose records merge only when it passes; hoisted so the branch
+        # reads its verdict.
+        hoisted, temp = _evaluator_discard(body, cond.apply)
+        out.extend(hoisted)
+        test: ast.expr = e.load(temp)
+    elif (
         isinstance(cond, ApplyExpr)
         and _in_region(body, cond.apply)
         and (then_stmts or else_stmts)
@@ -468,7 +755,7 @@ def _if_statement(
         out.append(marked)
         out.append(e.assign(temp, apply_expression(body, cond.apply)))
         out.append(e.if_(e.not_(e.load(temp)), [_truncate(body, mark)]))
-        test: ast.expr = e.load(temp)
+        test = e.load(temp)
     else:
         test = expression(body, cond)
     if then_stmts:
@@ -494,7 +781,7 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
             run_fold = stmt.apply.fold
             continue
         if isinstance(stmt, CombineCheck):
-            out.extend(_flush_run(body, run, run_fold))
+            out.extend(_flush_run(body, run, run_fold, stmt))
             run, run_fold = [], None
             continue
         if run:
@@ -518,8 +805,11 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
                 loop_stmts = _loop(body, loop_body)
                 if loop_stmts:
                     out.append(e.for_(name, iterable, loop_stmts))
-            case Fail():
-                out.append(e.return_(false))
+            case Fail(message, params):
+                if body.evaluator:
+                    out.extend(_record_error(body, message, params))
+                else:
+                    out.append(e.return_(false))
             case Apply(apply):
                 out.extend(apply_statements(body, apply))
             case CountRange():
@@ -533,16 +823,19 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
             case Produce(value):
                 if body.produce_live:
                     assert body.channel is not None
-                    out.append(
-                        e.expr_stmt(
-                            e.method_call(
-                                e.load(body.channel),
-                                "append",
-                                e.tuple_(
-                                    (e.const(body.behavior_id), expression(body, value))
-                                ),
-                            )
+                    push = e.expr_stmt(
+                        e.method_call(
+                            e.load(body.channel),
+                            "append",
+                            e.tuple_(
+                                (e.const(body.behavior_id), expression(body, value))
+                            ),
                         )
+                    )
+                    # Dependency data comes only from an accepting keyword
+                    # (rule 6); the flag tier's control flow guarantees it.
+                    out.append(
+                        e.if_(e.load(_slot(body)), [push]) if body.evaluator else push
                     )
             case CoverageFold(binding, half, consumes, contains_id, prefix_id):
                 out.append(
@@ -550,6 +843,27 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
                         body, binding, half, consumes, contains_id, prefix_id
                     )
                 )
+            case Annotate():
+                # The flag tier records nothing; the evaluator records the
+                # keyword's own value unless the selection rules it out.
+                record = body.fn.module.record
+                if (
+                    body.evaluator
+                    and record is not None
+                    and record(body.keyword, _vocabulary_of(body))
+                ):
+                    out.append(
+                        e.expr_stmt(
+                            e.call(
+                                e.load(e.H_ANN),
+                                e.load(e.STATE),
+                                e.load(body.site),
+                                e.load(body.path),
+                                e.load(body.cursor),
+                                _const_operand(body, body.schema[body.keyword]),
+                            )
+                        )
+                    )
             case _:  # pragma: no cover - the match above is exhaustive
                 raise SerializeError(f"unknown statement {stmt!r}")
     if run:
@@ -612,10 +926,65 @@ def _loop(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
         fn.loop_depth -= 1
 
 
+def _evaluator_run(
+    body: BodyContext, run: list[LowerApply], fold: str, check: CombineCheck
+) -> list[ast.stmt]:
+    """A combine run in evaluator mode: every branch runs with its own
+    annotation (and channel) mark; the keyword's error names the outcome."""
+    names = body.fn.module.names
+    out: list[ast.stmt] = []
+    counter = names.fresh("c")
+    passing = names.fresh("b")
+    if fold == "any_may_pass":
+        out.append(e.assign(counter, ast.Constant(value=False)))
+        hit: list[ast.stmt] = [e.assign(counter, ast.Constant(value=True))]
+        failed_test: ast.expr = e.not_(e.load(counter))
+    else:
+        out.append(e.assign(counter, e.const(0)))
+        out.append(e.assign(passing, e.list_literal()))
+        if check.count is not None:
+            body.bindings[check.count] = counter
+        if check.passing is not None:
+            body.bindings[check.passing] = passing
+        hit = [
+            e.aug_add(counter, e.const(1)),
+            e.expr_stmt(e.method_call(e.load(passing), "append", e.const(0))),
+        ]
+        failed_test = e.compare(e.load(counter), ast.NotEq(), e.const(1))
+    for position, apply in enumerate(run):
+        verdict = apply_expression(body, apply)
+        ann, marked = _ann_mark(body)
+        cuts: list[ast.stmt] = [_ann_cut(ann)]
+        out.append(marked)
+        if _in_region(body, apply):
+            mark, ev_marked = _mark(body)
+            out.append(ev_marked)
+            cuts.append(_truncate(body, mark))
+        if fold != "any_may_pass":
+            hit = [
+                e.aug_add(counter, e.const(1)),
+                e.expr_stmt(
+                    e.method_call(e.load(passing), "append", e.const(position))
+                ),
+            ]
+        out.append(e.if_(verdict, hit, cuts))
+    out.append(e.if_(failed_test, _record_error(body, check.message, check.params)))
+    return out
+
+
 def _flush_run(
-    body: BodyContext, run: list[LowerApply], fold: str | None
+    body: BodyContext,
+    run: list[LowerApply],
+    fold: str | None,
+    check: CombineCheck | None = None,
 ) -> list[ast.stmt]:
     false = ast.Constant(value=False)
+    if body.evaluator:
+        assert check is not None
+        if fold is None or not run:
+            # An empty `anyOf`/`oneOf` matches nothing.
+            return _record_error(body, check.message, check.params)
+        return _evaluator_run(body, run, fold, check)
     if fold is None or not run:
         # An empty `anyOf`/`oneOf` matches nothing.
         return [e.return_(false)]
@@ -678,6 +1047,8 @@ def _flush_run(
 def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
     false = ast.Constant(value=False)
     counter = body.fn.module.names.fresh("c")
+    if stmt.count is not None:
+        body.bindings[stmt.count] = counter
     name = body.binding_name(stmt.binding)
     fn = body.fn
     fn.loop_depth += 1
@@ -698,7 +1069,24 @@ def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
     hit: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
     if matched is not None:
         hit.append(e.expr_stmt(e.method_call(e.load(matched), "append", e.load(name))))
-    elif stmt.maximum is None and stmt.minimum > 0:
+    if body.evaluator:
+        # Every probe runs; its annotations merge only when it matches.
+        ann, marked = _ann_mark(body)
+        out: list[ast.stmt] = [e.assign(counter, e.const(0))]
+        if matched is not None:
+            out.append(e.assign(matched, e.list_literal()))
+        out.append(e.for_(name, iterable, [marked, e.if_(probe, hit, [_ann_cut(ann)])]))
+        bounds: list[ast.expr] = []
+        if stmt.minimum > 0:
+            bounds.append(e.compare(e.load(counter), ast.Lt(), e.const(stmt.minimum)))
+        if stmt.maximum is not None:
+            bounds.append(e.compare(e.load(counter), ast.Gt(), e.const(stmt.maximum)))
+        if bounds:
+            out.append(
+                e.if_(e.or_(*bounds), _record_error(body, stmt.message, stmt.params))
+            )
+        return out
+    if matched is None and stmt.maximum is None and stmt.minimum > 0:
         # Unbounded above and nobody reads the matches: reaching the
         # minimum settles the verdict, so the sweep stops there (§4 rule 7).
         hit.append(
@@ -707,7 +1095,7 @@ def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
                 [ast.Break()],
             )
         )
-    out: list[ast.stmt] = [e.assign(counter, e.const(0))]
+    out = [e.assign(counter, e.const(0))]
     if matched is not None:
         out.append(e.assign(matched, e.list_literal()))
     out.append(e.for_(name, iterable, [e.if_(probe, hit)]))

@@ -37,6 +37,7 @@ from json_schema_engine.core.lowering import (
     CmpOp,
     Const,
     Expr,
+    Item,
     LowerFn,
     LoweringContext,
     LowerMessage,
@@ -209,7 +210,10 @@ def _type_lower(value: JsonValue, lctx: LoweringContext) -> None:
             (
                 fail(
                     ("expected " + ", ".join(str(n) for n in names),),
-                    {"expected": Const(list(names))},
+                    {
+                        "expected": Const(list(names)),
+                        "actual": helper("json_type_name", lctx.instance),
+                    },
                 ),
             ),
         )
@@ -514,15 +518,25 @@ def _unique_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if value is not True:
         return
     instance = lctx.instance
-    # The colliding pair is runtime-only (D9e: the scan itself only runs on
-    # the failure path in `evaluate`, and `Fail`'s message/params are inert
-    # in this milestone regardless, per lowering.py's module docstring), so
-    # the message omits the indexes `evaluate` reports instead of computing
-    # them again at lowering time.
+    # The colliding pair is runtime data: the message and params name it
+    # through the same helper `evaluate` uses (computed only on the failure
+    # path, where the scan already ran once).
+    pair = helper("first_duplicate_pair", instance)
     lctx.emit(
         when(
             and_(type_is(instance, "array"), helper("has_duplicate_items", instance)),
-            (fail(("items are not unique",)),),
+            (
+                fail(
+                    (
+                        "items at ",
+                        Item(pair, Const(0)),
+                        " and ",
+                        Item(pair, Const(1)),
+                        " are not unique",
+                    ),
+                    {"duplicates": pair},
+                ),
+            ),
         )
     )
 

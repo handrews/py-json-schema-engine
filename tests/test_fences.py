@@ -125,10 +125,36 @@ assert validate("x") and not validate(1)
 print(ours, validate.__code__.co_filename)
 """
 
+EVALUATOR_PROBE = COMPILE_PROBE.replace(
+    "from json_schema_engine.compiler import compile_validator",
+    "from json_schema_engine.compiler import compile_evaluator",
+).replace(
+    "validate = compile_validator(engine, uri).validate\n"
+    'assert validate("x") and not validate(1)\n'
+    "print(ours, validate.__code__.co_filename)",
+    "evaluate = compile_evaluator(engine, uri).evaluate\n"
+    'assert evaluate("x").valid and not evaluate(1).valid\n'
+    "print(ours, '<json_schema_engine.compiler>')",
+)
+
 
 def test_compiling_raises_exactly_one_compile_and_one_exec_event() -> None:
     completed = subprocess.run(
         [sys.executable, "-c", COMPILE_PROBE],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert completed.stdout.strip() == (
+        "[('compile', 'ast'), ('exec', '<json_schema_engine.compiler>')] "
+        "<json_schema_engine.compiler>"
+    ), completed.stderr
+
+
+def test_compiling_an_evaluator_raises_exactly_one_compile_and_one_exec() -> None:
+    assert "compile_evaluator" in EVALUATOR_PROBE
+    completed = subprocess.run(
+        [sys.executable, "-c", EVALUATOR_PROBE],
         capture_output=True,
         text=True,
         check=True,

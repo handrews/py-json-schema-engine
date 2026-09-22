@@ -20,7 +20,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from json_schema_engine.compiler import CompiledValidator, compile_validator
+from json_schema_engine.compiler import (
+    CompiledEvaluator,
+    CompiledValidator,
+    compile_evaluator,
+    compile_validator,
+)
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
@@ -308,6 +313,68 @@ def test_differential_dynamic_seeds(case: tuple[CorpusGroup, JsonValue]) -> None
     _check_case(case)
 
 
+# --- the evaluator leg (M9): whole results, not verdicts --------------------
+#
+# `compile_evaluator` must reproduce the interpreter's entire `Result` —
+# errors with params, annotations, dropped records, the output document,
+# and the trace — at the relevant and verbose levels. The comparison is
+# dataclass equality, so any field, order, or attribution difference
+# diverges; the planted-divergence self-test below proves it can see one.
+
+EVALUATOR_DEMANDS: tuple[tuple[str, dict[str, bool]], ...] = (
+    ("list", {"error_params": True, "trace": True}),
+    ("hierarchical", {"verbose": True, "trace": True}),
+)
+
+_EVALUATOR_CACHE: dict[str, CompiledEvaluator] = {}
+
+
+def _evaluator(group: CorpusGroup) -> CompiledEvaluator:
+    cached = _EVALUATOR_CACHE.get(group.key)
+    if cached is None:
+        cached = compile_evaluator(group.engine, group.uri, annotations=True)
+        _EVALUATOR_CACHE[group.key] = cached
+    return cached
+
+
+def _result_outcome(run: Callable[[], object]) -> tuple[str, object]:
+    try:
+        return ("result", run())
+    except JsonSchemaEngineError as error:
+        return ("raise", type(error).__name__)
+
+
+def _check_evaluator_case(
+    case: tuple[CorpusGroup, JsonValue],
+    evaluate: Callable[..., object] | None = None,
+) -> None:
+    group, instance = case
+    evaluator = _evaluator(group)
+    run = evaluate if evaluate is not None else evaluator.evaluate
+    for output, extra in EVALUATOR_DEMANDS:
+        expected = _result_outcome(
+            lambda output=output, extra=extra: group.engine.evaluate(
+                group.uri, instance, output=output, annotations=True, **extra
+            )
+        )
+        got = _result_outcome(
+            lambda output=output, extra=extra: run(instance, output=output, **extra)
+        )
+        assert got == expected, (group.key, instance, output)
+
+
+def _evaluator_cases() -> st.SearchStrategy[tuple[CorpusGroup, JsonValue]]:
+    groups = st.sampled_from(CORPUS + SEED_CORPUS)
+    return groups.flatmap(
+        lambda group: st.tuples(st.just(group), _instances_for(group))
+    )
+
+
+@given(case=_evaluator_cases())
+def test_differential_evaluator(case: tuple[CorpusGroup, JsonValue]) -> None:
+    _check_evaluator_case(case)
+
+
 # --- one property over the format-directory corpus, across all four
 # dialects at once (its own Hypothesis budget, same as the properties
 # above) -----------------------------------------------------------------
@@ -354,6 +421,50 @@ def test_mutators_only_produce_json_shaped_values(instance: JsonValue) -> None:
 # must trip the comparison inside a bounded run; the honest artifact run
 # through the identical comparison must not. `hashlib` (not the builtin
 # `hash`, which is salted per process) keeps the flip reproducible.
+
+
+def test_planted_result_divergence_self_test() -> None:
+    """The evaluator comparison must see a corrupted error param and a
+    dropped annotation, both invisible to the verdict comparison."""
+    group = next(g for g in CORPUS if g.key.startswith("draft2020-12/type/"))
+    evaluator = _evaluator(group)
+
+    def corrupt_params(instance: JsonValue, **options: object) -> object:
+        result = evaluator.evaluate(instance, **options)  # type: ignore[arg-type]
+        if result.errors:
+            result.errors[0]["params"] = {"planted": True}
+        return result
+
+    def drop_annotation(instance: JsonValue, **options: object) -> object:
+        result = evaluator.evaluate(instance, **options)  # type: ignore[arg-type]
+        if result.annotations:
+            del result.annotations[-1]
+        return result
+
+    group_with_title = CorpusGroup(
+        key="planted/title",
+        dialect_dir="draft2020-12",
+        dialect_uri=DIALECT_2020_12,
+        engine=group.engine,
+        uri=group.uri,
+        seeds=group.seeds,
+    )
+    invalid = next(
+        i for i in group.seeds if not group.engine.evaluate(group.uri, i).valid
+    )
+    with pytest.raises(AssertionError):
+        _check_evaluator_case((group, invalid), corrupt_params)
+    _check_evaluator_case((group_with_title, invalid))  # the honest artifact
+    engine = create_engine()
+    uri = engine.register_schema(
+        {"title": "t", "properties": {"a": {"title": "a"}}}, RETRIEVAL_URI
+    )
+    titled = CorpusGroup(
+        "planted/titled", "draft2020-12", DIALECT_2020_12, engine, uri, ({"a": 1},)
+    )
+    with pytest.raises(AssertionError):
+        _check_evaluator_case((titled, {"a": 1}), drop_annotation)
+    _check_evaluator_case((titled, {"a": 1}))
 
 
 def _flip_key(instance: JsonValue) -> int:

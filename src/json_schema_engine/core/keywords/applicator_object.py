@@ -154,24 +154,28 @@ def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
     b = lctx.binding()
     n = lctx.binding()
+    # Pattern-outermost, as `evaluate` sweeps: the error and annotation
+    # order (and the produced name order) must match the interpreter's.
     lctx.emit(
         when(
             type_is(instance, "object"),
             (
                 collect(n),
-                ForEachKey(
-                    instance,
-                    b,
-                    tuple(
-                        when(
-                            regex_test(pattern, Binding(b)),
-                            (
-                                append(n, Binding(b), unique=True),
-                                apply((pattern,), child(HERE, Binding(b))),
+                *(
+                    ForEachKey(
+                        instance,
+                        b,
+                        (
+                            when(
+                                regex_test(pattern, Binding(b)),
+                                (
+                                    append(n, Binding(b), unique=True),
+                                    apply((pattern,), child(HERE, Binding(b))),
+                                ),
                             ),
-                        )
-                        for pattern in value
-                    ),
+                        ),
+                    )
+                    for pattern in value
                 ),
                 produce(Binding(n)),
             ),

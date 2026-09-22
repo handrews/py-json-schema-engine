@@ -24,6 +24,7 @@ from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
 from json_schema_engine.core.lowering import (
     HERE,
+    Binding,
     LoweringContext,
     apply,
     apply_expr,
@@ -145,12 +146,18 @@ def _one_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
 def _one_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
     # Every branch is an `exactly_one` apply; the combine check closes the
-    # run. `evaluate`'s message interpolates the runtime count (pinned by
-    # existing tests), so the IR carries the static portion of that text
-    # rather than a wholly separate message (D1: one message builder).
+    # run and names, through its bindings, the passing count and indexes
+    # `evaluate` reports (D1: one message).
+    count = lctx.binding()
+    passing = lctx.binding()
     lctx.emit(
         *(apply((index,), HERE, "exactly_one") for index in range(len(value))),
-        combine_check(("expected exactly 1",)),
+        combine_check(
+            ("matched ", Binding(count), " branches, expected exactly 1"),
+            {"passing": Binding(passing)},
+            count=count,
+            passing=passing,
+        ),
     )
 
 

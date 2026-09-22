@@ -51,6 +51,7 @@ def test_behaviors_default_to_no_lowering_and_no_applications() -> None:
     # Structural and annotation-only keywords lower to nothing rather than
     # forcing interpretation.
     assert CORE_VOCABULARY["$id"].lower is lower_nothing
-    assert annotation_only("urn:t").lower is lower_nothing
+    # Annotation-only keywords lower to an `Annotate` (M9), not to nothing.
+    assert annotation_only("urn:t").lower is not None
     # `$dynamicRef` lowers like `$ref` since M9: the plan decides its target.
     assert CORE_VOCABULARY["$dynamicRef"].lower is not None

@@ -19,7 +19,13 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_CORE_2019,
     keyword_id,
 )
-from json_schema_engine.core.lowering import HERE, LoweringContext, apply, lower_nothing
+from json_schema_engine.core.lowering import (
+    HERE,
+    LoweringContext,
+    annotate,
+    apply,
+    lower_nothing,
+)
 
 _EMPTY_FACTS = StaticFacts()
 
@@ -55,9 +61,11 @@ def annotation_only(behavior_id: str) -> KeywordBehavior:
         ctx.annotate()
         return True
 
-    # Annotation-only keywords assert nothing; the flag tier lowers them to
-    # nothing (M9 adds the annotation recipe).
-    return KeywordBehavior(behavior_id, _evaluate, lower=lower_nothing)
+    def _lower(_value: JsonValue, lctx: LoweringContext) -> None:
+        # Asserts nothing; the evaluator tier records the annotation (M9).
+        lctx.emit(annotate())
+
+    return KeywordBehavior(behavior_id, _evaluate, lower=_lower)
 
 
 def inert_subschema(behavior_id: str) -> KeywordBehavior:

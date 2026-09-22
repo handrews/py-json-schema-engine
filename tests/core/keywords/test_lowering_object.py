@@ -81,7 +81,8 @@ def test_properties_applies_present_members_and_produces_their_names() -> None:
 # --- patternProperties -------------------------------------------------------
 
 
-def test_pattern_properties_sweeps_matching_keys_per_pattern() -> None:
+def test_pattern_properties_sweeps_the_keys_once_per_pattern() -> None:
+    # Pattern-outermost, as `evaluate` sweeps, so error order matches.
     value: JsonValue = {"^a": True, "^b": True}
     stmts = lower(PATTERN_PROPERTIES, value)
     assert stmts == (
@@ -100,6 +101,12 @@ def test_pattern_properties_sweeps_matching_keys_per_pattern() -> None:
                                 apply(("^a",), child(HERE, Binding(0))),
                             ),
                         ),
+                    ),
+                ),
+                ForEachKey(
+                    INSTANCE,
+                    0,
+                    (
                         when(
                             regex_test("^b", Binding(0)),
                             (

@@ -253,28 +253,26 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
     def lower(_value: JsonValue, lctx: LoweringContext) -> None:
         instance = lctx.instance
         minimum, maximum = _contains_bounds(lctx.schema, sibling_bounds=sibling_bounds)
-        # Runtime dictates the actual match count (`count`), so — unlike
-        # `evaluate()` — the message can only report the compile-time-known
-        # bounds, not how many elements actually matched.
+        binding = lctx.binding()
+        matched = lctx.binding()
+        counter = lctx.binding()
+        # The message and params name the runtime match count through the
+        # `count` binding, exactly as `evaluate` reports it.
         if not sibling_bounds:
             message: LowerMessage = ("no item matches the contains subschema",)
         elif maximum is None:
             message = (
-                f"expected at least {int(minimum)} item(s) matching "
-                "the contains subschema",
+                Binding(counter),
+                f" item(s) match the contains subschema, expected at least {minimum}",
             )
         else:
             message = (
-                f"expected {int(minimum)}-{int(maximum)} item(s) matching "
-                "the contains subschema",
+                Binding(counter),
+                f" item(s) match the contains subschema, expected {minimum}-{maximum}",
             )
-        params: LowerParams = (
-            {"minContains": Const(int(minimum)), "maxContains": Const(int(maximum))}
-            if maximum is not None
-            else {"minContains": Const(int(minimum))}
-        )
-        binding = lctx.binding()
-        matched = lctx.binding()
+        params: LowerParams = {"count": Binding(counter), "minContains": Const(minimum)}
+        if maximum is not None:
+            params = {**params, "maxContains": Const(maximum)}
         count = helper("length_of", Binding(matched))
         lctx.emit(
             when(
@@ -289,6 +287,7 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
                         message=message,
                         params=params,
                         matched=matched,
+                        count=counter,
                     ),
                     # Matched indexes, or `True` when every element matched;
                     # nothing when nothing matched (`evaluate`).

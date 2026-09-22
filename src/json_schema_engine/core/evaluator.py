@@ -552,6 +552,31 @@ def run_evaluation(
     return valid, state
 
 
+def apply_fragment(
+    state: EvalState,
+    target: SchemaRef,
+    cursor: Cursor,
+    path_node: PathNode | None,
+    *,
+    dynamic_scope: Sequence[str],
+    depth: int,
+) -> bool:
+    """Apply one schema fragment on a caller-owned state: the compiled
+    evaluator's trampoline (M9). The island's records, dropped records, and
+    trace nodes land in the state the compiled code shares with it; the
+    caller's dynamic scope and consumed depth are installed for the call
+    and restored afterwards."""
+    saved_scope = state.dynamic_scope[:]
+    saved_depth = state.depth
+    state.dynamic_scope[:] = dynamic_scope
+    state.depth = depth
+    try:
+        return _apply_with_backstop(state, target, cursor, path_node)
+    finally:
+        state.dynamic_scope[:] = saved_scope
+        state.depth = saved_depth
+
+
 @dataclass(frozen=True, slots=True)
 class FragmentResult:
     """What `evaluate_fragment` hands back: the verdict, the relevant

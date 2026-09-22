@@ -49,8 +49,10 @@ type HelperName = Literal[
     "json_equal",
     "is_multiple_of",
     "has_duplicate_items",
+    "first_duplicate_pair",
     "length_of",
     "code_point_length",
+    "json_type_name",
 ]
 type CmpOp = Literal["<", "<=", ">", ">=", "==", "!="]
 
@@ -319,10 +321,13 @@ class CombineCheck:
     """Closes the immediately preceding run of `any_may_pass`/`exactly_one`
     applies: the keyword fails with `message` when the run's combined
     verdict fails. Emitted by the keyword so failure text stays keyword
-    knowledge (D1)."""
+    knowledge (D1). `count`/`passing` are bindings the message and params
+    may reference: the number of passing branches and their indexes."""
 
     message: LowerMessage
     params: LowerParams | None = None
+    count: int | None = None
+    passing: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +345,14 @@ class CountRange:
     message: LowerMessage
     params: LowerParams | None = None
     matched: int | None = None
+    # A binding the message and params may reference: the match count.
+    count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Annotate:
+    """The keyword's own value as an annotation at the current cursor (§4
+    rule 2). Elided when the artifact's selection rules the keyword out."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +405,7 @@ type Stmt = (
     | Append
     | Produce
     | CoverageFold
+    | Annotate
 )
 
 # --- the lowering service --------------------------------------------------
@@ -549,9 +563,17 @@ def apply_expr(
 
 
 def combine_check(
-    message: LowerMessage, params: LowerParams | None = None
+    message: LowerMessage,
+    params: LowerParams | None = None,
+    *,
+    count: int | None = None,
+    passing: int | None = None,
 ) -> CombineCheck:
-    return CombineCheck(message, params)
+    return CombineCheck(message, params, count, passing)
+
+
+def annotate() -> Annotate:
+    return Annotate()
 
 
 def cond(test: Expr, then: Expr, orelse: Expr) -> Cond:

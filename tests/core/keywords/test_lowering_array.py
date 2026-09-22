@@ -124,8 +124,13 @@ _CONTAINS_PRODUCE = when(
 
 
 def _contains_shape(
-    minimum: int, maximum: int | None, message: str, params: dict[str, Const]
+    minimum: int | float,
+    maximum: int | float | None,
+    message: tuple[object, ...],
+    params: dict[str, object],
 ) -> tuple[Stmt, ...]:
+    # Bindings: 0 the swept index, 1 the matched indexes, 2 the match count
+    # (named by the message and params, as `evaluate` reports them).
     return (
         when(
             type_is(INSTANCE, "array"),
@@ -134,11 +139,12 @@ def _contains_shape(
                     INSTANCE,
                     0,
                     apply_expr((), child(HERE, Binding(0)), "discard"),
-                    minimum,
-                    maximum,
-                    message=(message,),
-                    params=params,
+                    int(minimum),
+                    int(maximum) if maximum is not None else None,
+                    message=message,  # type: ignore[arg-type]
+                    params=params,  # type: ignore[arg-type]
                     matched=1,
+                    count=2,
                 ),
                 _CONTAINS_PRODUCE,
             ),
@@ -150,8 +156,8 @@ def test_contains_default_bounds_minimum_one_unbounded_maximum() -> None:
     assert lower(CONTAINS, {}) == _contains_shape(
         1,
         None,
-        "expected at least 1 item(s) matching the contains subschema",
-        {"minContains": Const(1)},
+        (Binding(2), " item(s) match the contains subschema, expected at least 1"),
+        {"count": Binding(2), "minContains": Const(1)},
     )
 
 
@@ -160,8 +166,8 @@ def test_contains_reads_sibling_min_and_max_contains() -> None:
     assert stmts == _contains_shape(
         2,
         3,
-        "expected 2-3 item(s) matching the contains subschema",
-        {"minContains": Const(2), "maxContains": Const(3)},
+        (Binding(2), " item(s) match the contains subschema, expected 2-3"),
+        {"count": Binding(2), "minContains": Const(2), "maxContains": Const(3)},
     )
 
 
@@ -171,18 +177,20 @@ def test_contains_min_contains_zero_still_emits_a_count_range() -> None:
     assert lower(CONTAINS, {}, schema={"minContains": 0}) == _contains_shape(
         0,
         None,
-        "expected at least 0 item(s) matching the contains subschema",
-        {"minContains": Const(0)},
+        (Binding(2), " item(s) match the contains subschema, expected at least 0"),
+        {"count": Binding(2), "minContains": Const(0)},
     )
 
 
 def test_contains_whole_number_float_bounds_are_treated_as_integers() -> None:
+    # The range check truncates; the message and params carry the raw
+    # values, as `evaluate` does.
     stmts = lower(CONTAINS, {}, schema={"minContains": 2.0, "maxContains": 3.0})
     assert stmts == _contains_shape(
-        2,
-        3,
-        "expected 2-3 item(s) matching the contains subschema",
-        {"minContains": Const(2), "maxContains": Const(3)},
+        2.0,
+        3.0,
+        (Binding(2), " item(s) match the contains subschema, expected 2.0-3.0"),
+        {"count": Binding(2), "minContains": Const(2.0), "maxContains": Const(3.0)},
     )
 
 
@@ -192,7 +200,10 @@ def test_contains_without_sibling_bounds_uses_a_fixed_range_and_message() -> Non
     behavior = contains_behavior("urn:test:contains-no-siblings", sibling_bounds=False)
     stmts = lower(behavior, {}, schema={"minContains": 5})
     assert stmts == _contains_shape(
-        1, None, "no item matches the contains subschema", {"minContains": Const(1)}
+        1,
+        None,
+        ("no item matches the contains subschema",),
+        {"count": Binding(2), "minContains": Const(1)},
     )
 
 

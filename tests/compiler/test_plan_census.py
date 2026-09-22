@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from json_schema_engine.compiler import build_plan, explain_compilation
+from json_schema_engine.compiler.plan import build_plan_over
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
@@ -36,6 +37,19 @@ PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int], int]]] = {
     # No dynamic references and no unevaluated* keywords: fully static.
     "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0)),
     "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0)),
+}
+
+
+# Evaluator plans (M9) track every consumer, never static-licensing one:
+# (groups, total units, interpreted units, causes, tracked units, region
+# units). Unit totals and islands equal the flag plan's.
+EVALUATOR_PINS: dict[
+    str, tuple[str, tuple[int, int, int, dict[str, int], int, int]]
+] = {
+    "draft2020-12": (DIALECT_2020_12, (384, 1371, 1, {"dynamic": 1}, 85, 73)),
+    "draft2019-09": (DIALECT_2019_09, (373, 1300, 2, {"dynamic": 2}, 82, 69)),
+    "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0, 0)),
+    "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0, 0)),
 }
 
 
@@ -75,6 +89,38 @@ def census(
 def test_census_is_pinned(directory: str) -> None:
     dialect, expected = PINS[directory]
     assert census(directory, dialect) == expected
+
+
+def evaluator_census(
+    directory: str, dialect: str
+) -> tuple[int, int, int, dict[str, int], int, int]:
+    groups = total = interpreted = tracked = region = 0
+    causes: dict[str, int] = {}
+    for path in sorted((ROOT / "tests" / directory).glob("*.json")):
+        seen: set[str] = set()
+        for case in load_suite_file(path):
+            if case.group in seen:
+                continue
+            seen.add(case.group)
+            engine = _default_engine(dialect)
+            uri = engine.load_schema(case.schema, "https://census.example/schema")
+            explanation = explain_compilation(
+                build_plan_over(engine.schemas, uri, track_all=True)
+            )
+            groups += 1
+            total += explanation.total_units
+            interpreted += explanation.interpreted_units
+            tracked += explanation.tracked_units
+            region += explanation.region_units
+            for cause, count in explanation.causes.items():
+                causes[cause] = causes.get(cause, 0) + count
+    return groups, total, interpreted, dict(sorted(causes.items())), tracked, region
+
+
+@pytest.mark.parametrize("directory", list(EVALUATOR_PINS))
+def test_evaluator_census_is_pinned(directory: str) -> None:
+    dialect, expected = EVALUATOR_PINS[directory]
+    assert evaluator_census(directory, dialect) == expected
 
 
 def test_assert_formats_changes_no_classification() -> None:

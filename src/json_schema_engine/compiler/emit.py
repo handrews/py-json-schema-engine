@@ -37,6 +37,54 @@ VALUE = "v"
 DEPTH = "d"
 SCOPE = "s"
 CHANNEL = "ev"  # the region's coverage channel (M9)
+# Evaluator mode (M9): the shared `EvalState`, the application's path node
+# and cursor, the site table, and the channel/trace helpers.
+STATE = "st"
+PATH = "pn"
+CURSOR = "cu"
+SITES = "X"
+EVALUATE = "evaluate"
+H_ERR = "H_ERR"  # emit_error
+H_ANN = "H_ANN"  # emit_annotation
+H_ENTER = "H_ENTER"  # trace_enter
+H_KWS = "H_KWS"  # trace_keywords
+H_EXIT = "H_EXIT"  # trace_exit
+H_TRUE = "H_TRUE"  # apply_true
+H_FALSE = "H_FALSE"  # apply_false
+H_EMARK = "H_EMARK"  # error_mark
+H_DROP = "H_DROP"  # drop_errors
+H_AMARK = "H_AMARK"  # annotation_mark
+H_ACUT = "H_ACUT"  # cut_annotations
+H_PATH = "H_PATH"  # PathNode
+H_CHILD = "H_CHILD"  # child_cursor
+H_ROOT = "H_ROOT"  # root_cursor
+H_FRAGE = "H_FRAGE"  # trampoline on the shared state
+H_FDP = "H_FDP"  # first_duplicate_pair
+H_TYPE = "H_TYPE"  # json_type_name
+EVALUATOR_NAMES = (
+    STATE,
+    PATH,
+    CURSOR,
+    SITES,
+    EVALUATE,
+    H_ERR,
+    H_ANN,
+    H_ENTER,
+    H_KWS,
+    H_EXIT,
+    H_TRUE,
+    H_FALSE,
+    H_EMARK,
+    H_DROP,
+    H_AMARK,
+    H_ACUT,
+    H_PATH,
+    H_CHILD,
+    H_ROOT,
+    H_FRAGE,
+    H_FDP,
+    H_TYPE,
+)
 
 BUILTINS_USED = frozenset(
     {

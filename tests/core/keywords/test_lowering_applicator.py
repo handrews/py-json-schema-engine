@@ -17,6 +17,7 @@ from json_schema_engine.core.lowering import (
     HERE,
     Apply,
     ApplyExpr,
+    Binding,
     CombineCheck,
     HasKey,
     If,
@@ -44,7 +45,14 @@ def test_one_of_lowers_to_an_exactly_one_run_closed_by_a_combine_check() -> None
     assert stmts == (
         Apply(LowerApply((0,), HERE, "exactly_one")),
         Apply(LowerApply((1,), HERE, "exactly_one")),
-        CombineCheck(("expected exactly 1",)),
+        # The message names the runtime count and passing indexes through
+        # the check's bindings, exactly as `evaluate` reports them (M9).
+        CombineCheck(
+            ("matched ", Binding(0), " branches, expected exactly 1"),
+            {"passing": Binding(1)},
+            count=0,
+            passing=1,
+        ),
     )
 
 

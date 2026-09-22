@@ -20,11 +20,13 @@ from json_schema_engine.compiler.serialize.context import (
     FunctionContext,
     ModuleContext,
     SerializeError,
+    Site,
 )
 from json_schema_engine.compiler.serialize.units import lower_unit, uses_object_test
+from json_schema_engine.core.output import RecordPredicate
 from json_schema_engine.core.registry import SchemaRegistry
 
-__all__ = ["Flags", "SerializeError", "Serialized", "serialize_plan"]
+__all__ = ["Flags", "SerializeError", "Serialized", "Site", "serialize_plan"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,22 +39,63 @@ class Serialized:
     formats: tuple[tuple[str, str], ...]  # (name, format name)
     constants: tuple[tuple[str, ast.expr], ...]
     functions: tuple[ast.FunctionDef, ...]
+    # The entry function: `validate(v)` for a flag artifact, `evaluate(v, st)`
+    # for an evaluator (M9).
     validate: ast.FunctionDef
     vocabulary: frozenset[str]
+    # `xN = X[N]` bindings the evaluator prologue must provide (M9).
+    sites: tuple[tuple[str, Site], ...] = ()
 
 
 DEFAULT_FLAGS = Flags()
 
 
 def serialize_plan(
-    plan: CompilationPlan, registry: SchemaRegistry, flags: Flags = DEFAULT_FLAGS
+    plan: CompilationPlan,
+    registry: SchemaRegistry,
+    flags: Flags = DEFAULT_FLAGS,
+    *,
+    record: RecordPredicate | None = None,
 ) -> Serialized:
-    module = ModuleContext(plan, registry, flags)
+    """Serialize a plan. `record` (evaluator mode) is the artifact's
+    annotation selection, applied statically: a ruled-out annotation is
+    never emitted."""
+    module = ModuleContext(plan, registry, flags, record=record)
     root = plan.units[plan.root_key]
     functions: list[ast.FunctionDef] = []
+    evaluator = module.evaluator
 
     root_call: ast.expr
-    if root.kind == "interpreted":
+    if evaluator:
+        located = [ast.Constant(value=None), e.call(e.load(e.H_ROOT), e.load(e.VALUE))]
+        if root.kind == "interpreted":
+            root_call = e.call(
+                e.load(e.H_FRAGE),
+                e.load(e.STATE),
+                e.subscript(e.load(e.TARGETS), e.const(module.target_slot(root.key))),
+                e.tuple_(()),
+                e.const(0),
+                *located,
+                ast.Constant(value=None),
+            )
+        elif isinstance(root.ref.node, bool):
+            root_call = e.call(
+                e.load(e.H_TRUE if root.ref.node else e.H_FALSE),
+                e.load(e.STATE),
+                e.load(module.site_name(root.key, None, (None, None, None, root.ref))),
+                *located,
+            )
+        else:
+            root_call = e.call(
+                e.load(module.function_name(root.key)),
+                e.load(e.VALUE),
+                e.const(0),
+                e.tuple_(()),
+                e.load(e.STATE),
+                *located,
+                *((e.list_literal(),) if root.takes_channel else ()),
+            )
+    elif root.kind == "interpreted":
         root_call = e.call(
             e.load(e.H_FRAG),
             e.subscript(e.load(e.TARGETS), e.const(module.target_slot(root.key))),
@@ -74,8 +117,8 @@ def serialize_plan(
         key = module.pending.pop(0)
         functions.append(_emit_function(module, plan.units[key]))
     validate = e.function(
-        module.names.name(e.VALIDATE),
-        [e.VALUE],
+        module.names.name(e.EVALUATE if evaluator else e.VALIDATE),
+        [e.VALUE, e.STATE] if evaluator else [e.VALUE],
         [
             ast.Try(
                 body=[e.return_(root_call)],
@@ -128,6 +171,7 @@ def serialize_plan(
         functions=tuple(functions),
         validate=validate,
         vocabulary=frozenset(module.names.vocabulary),
+        sites=tuple(module.sites),
     )
 
 
@@ -151,11 +195,59 @@ def _emit_function(module: ModuleContext, unit: PlannedUnit) -> ast.FunctionDef:
         stmts.append(
             e.assign(body.channel_mark, e.call(e.load("len"), e.load(e.CHANNEL)))
         )
+    trace_node: str | None = None
+    if module.evaluator:
+        # Evaluator mode (M9): open the application's trace node first, so
+        # islands and children nest under it.
+        trace_node = module.names.fresh("t")
+        stmts.append(
+            e.assign(
+                trace_node,
+                e.call(
+                    e.load(e.H_ENTER),
+                    e.load(e.STATE),
+                    e.load(
+                        module.site_name(unit.key, None, (None, None, None, unit.ref))
+                    ),
+                    e.load(e.PATH),
+                    e.load(e.CURSOR),
+                ),
+            )
+        )
     if uses_object_test(ir):
         body.guard = module.names.fresh("g")
         stmts.append(e.assign(body.guard, e.type_is(e.load(e.VALUE), "dict")))
     stmts.extend(unit_statements(body, ir))
-    stmts.append(e.return_(ast.Constant(value=True)))
+    if module.evaluator:
+        assert trace_node is not None
+        verdict = module.names.fresh("w")
+        stmts.append(
+            e.assign(verdict, e.and_(*(e.load(slot) for slot in body.slots.values())))
+        )
+        pairs: list[ast.expr] = []
+        for keyword in ir.keywords:
+            if keyword.structural:
+                continue
+            slot = body.slots.get(keyword.name)
+            pairs.append(e.const(keyword.name))
+            pairs.append(e.load(slot) if slot else ast.Constant(value=True))
+        for name in ir.unknown:
+            pairs.append(e.const(name))
+            pairs.append(ast.Constant(value=True))
+        stmts.append(e.expr_stmt(e.call(e.load(e.H_KWS), e.load(trace_node), *pairs)))
+        stmts.append(
+            e.expr_stmt(
+                e.call(
+                    e.load(e.H_EXIT),
+                    e.load(e.STATE),
+                    e.load(trace_node),
+                    e.load(verdict),
+                )
+            )
+        )
+        stmts.append(e.return_(e.load(verdict)))
+    else:
+        stmts.append(e.return_(ast.Constant(value=True)))
     if fn.called_unit:
         # A function that calls no unit or fragment cannot recurse.
         stmts = [
@@ -167,6 +259,8 @@ def _emit_function(module: ModuleContext, unit: PlannedUnit) -> ast.FunctionDef:
             *stmts,
         ]
     params = [e.VALUE, e.DEPTH, e.SCOPE]
+    if module.evaluator:
+        params += [e.STATE, e.PATH, e.CURSOR]
     if unit.takes_channel:
         params.append(e.CHANNEL)
     return e.function(module.functions[unit.key], params, stmts)

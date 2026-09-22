@@ -11,6 +11,7 @@ import pytest
 
 from json_schema_engine.compiler import (
     build_plan,
+    compile_evaluator,
     compile_validator,
     emit_standalone,
     explain_compilation,
@@ -46,13 +47,16 @@ def test_recursive_ref_chain_trips_the_budget_on_every_surface() -> None:
     )
     compiled = compile_validator(engine, uri).validate
     standalone = _standalone(engine, uri)
+    evaluator = compile_evaluator(engine, uri).evaluate
     shallow = _nest(20)
     assert engine.evaluate(uri, shallow).valid
     assert compiled(shallow) is True
     assert standalone(shallow) is True
+    assert evaluator(shallow, output="hierarchical").valid is True
     deep = _nest(200)
     surfaces: list[Callable[[], bool]] = [
         lambda: engine.evaluate(uri, deep).valid,
+        lambda: evaluator(deep, output="hierarchical", trace=True).valid,
         lambda: compiled(deep),
         lambda: standalone(deep),
     ]
