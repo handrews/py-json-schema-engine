@@ -252,7 +252,13 @@ backend's dialect. Raised at registration (P1), never on the hot path.
 `UnresolvableReferenceError`: a reference could not be resolved to a schema: it
 does not form a usable absolute URI, its target document was never registered
 and no loader supplied it, or a pointer or anchor names nothing in an otherwise
-known resource.
+known resource. Beyond `schema_location`, which says where the failure was, it
+carries what was attempted: `reference: str | None` (the reference exactly as
+written), `resolved_against: str | None` (the base URI in force there, which may
+be an embedded `$id` a reader never knew was present), and `resolved_to: str |
+None` (the absolute URI the two produced). All three are `None` when no
+reference was in play, such as a resource a caller named directly. A pointer
+miss additionally names the failing segment and the prefix that did match.
 
 `UnknownVocabularyError`: a metaschema's `$vocabulary` requires a vocabulary
 nobody registered. Only a vocabulary marked `true` (required) raises; an

@@ -178,7 +178,37 @@ class UnresolvableReferenceError(JsonSchemaEngineError):
     Covers a reference that does not form a usable absolute URI, a target
     document that was never registered and no loader supplied, and a pointer
     or anchor that names nothing in an otherwise known resource.
+
+    `schema_location` says where the failure happened; these say what was
+    attempted, which is the other half of the answer whenever the base a
+    reference resolved against is not the one the author had in mind:
+
+    * `reference` -- the reference exactly as written in the schema.
+    * `resolved_against` -- the base URI in force at that position, which
+      may be an embedded `$id` a reader never knew was there.
+    * `resolved_to` -- the absolute URI the two produced.
+
+    All three are `None` when the failure had no reference in play, such as
+    a resource asked for by a caller rather than by a schema.
     """
+
+    reference: str | None
+    resolved_against: str | None
+    resolved_to: str | None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        schema_location: str | None = None,
+        reference: str | None = None,
+        resolved_against: str | None = None,
+        resolved_to: str | None = None,
+    ) -> None:
+        super().__init__(message, schema_location=schema_location)
+        self.reference = reference
+        self.resolved_against = resolved_against
+        self.resolved_to = resolved_to
 
 
 class UnknownVocabularyError(JsonSchemaEngineError):

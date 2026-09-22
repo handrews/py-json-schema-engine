@@ -545,7 +545,9 @@ class SchemaRegistry:
         resource = self._canonical(resource)
         node = self._documents.get(resource)
         if node is None:
-            raise UnresolvableReferenceError(f"unknown schema '{resource}'")
+            raise UnresolvableReferenceError(
+                f"unknown schema '{resource}'", reference=uri, resolved_to=resource
+            )
         return SchemaRef(node, resource, "")
 
     def resolve_ref(self, ref: str, current_base: str) -> SchemaRef:
@@ -554,20 +556,29 @@ class SchemaRegistry:
         Raises `UnresolvableReferenceError` when the resource, anchor, or
         pointer target does not exist.
         """
-        resource, fragment = _split(resolve(current_base, ref))
+        resolved = resolve(current_base, ref)
+        resource, fragment = _split(resolved)
         resource = self._canonical(resource)
+        # Every exit below reports the attempt, not just the miss: when a
+        # reference resolves against an embedded `$id`, the URI that failed
+        # can look unrelated to anything the author wrote.
+        attempt: dict[str, str] = {
+            "reference": ref,
+            "resolved_against": current_base,
+            "resolved_to": resolved,
+        }
 
         if fragment and not fragment.startswith("/"):
             hit = self._anchors.get(f"{resource}#{fragment}")
             if hit is None:
                 raise UnresolvableReferenceError(
-                    f"unknown anchor '{resource}#{fragment}'"
+                    f"unknown anchor '{resource}#{fragment}'", **attempt
                 )
             return hit
 
         root = self._documents.get(resource)
         if root is None:
-            raise UnresolvableReferenceError(f"unknown schema '{resource}'")
+            raise UnresolvableReferenceError(f"unknown schema '{resource}'", **attempt)
         if not fragment:
             return SchemaRef(root, resource, "")
 
@@ -577,15 +588,26 @@ class SchemaRegistry:
         node: JsonValue = root
         base_uri = resource
         pointer = ""
+        # The document-rooted prefix matched so far, for the error below.
+        # `pointer` cannot serve: it resets at every embedded `$id`.
+        walked = ""
         for raw_segment in fragment[1:].split("/"):
             segment = unescape_segment(raw_segment)
             try:
                 node = _step(node, segment)
             except (KeyError, IndexError, ValueError, TypeError):
+                # Which step failed, and what it was standing on. Without
+                # them `#/a/b/c/d` failing at `b` reads exactly like the
+                # same pointer failing at `d`.
+                matched = walked or "the root"
                 raise UnresolvableReferenceError(
-                    f"pointer '{fragment}' not found in '{resource}'"
+                    f"pointer '{fragment}' not found in '{resource}': "
+                    f"no {segment!r} at {matched} "
+                    f"({json_type_of(node).value})",
+                    **attempt,
                 ) from None
             pointer += "/" + escape_segment(segment)
+            walked += "/" + escape_segment(segment)
             if is_object(node):
                 base_id = identifiers(node).base_id
                 if base_id is not None:
