@@ -5,7 +5,7 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [SemVer](https://semver.org/) with the 0.x caveat that
 minor versions may change public API.
 
-## [0.0.3] - unreleased
+## [0.0.3] - 2026-09-21
 
 ### Added
 
@@ -35,7 +35,7 @@ minor versions may change public API.
   interpreter like any other unlowerable case, rather than being planned
   as if the keyword were absent.
 
-## [0.0.2] - unreleased
+## [0.0.2] - 2026-09-21
 
 The first functional release. Everything below is new relative to the
 0.0.1 name reservation.
