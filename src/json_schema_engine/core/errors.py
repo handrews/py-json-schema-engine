@@ -54,6 +54,41 @@ class InvalidSchemaError(JsonSchemaEngineError):
     """
 
 
+class DuplicateResourceError(JsonSchemaEngineError):
+    """Two different schemas claim the same resource URI (P12).
+
+    Either one document mints an `$id` twice, or a later registration would
+    rebind a URI an earlier one already bound to a different schema. The
+    spec is silent here, but two resources cannot share an identity: one
+    would silently shadow the other, and a `$ref` to that URI would resolve
+    to whichever the walk reached last.
+
+    Re-registering an equal document is not a duplicate; it is a no-op.
+
+    Registration is not atomic (see DESIGN.md §7): a document that fails
+    part-way through its walk stays partially indexed, so build a fresh
+    engine rather than continuing with one that raised.
+    """
+
+
+class DuplicateAnchorError(JsonSchemaEngineError):
+    """Two different schema objects claim the same anchor in one resource.
+
+    Covers `$anchor`, `$dynamicAnchor`, and the draft-07/06 `$id: "#name"`
+    form alike, including one name claimed by an `$anchor` on one object and
+    a `$dynamicAnchor` on another: because a dynamic anchor is also a plain
+    anchor (D8), that case leaves `$ref` and `$dynamicRef` resolving the
+    same fragment to *different* schemas.
+
+    The spec calls a duplicate anchor undefined behavior and permits an
+    implementation to reject it, which is what this engine does. One object
+    carrying both `$anchor` and `$dynamicAnchor` with the same name names
+    itself twice and is fine.
+
+    Registration is not atomic; see `DuplicateResourceError`.
+    """
+
+
 class ReadOnlyRegistryError(JsonSchemaEngineError):
     """Registration attempted on a compiled artifact's registry snapshot."""
 

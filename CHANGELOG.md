@@ -9,6 +9,24 @@ minor versions may change public API.
 
 ### Changed
 
+- **Duplicate identifiers are now registration errors (DESIGN.md P12).**
+  Two different schemas may no longer claim one resource URI
+  (`DuplicateResourceError`), and two different schema objects may no longer
+  claim one anchor name within a resource (`DuplicateAnchorError`). Both were
+  silent last-write-wins, so one schema shadowed the other and a reference
+  resolved to whichever the walk reached last. The anchor case was worse than
+  shadowing: because a dynamic anchor is also a plain anchor, `$anchor: "n"` on
+  one object and `$dynamicAnchor: "n"` on another left `$ref` and `$dynamicRef`
+  resolving the same fragment to *different* schemas. **Breaking:** a document
+  that registered before may now raise. Re-registering an *equal* document is
+  still a no-op, and one object carrying both `$anchor` and `$dynamicAnchor`
+  under one name is still fine. No case in the official test suite, the bundled
+  metaschemas, or this repo's fixtures is affected.
+- Registration remains non-atomic, and these add two more ways to fail
+  part-way: a document whose registration raises stays partially indexed, so
+  discard that engine rather than continuing with it. Tracked as DESIGN.md §7
+  item 8.
+
 - **A schema location is now a URI (DESIGN.md P10).** The JSON Pointer in
   `schemaLocation`, `absoluteKeywordLocation`, and the `schema_location`
   carried by a raised error is percent-encoded per RFC 3986's `fragment`

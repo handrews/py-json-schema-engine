@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
+    DuplicateAnchorError,
+    DuplicateResourceError,
     InvalidSchemaError,
     JsonSchemaEngineError,
     MaxDepthExceededError,
@@ -26,6 +28,7 @@ from json_schema_engine.core.json_model import (
     JsonValue,
     escape_segment,
     is_object,
+    json_equal,
     json_type_of,
     unescape_segment,
 )
@@ -162,6 +165,15 @@ class SchemaRegistry:
         self._reference_memo: dict[
             tuple[str, str, str], DynamicReference | RecursiveReference
         ] = {}
+        # Identifiers claimed by the registration currently in progress
+        # (P12). Scoped to one `_register`, because claiming a URI or an
+        # anchor a *previous* registration claimed is a re-registration,
+        # while claiming one twice in a single document is the duplicate.
+        # An attribute rather than a `_walk` parameter is safe: a walk never
+        # calls `_canonical` or `_register`, so registration is not
+        # re-entrant.
+        self._claimed_resources: set[str] = set()
+        self._claimed_anchors: set[str] = set()
         # Called for every regex a keyword declares during a walk. The
         # engine installs this after its trusted metaschemas register, so
         # the D20 screen applies only to caller schemas.
@@ -220,6 +232,48 @@ class SchemaRegistry:
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
 
+    def _claim_resource(self, base_uri: str, node: JsonValue, where: str) -> None:
+        """Bind a resource URI to a schema, or refuse to shadow another (P12).
+
+        `where` is the location to blame: the `$id`-bearing position for an
+        embedded resource, the bare resource URI for a document root.
+
+        The claimed-here check comes first because two *identical*
+        subschemas claiming one `$id` are still two resources; only a
+        re-registration of the same document may rebind, and then only to an
+        equal schema.
+        """
+        if base_uri in self._claimed_resources:
+            raise DuplicateResourceError(
+                f"resource '{base_uri}' is claimed twice in one document",
+                schema_location=where,
+            )
+        existing = self._documents.get(base_uri)
+        if existing is not None and not json_equal(existing, node):
+            raise DuplicateResourceError(
+                f"resource '{base_uri}' is already registered as a different schema",
+                schema_location=where,
+            )
+        self._claimed_resources.add(base_uri)
+        self._documents[base_uri] = node
+
+    def _claim_anchor(self, key: str, here: SchemaRef) -> None:
+        """Bind an anchor key, or refuse to shadow another object's (P12).
+
+        `here` is one `SchemaRef` per schema object, so an object carrying
+        both `$anchor` and `$dynamicAnchor` under one name claims the same
+        key with the same value and is allowed; two different objects are
+        not. Keying on `_anchors`, which `$dynamicAnchor` also writes,
+        catches a plain/dynamic collision across the two indexes (D8).
+        """
+        if key in self._claimed_anchors and self._anchors[key] is not here:
+            raise DuplicateAnchorError(
+                f"anchor '{key}' is claimed by two schemas in one resource",
+                schema_location=here.location,
+            )
+        self._claimed_anchors.add(key)
+        self._anchors[key] = here
+
     def _register(
         self,
         schema: JsonValue,
@@ -228,6 +282,8 @@ class SchemaRegistry:
         get_range: RangeLookup | None,
     ) -> str:
         self._reference_memo.clear()
+        self._claimed_resources.clear()
+        self._claimed_anchors.clear()
         effective_dialect = effective_dialect_uri(
             schema, retrieval_uri, dialect_uri, self._default_dialect_uri
         )
@@ -240,7 +296,9 @@ class SchemaRegistry:
             base_uri = _resource_of(resolve(base_uri, root_ids.base_id))
         if base_uri != retrieval_resource:
             self._aliases[retrieval_resource] = base_uri
-        self._documents[base_uri] = schema
+        # A resource-level error names the bare resource URI, as the other
+        # document-scoped errors do (`SchemaValidationError`).
+        self._claim_resource(base_uri, schema, base_uri)
         self._document_dialects[base_uri] = effective_dialect
         self._resource_locations[base_uri] = DocumentLocation(base_uri, "")
         if get_range is not None:
@@ -273,21 +331,22 @@ class SchemaRegistry:
 
         ids = dialect.identifiers(node)
         if pointer != "" and ids.base_id is not None:
+            claimed_at = schema_location(base_uri, pointer)
             base_uri = _resource_of(resolve(base_uri, ids.base_id))
             pointer = ""
-            self._documents[base_uri] = node
+            self._claim_resource(base_uri, node, claimed_at)
             self._document_dialects[base_uri] = dialect.uri
             self._resource_locations[base_uri] = DocumentLocation(
                 document_uri, doc_pointer
             )
         here = SchemaRef(node, base_uri, pointer)
         for anchor in ids.anchors:
-            self._anchors[f"{base_uri}#{anchor}"] = here
+            self._claim_anchor(f"{base_uri}#{anchor}", here)
         # A dynamic anchor is also a plain anchor for `$ref`; only the
         # dynamic index takes part in `$dynamicRef` rebinding (D8).
         if ids.dynamic_anchor is not None:
             key = f"{base_uri}#{ids.dynamic_anchor}"
-            self._anchors[key] = here
+            self._claim_anchor(key, here)
             self._dynamic_anchors[key] = here
         if ids.recursive_anchor and pointer == "":
             self._recursive_roots.add(base_uri)
