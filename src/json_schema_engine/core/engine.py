@@ -206,6 +206,11 @@ class Engine:
         """
         try:
             self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
+            # Before the walk, not after: a document that fails its
+            # metaschema must not be registered at all. Nothing needs to be
+            # registered to check it — the metaschema sees the document as
+            # plain data — and skipping the walk makes the failure cheaper.
+            self._maybe_validate(schema, retrieval_uri, dialect_uri)
             try:
                 uri = self.schemas.register(
                     schema, retrieval_uri, dialect_uri, get_range
@@ -215,7 +220,6 @@ class Engine:
                     "schema nesting exceeded the interpreter's stack "
                     f"(max_depth={self._max_depth})"
                 ) from None
-            self._maybe_validate(uri)
         except JsonSchemaEngineError as error:
             attach_location_chain(self.schemas, error)
             raise
@@ -244,8 +248,23 @@ class Engine:
         # Each registration may reveal new references; a miss is left for
         # evaluation to report if the reference is actually followed.
         while missing := self.schemas.take_unresolved():
-            for uri in missing:
-                self._fetch(uri)
+            for index, uri in enumerate(missing):
+                try:
+                    self._fetch(uri)
+                except BaseException:
+                    # `take_unresolved` emptied the set before we fetched
+                    # anything, so without this the URIs after the failure
+                    # are lost for good. Atomicity is per document (§7): a
+                    # batch keeps whatever registered, and the rest stays
+                    # queued for a later drain.
+                    #
+                    # The one that raised is *not* requeued: it has already
+                    # been reported to this caller, and putting it back
+                    # would raise the same error again inside some later,
+                    # unrelated drain. Evaluation still reports it if the
+                    # reference is actually followed.
+                    self.schemas.restore_unresolved(missing[index + 1 :])
+                    raise
 
     def _fetch(self, uri: str) -> bool:
         for loader in self._loaders:
@@ -275,23 +294,12 @@ class Engine:
         expected to be given. An anchor-shaped fragment is resolved through
         the anchor index first, since an anchor is a fragment rather than a
         pointer and decoding one yields a string no pointer walk can use.
+
+        A location from a *failed* registration has no document to find,
+        since the registration was rolled back (§7); the error carries its
+        own `schema_source`, captured before the undo.
         """
-        position = self.schemas.position_of(schema_location)
-        if position is None:
-            return None
-        resource, within = position
-        location = self.schemas.document_location(resource)
-        if location is None:
-            return None
-        pointer = location.pointer + within
-        source: SourceLocation = {
-            "documentUri": location.document_uri,
-            "pointer": pointer,
-        }
-        found = self.schemas.range(location.document_uri, pointer)
-        if found is not None:
-            source["range"] = found
-        return source
+        return self.schemas.source_of(schema_location)
 
     def location_chain(self, schema_location: str) -> LocationChain:
         """The enclosing `$id` resources of a schema location (P11).
@@ -382,8 +390,16 @@ class Engine:
             else identifiers_2020,
         )
 
-    def _maybe_validate(self, base_uri: str) -> None:
+    def _maybe_validate(
+        self, schema: JsonValue, retrieval_uri: str, dialect_uri: str | None
+    ) -> None:
         """The `validate_schemas` policy: a document must satisfy its dialect.
+
+        Runs *before* registration, so a document that fails is never
+        registered — which is what the option has always been documented to
+        mean. `identify` names the resource and dialect the registration
+        would have used, so the message and location are the same either
+        way.
 
         Skipped when the metaschema is unavailable ("cannot check", not
         failure). Bundled resources never reach this path, since the
@@ -391,16 +407,16 @@ class Engine:
         """
         if not self._validate_schemas:
             return
-        dialect_uri = self.schemas.dialect_uri_for(base_uri)
-        if not self.schemas.has(dialect_uri):
+        identity = self.schemas.identify(schema, retrieval_uri, dialect_uri)
+        if not self.schemas.has(identity.dialect_uri):
             return
-        document = self.schemas.document(base_uri)
-        result = self.evaluate(dialect_uri, document, output="basic")
+        result = self.evaluate(identity.dialect_uri, schema, output="basic")
         if not result.valid:
             raise SchemaValidationError(
-                f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
+                f"schema '{identity.base_uri}' fails its metaschema "
+                f"'{identity.dialect_uri}'",
                 list(result.errors or []),
-                schema_location=schema_location(base_uri, ""),
+                schema_location=schema_location(identity.base_uri, ""),
             )
 
     # --- evaluation ------------------------------------------------------

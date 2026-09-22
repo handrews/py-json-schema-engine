@@ -176,9 +176,12 @@ def test_raised_error_carries_an_encoded_schema_location() -> None:
             {"properties": {"a b": "not a schema"}}, "https://raise.example/s"
         )
     assert raised.value.schema_location == ("https://raise.example/s#/properties/a%20b")
-    # And it round-trips: the location names a real position in the
-    # document, which is what makes it worth printing.
-    assert engine.locate(raised.value.schema_location) == {
+    # And it names a real position in the document, which is what makes it
+    # worth printing. `locate` cannot answer here — the registration was
+    # rolled back (§7), so there is no registered document to locate
+    # against — which is why the position is captured on the error.
+    assert engine.locate(raised.value.schema_location) is None
+    assert raised.value.schema_source == {
         "documentUri": "https://raise.example/s",
         "pointer": "/properties/a b",
     }

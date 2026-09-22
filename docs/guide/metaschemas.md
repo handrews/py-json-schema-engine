@@ -39,6 +39,12 @@ assert len(errors) >= 1
 assert all("schemaLocation" in unit for unit in errors)
 ```
 
+The check runs *before* the document is registered, so a document that
+fails is never registered at all — `engine.schemas.has(...)` is `False`
+afterwards and the engine stays usable. A document broken in both ways at
+once reports the metaschema failure, which explains more: every violated
+keyword rather than the first bad schema position.
+
 A document that satisfies its metaschema registers exactly as it would
 without the option — `validate_schemas` only adds a check, never changes
 what a valid document means:

@@ -22,10 +22,32 @@ minor versions may change public API.
   still a no-op, and one object carrying both `$anchor` and `$dynamicAnchor`
   under one name is still fine. No case in the official test suite, the bundled
   metaschemas, or this repo's fixtures is affected.
-- Registration remains non-atomic, and these add two more ways to fail
-  part-way: a document whose registration raises stays partially indexed, so
-  discard that engine rather than continuing with it. Tracked as DESIGN.md §7
-  item 7.
+- **Registration is now all-or-nothing (DESIGN.md P13).** A document whose
+  registration raises leaves the registry exactly as it found it, so an engine
+  stays usable after a caught registration error. Previously the half-indexed
+  document stayed registered and evaluable, missing every anchor and
+  sub-resource past the failure point, with partial contributions to the
+  produced/consumed id sets that drive annotation elision — so the failure
+  surfaced as a wrong answer rather than a loud one. Registration cost is
+  unchanged (measured: 1.27 ms either way on the OAS 3.1 schema).
+- Because a failed registration is rolled back, `Engine.locate` can no longer
+  place an error from one: there is no registered document to place it
+  against. The error carries `schema_source` instead (below).
+- A failed drain keeps the rest of its queue. `Engine.load`/`load_schema` take
+  the pending references in one batch and clear them before fetching, so a
+  registration that raised part-way through discarded every URI the loop had
+  not reached yet — permanently, since nothing queued them again. The
+  unattempted ones now stay pending for a later drain. The one that raised is
+  not requeued: it has already been reported, and evaluation still reports it
+  if the reference is actually followed.
+- **`validate_schemas` now checks a document before registering it**, so one
+  that fails its metaschema is no longer registered. Previously the check ran
+  after the walk and nothing removed the document, leaving a caller who asked
+  for validation, caught the typed rejection, and carried on holding an invalid
+  schema that still evaluated. The option remains opt-in and off by default —
+  validating the OAS 3.1 schema costs 2.0 ms against 56.8 ms, a 28× difference
+  on registration. A document broken both ways at once now reports
+  `SchemaValidationError` rather than `InvalidSchemaError`.
 - A document-level `schema_location` is now `uri#` rather than a bare `uri`,
   so every location is a `base#pointer` (P10) that `Engine.locate` and
   `Engine.location_chain` accept. Affects `SchemaValidationError`,
@@ -33,6 +55,11 @@ minor versions may change public API.
 
 ### Added
 
+- `JsonSchemaEngineError.schema_source`: the failing position seen physically
+  (D17) — the document, the document-rooted pointer, and the source range when
+  a loader reported one. Captured as the error leaves the engine, so it
+  survives a rolled-back registration. A `SourceRange` is plain integers, so an
+  error held in a log buffer keeps nothing alive.
 - **Location chains (DESIGN.md P11).** A canonical `base_uri#pointer` names a
   position exactly and still may not locate it: in a bundled document the base
   may be an embedded `$id` the reader never knew was there, and a relative

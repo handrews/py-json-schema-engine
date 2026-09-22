@@ -89,6 +89,7 @@ not the intent), **N/A** (JavaScript-only).
 | P10 | Location string encoding     | A schema location is a **URI**. `SchemaRef.location` and every error's `schema_location` are built by `schema_location(base_uri, pointer)` in `core/uri.py`, which takes an RFC 6901 pointer and percent-encodes exactly what RFC 3986's `fragment` production disallows: space, `"`, `<`, `>`, `\`, `^`, `` ` ``, `{`, `|`, `}`, `#`, `%`, controls, and every non-ASCII character as UTF-8 bytes. `/ : @ ! $ & ' ( ) * + , ; = - . _ ~` stay literal, so an ordinary pointer reads unchanged. `pointer_from_fragment(fragment)` is the exact inverse and is the only way a fragment becomes a pointer (registry lookup, `Engine.locate`). Prose in error messages uses the same URI form for schema positions. `evaluationPath` and `instanceLocation` stay **plain-text** JSON Pointers, which their specs require and `$ref` never sees. | `schemaLocation`/`absoluteKeywordLocation` are specified as URIs, and callers paste them into `$ref` or feed them back to `Engine.locate`. Emitting the raw pointer made a property named `100%` come out as `#/properties/100%`, which is neither a URI nor round-trippable, while the registry already `unquote`d on the way in. Matching user-facing form to `$ref` usage is the rule wherever the spec does not fix a format. | The JSON Schema RFC adopts IRIs: widen to the IRI `ifragment` rules and leave non-ASCII literal. Until then a human-centric UI decodes for display; the engine emits the machine-round-trippable form. |
 | P11 | Embedded-resource location chain | A schema location names a position exactly and still may not locate it: in a compound document the base may be an embedded `$id` the reader never knew was there, and a relative `$id` resolves to a URI that appears nowhere in their file. `SchemaRegistry.location_chain(location)` returns a `tuple[LocationHop, ...]`, innermost first: the position, then each lexically enclosing resource with the pointer to the one below it *within that resource*, ending at a root. Every hop's `.location` is a canonical schema location, so it is a `$ref` value and an `Engine.locate` argument; a hop also carries the `$id` as written (the only way to find a relative one in the text) and, on the outermost hop, the retrieval URI when it differs. The parent link rides on `DocumentLocation`, which `snapshot()` already copies, rather than a parallel map. `Engine` attaches a chain to any error leaving `register_schema` or `evaluate` — no raise site holds a registry — and `str(error)` appends it only past one hop, so a single-resource message is byte-identical to before. Side API only: no output unit gains a field. | The bundled shape (many `$id` resources in one document's `$defs`) is the common real one, and it is exactly where a canonical URI stops being actionable. Deriving at the boundary rather than at the raise site avoids coupling the regex screen, the evaluator and keyword `analyze()` to a registry, and freezes the chain at the moment of failure. Hops carry no `SourceLocation` because its range comes from a loader closure over a parse tree, and an exception that outlives it must not pin it; `Engine.locate(hop.location)` is one call. | The chain and `Engine.locate` disagree — a test composes the hops back into the flat D17 pointer to make that a failure rather than a drift. |
 | P12 | Duplicate identifiers are errors | Two different schemas may not claim one resource URI, and two different schema objects may not claim one anchor name within a resource. `DuplicateResourceError` covers a single document minting an `$id` twice and a later registration rebinding a URI an earlier one bound to a *different* schema (`json_equal`, so re-registering an equal document stays a no-op). `DuplicateAnchorError` covers `$anchor`, `$dynamicAnchor`, and the draft-07/06 `$id: "#name"` form alike, keyed on the `_anchors` entry that all three write; one object carrying both anchor kinds under one name claims the same key with the same target and is allowed. Claims are scoped to one registration walk, so a re-registered resource rewrites its own anchors without a false positive, and a `$ref` sibling under draft-07/06 claims nothing because it suppresses identifiers (D18). | Both were silent last-write-wins, so one schema shadowed the other and a reference resolved to whichever the walk reached last. The anchor case was worse than shadowing: because a dynamic anchor is also a plain anchor (D8), `$anchor: "n"` on one object and `$dynamicAnchor: "n"` on another left `$ref` and `$dynamicRef` resolving the same fragment to *different* schemas. The spec is silent on duplicate `$id` and deems a duplicate anchor undefined behavior an implementation MAY reject; the owner deems rejection correct for both. Duplicate `$id` is also what made the P11 parent relation cyclic. | A schema in the wild proves a duplicate is load-bearing somewhere (none known; the vendored suite, the bundled metaschemas, and every repo fixture are clean). |
+| P13 | Registration is all-or-nothing | `SchemaRegistry.register` journals every index write and undoes them if anything escapes, so a document that fails leaves the registry exactly as it found it. A `_Registration` holds `(index, key, prior)` for the seven dict indexes and `(index, member)` for the four set ones, recording only genuinely new members because `_produced_ids`/`_consumed_ids` are unions. The undo restores prior values rather than deleting keys: a walk legitimately rebinds entries an earlier registration owns, and `_documents` order is what `resources()` promises. `except BaseException`, since `_step` raises bare `KeyError`/`TypeError`, `RecursionError` can fire anywhere, and caller code runs inside the walk. Not journaled: `_reference_memo` (a derived cache, cleared on both paths), the P12 claim sets (per-walk scratch), and the regex cache (keyed by pattern, a function of a fixed dialect and backend). On the way out the registry fills the error's `location_chain` (P11) and `schema_source` (D17) *before* the undo — the only moment the indexes they derive from still exist — and `_canonical` refuses to start a lazy bundled registration while a journal is live. | The half-indexed document left behind was still evaluable, and its partial `produces`/`consumes` fed D5's elision predicate, so the failure surfaced as a wrong answer rather than a loud one. P12 added two more ways to fail mid-walk. Journaling rather than snapshotting keeps the cost O(this document's writes) with no term in registry size, which matters because every lookup may lazily register a bundled metaschema; measured, registration is unchanged (1.27 ms either way on the OAS 3.1 corpus). | A caller needs a *successful* registration undone: that wants `unregister`, and an answer for resources an earlier registration also claims. |
 
 ## 2. System shape
 
@@ -645,27 +646,22 @@ since the emitted code is the same for every level.
    paths" groups are the only known cases).
 6. **Evaluator standalone emission** — prologue-only work under D10's
    helper convention; deferred (owner decision, M9).
-7. **Atomic registration** — registration is not atomic, and nothing has ever
-   said it is: this is an implementation accident, not a decision. A document
-   that fails part-way through its walk (`InvalidSchemaError`,
-   `MaxDepthExceededError`, and now the two P12 duplicates) stays registered
-   along with any sub-resources it already minted, and `evaluate()` will run
-   against it. Unrelated resources are unaffected, but the half-indexed
-   document is missing every anchor and sub-resource past the failure point,
-   and its contributions to `_produced_ids`/`_consumed_ids` are incomplete —
-   which feeds D5's elision predicate, so the failure mode is a wrong answer
-   rather than an obvious one. It ought to be recoverable. Ten indexes are
-   written during a walk; P12's per-walk claim sets are already the rollback
-   journal for the two that matter most, so journal-and-undo is cheaper now
-   than it was. Note `_produced_ids`/`_consumed_ids` are unions, so rollback
-   needs the newly-added members recorded, not just the keys touched, and
-   that snapshot-and-restore of all ten would be O(registry size) per
-   registration, penalizing the lazy bundled-metaschema path. Until then the
-   documented advice is to discard an engine whose registration raised.
+7. **Per-resource dialects** — `$schema` is permitted at the root of any
+   schema resource (2020-12 core §8.1.1), but `_walk` never re-derives it:
+   an embedded `$id` resource is walked with, and recorded under, its
+   parent's dialect. A draft-07 document whose embedded resource declares
+   2020-12 registers entirely as draft-07, so `$id: "#foo"` — an anchor in
+   draft-07, invalid in 2020-12 — is accepted where the inner dialect would
+   reject it. Fixing it means deriving the dialect at each resource root in
+   `_walk` and recording it in `_document_dialects`, which interacts with
+   D18 (identifier syntax is dialect data, so the extractor changes
+   mid-walk). Per-resource metaschema validation depends on this: today
+   `validate_schemas` checks a document against its *root* dialect only.
 
 
 ### Resolved (owner, 2026-09-22)
 
+- Registration is atomic (P13), answering the open item this section held.
 - Location chains (P11), answering the four questions this section held:
   (a) derived by the registry and attached by `Engine`'s entry points, since no
   raise site holds a registry; (b) `Engine.locate` is untouched and composes

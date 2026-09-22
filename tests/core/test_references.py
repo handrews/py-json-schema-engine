@@ -4,11 +4,13 @@
 import pytest
 
 from json_schema_engine.core import (
+    InvalidSchemaError,
     JsonValue,
     LoadedDocument,
     SchemaValidationError,
     UnknownDialectError,
     UnknownVocabularyError,
+    UnresolvableReferenceError,
     create_engine,
 )
 
@@ -212,6 +214,11 @@ def test_validate_schemas_rejects_a_malformed_document() -> None:
     with pytest.raises(SchemaValidationError) as info:
         engine.register_schema({"minLength": -1}, "https://val.example/bad")
     assert info.value.errors
+    # "Rejects" means it is not registered: the check runs before the walk,
+    # so a document that fails its metaschema never enters the registry.
+    assert not engine.schemas.has("https://val.example/bad")
+    with pytest.raises(UnresolvableReferenceError):
+        engine.evaluate("https://val.example/bad", 1)
     assert engine.register_schema({"minLength": 1}, "https://val.example/ok")
 
 
@@ -219,7 +226,22 @@ def test_validate_schemas_checks_a_loaded_metaschema() -> None:
     engine = create_engine(loaders=[meta_loader], validate_schemas=True)
     with pytest.raises(SchemaValidationError):
         engine.load_schema({"$schema": BARE, "x": 1}, "https://val.example/d")
+    assert not engine.schemas.has("https://val.example/d")
     assert engine.load_schema({"$schema": BARE, "title": "t"}, "https://val.example/ok")
+
+
+def test_validate_schemas_reports_the_metaschema_before_the_walk() -> None:
+    # Ordering is observable when a document is broken both ways: the
+    # metaschema gets the first word, and it explains more — every
+    # violated keyword, rather than the first bad schema position.
+    engine = create_engine(validate_schemas=True)
+    with pytest.raises(SchemaValidationError) as info:
+        engine.register_schema(
+            {"minLength": -1, "properties": {"a": "not a schema"}},
+            "https://val.example/doubly-bad",
+        )
+    assert info.value.errors
+    assert not engine.schemas.has("https://val.example/doubly-bad")
 
 
 def test_validate_schemas_skips_a_dialect_without_a_metaschema_resource() -> None:
@@ -244,3 +266,44 @@ def test_bundled_metaschemas_are_complete() -> None:
         # keyed fragment-free.
         assert isinstance(document, dict)
         assert str(document.get("$id")).rstrip("#") == uri
+
+
+# --- a failed drain keeps its queue ----------------------------------------
+
+
+def test_a_failed_drain_leaves_the_rest_of_the_queue_pending() -> None:
+    # `take_unresolved` empties the pending set before the drain loop has
+    # fetched anything, so a failure part-way used to discard every URI the
+    # loop had not reached — and nothing ever queued them again.
+    good: JsonValue = {"$id": "https://q.example/good", "type": "string"}
+    attempts: list[str] = []
+
+    def loader(uri: str) -> LoadedDocument | None:
+        attempts.append(uri)
+        if uri == "https://q.example/bad":
+            # A document that cannot register: a non-schema value in a
+            # schema position.
+            return LoadedDocument({"properties": {"a": 1}}, uri)
+        if uri == "https://q.example/good":
+            return LoadedDocument(good, uri)
+        return None
+
+    engine = create_engine(loaders=[loader])
+    # Sorted order puts "bad" before "good", so the failure happens first.
+    with pytest.raises(InvalidSchemaError):
+        engine.load_schema(
+            {
+                "$defs": {
+                    "a": {"$ref": "https://q.example/bad"},
+                    "b": {"$ref": "https://q.example/good"},
+                }
+            },
+            "https://q.example/root",
+        )
+    assert attempts == ["https://q.example/bad"]
+    assert not engine.schemas.has("https://q.example/good")
+
+    # The unreached URI is still queued, so a later drain picks it up.
+    # The one that raised is not: it was already reported to this caller,
+    # and requeuing it would raise the same error inside a later drain.
+    assert engine.schemas.take_unresolved() == ["https://q.example/good"]
