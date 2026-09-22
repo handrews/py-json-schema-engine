@@ -13,7 +13,6 @@
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from urllib.parse import unquote
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry
 from json_schema_engine.core.errors import (
@@ -32,7 +31,13 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.loader import RangeLookup, SourceRange
 from json_schema_engine.core.ref import SchemaRef
-from json_schema_engine.core.uri import resolve, split_fragment, strip_fragment
+from json_schema_engine.core.uri import (
+    pointer_from_fragment,
+    resolve,
+    schema_location,
+    split_fragment,
+    strip_fragment,
+)
 
 # Chosen below CPython's default recursion limit so the typed error fires
 # before a `RecursionError`, while staying generous for real documents (P3).
@@ -100,9 +105,15 @@ def _split(uri: str) -> tuple[str, str | None]:
     A JSON Pointer travels percent-encoded inside a URI fragment (RFC 6901
     §6), so `#/a%22b` names the member `a"b`; decoding here, once, keeps
     `uri.split_fragment` a pure RFC 3986 operation.
+
+    `pointer_from_fragment` is the inverse of the `pointer_fragment` that
+    built the location on the way out (P10), so a location the engine
+    emitted resolves back to the position it came from. An anchor name
+    cannot contain a character either function touches, so running a
+    fragment through it before the anchor/pointer split is harmless.
     """
     resource, fragment = split_fragment(uri)
-    return resource, None if fragment is None else unquote(fragment)
+    return resource, None if fragment is None else pointer_from_fragment(fragment)
 
 
 class SchemaRegistry:
@@ -250,14 +261,14 @@ class SchemaRegistry:
         if depth > self._max_depth:
             raise MaxDepthExceededError(
                 f"schema nesting exceeds max_depth ({self._max_depth})",
-                schema_location=f"{base_uri}#{pointer}",
+                schema_location=schema_location(base_uri, pointer),
             )
         if isinstance(node, bool):
             return
         if not is_object(node):
             raise InvalidSchemaError(
                 f"non-schema value ({json_type_of(node).value}) in schema position",
-                schema_location=f"{base_uri}#{pointer}",
+                schema_location=schema_location(base_uri, pointer),
             )
 
         ids = dialect.identifiers(node)
@@ -299,14 +310,16 @@ class SchemaRegistry:
                 # `analyze()` has no location of its own (an unknown or
                 # unavailable format, M7): attach the keyword's.
                 if error.schema_location is None:
-                    error.schema_location = (
-                        f"{base_uri}#{pointer}/{escape_segment(name)}"
+                    error.schema_location = schema_location(
+                        base_uri, f"{pointer}/{escape_segment(name)}"
                     )
                 raise
             self._produced_ids.update(facts.produces)
             self._consumed_ids.update(facts.consumes)
             if self.on_regex is not None and facts.regexes:
-                keyword_location = f"{base_uri}#{pointer}/{escape_segment(name)}"
+                keyword_location = schema_location(
+                    base_uri, f"{pointer}/{escape_segment(name)}"
+                )
                 for regex in facts.regexes:
                     self.on_regex(regex, keyword_location)
             for reference in facts.references:

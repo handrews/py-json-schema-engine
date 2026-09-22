@@ -64,7 +64,10 @@ same keyword-only parameters. Registration is synchronous and local;
   canonical schema location back to its document: the containing document, the
   document-rooted pointer, and the source range when that document's loader
   reported positions. Returns `None` for a resource the registry never saw.
-  Zero cost on the evaluation path; nothing calls this unless asked.
+  Zero cost on the evaluation path; nothing calls this unless asked. The
+  argument is a URI, as every `schemaLocation` the engine emits is; its
+  fragment is decoded back into a plain-text pointer, and the
+  `SourceLocation.pointer` returned is plain text too.
 - `Engine.evaluate(schema_uri, instance, *, output=OutputFormat.FLAG,
   annotations=False, error_params=False, verbose=None, trace=False,
   positions=False) -> Result`: evaluates `instance` against a registered schema
@@ -92,6 +95,14 @@ were selected; the dropped pair at the verbose level; `trace` when requested;
 dict[str, bool]`. `basic` renders `BasicOutputDocument`; `detailed`/`verbose`
 render `DetailedOutputUnit`; `list` renders `ListOutputDocument`;
 `hierarchical` renders `OutputUnit`.
+
+Location spelling (P10) is uniform across every unit and document type
+below: a **schema** location (`schemaLocation`, `absoluteKeywordLocation`) is
+a URI whose fragment is a percent-encoded JSON Pointer, while an
+**evaluation** or **instance** location (`evaluationPath`, `keywordLocation`,
+`inputLocation`, `instanceLocation`, `SourceLocation.pointer`) is a
+plain-text JSON Pointer. Only a name containing a character RFC 3986 keeps
+out of a fragment makes the two differ.
 
 `ErrorUnit`: a `TypedDict` for one rendered assertion failure, native field
 names (D6, D13): `evaluationPath: str`, `schemaLocation: str`, `inputLocation:

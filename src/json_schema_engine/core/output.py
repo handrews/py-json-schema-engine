@@ -26,6 +26,7 @@ from json_schema_engine.core.json_model import (
     unescape_segment,
 )
 from json_schema_engine.core.loader import SourceLocation
+from json_schema_engine.core.uri import pointer_fragment
 
 if TYPE_CHECKING:
     # Type-only: the trace's per-keyword verdict is plain data (name, valid)
@@ -538,7 +539,11 @@ def _build_draft03_tree(
             kw_unit: DetailedOutputUnit = {
                 "valid": keyword.valid,
                 "keywordLocation": kw_location,
-                "absoluteKeywordLocation": node.schema_location + suffix,
+                # `keywordLocation` is a plain-text pointer and
+                # `absoluteKeywordLocation` a URI, so the same segment is
+                # appended in two forms (P10).
+                "absoluteKeywordLocation": node.schema_location
+                + pointer_fragment(suffix),
                 "instanceLocation": node.input_location,
             }
             kw_errors = [e for e in errors if e["evaluationPath"] == kw_location]

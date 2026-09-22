@@ -1,13 +1,14 @@
 # A schema position: the node plus its canonical location (DESIGN.md §2
 # module table; P7 identity-keyed structures).
 #
-# Dependency direction: imports `json_model` only. The dialect layer, the
-# registry, the evaluator, and the records all build on it; it knows about
-# none of them.
+# Dependency direction: imports `json_model` and `uri` only. The dialect
+# layer, the registry, the evaluator, and the records all build on it; it
+# knows about none of them.
 
 from dataclasses import dataclass
 
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.uri import schema_location
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -31,5 +32,10 @@ class SchemaRef:
 
     @property
     def location(self) -> str:
-        """The canonical `schemaLocation` string for output units (D6)."""
-        return f"{self.base_uri}#{self.pointer}"
+        """The canonical `schemaLocation` string for output units (D6).
+
+        A URI: the pointer is fragment-encoded on the way out (P10), so the
+        result can be pasted into a `$ref` or handed back to
+        `Engine.locate` even when a member name holds a space or a `%`.
+        """
+        return schema_location(self.base_uri, self.pointer)
