@@ -5,7 +5,7 @@ All notable changes to `ecma-regex`. The format follows
 [SemVer](https://semver.org/) with the 0.x caveat that minor versions may
 change public API.
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-09-21
 
 The first documented release: the README and docstrings are audited
 against the code, every README example is executed by the test suite, and

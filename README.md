@@ -12,24 +12,15 @@ relevance model.
 
 Produced by Henry Andrews via Claude Code.
 
-**Status: `0.0.2` is the first functional release.**
+**Status: `0.0.3` is fully compliant except for draft-04 support.**
+
+See [CHANGELOG.md](CHANGELOG.md) for the current release's contents.
+[DESIGN.md](DESIGN.md) is the design contract and carries the milestone
+status.
 
 All `0.0.x` releases will have AI-written documentation.  Version
 `0.1.0` will indicate that the documentation has been audited and revised
 by a human.
-
-As of `0.0.2`, this package carries the
-interpreter core for 2020-12, 2019-09, draft-07, and draft-06 with every
-standard output format, the compiler tier (a flag validator and standalone
-modules, M6–M7), and the `json_schema_engine.formats` package — green on
-every official test-suite file for those drafts through both tiers, on the
-official output-tests, and on Bowtie. An evaluator tier (`compile_evaluator`,
-M9) compiles a schema into a Python function serving every output format,
-not only the verdict; `$dynamicRef`/`$recursiveRef` sites whose target is
-the same on every reaching path resolve at compile time into ordinary
-static edges, rather than falling back to the interpreter.
-[DESIGN.md](DESIGN.md) is the design contract and carries the milestone
-status.
 
 The regular-expression translator lives in its own package,
 [`ecma-regex`](packages/ecma-regex/README.md) (`0.1.0`): ECMA-262 patterns
