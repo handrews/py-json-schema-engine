@@ -1,8 +1,8 @@
-# Bowtie harness image for json-schema-engine (M3 Step 3). Build context is
-# the repo root; `scripts/bowtie_check.py` builds the wheels into dist/
-# before invoking `<tool> build`. Installed offline via --find-links: the
-# engine's ecma-regex dependency ships as a sibling wheel in dist/, so no
-# network access is needed inside the build.
+# Bowtie harness image for json-schema-engine (M3 Step 3; M9 Step 4 adds the
+# tier build arg). Build context is the repo root; `scripts/bowtie_check.py`
+# builds the wheels into dist/ before invoking `<tool> build`. Installed
+# offline via --find-links: the engine's ecma-regex dependency ships as a
+# sibling wheel in dist/, so no network access is needed inside the build.
 FROM docker.io/library/python:3.12-slim
 
 COPY dist/*.whl /tmp/wheels/
@@ -10,5 +10,12 @@ RUN pip install --no-cache-dir --no-index --find-links /tmp/wheels json-schema-e
     && rm -rf /tmp/wheels
 
 COPY bowtie/harness.py /harness.py
+
+# One image family, two tiers: `--build-arg TIER=compiled` builds the
+# compiled-tier image; the default (unset) builds the interpreter tier.
+# `harness.py` reads `JSE_TIER` itself (`--tier` is not passed here, since
+# Bowtie's `image:` invocation supplies no extra argv).
+ARG TIER=interpreter
+ENV JSE_TIER=${TIER}
 
 ENTRYPOINT ["python", "/harness.py"]

@@ -188,3 +188,19 @@ assert (
     is False
 )
 ```
+
+## The compiled evaluator
+
+`compile_evaluator` (see [Compiling schemas](compiled.md#every-output-format))
+collects the same annotations the interpreter does — the selection is
+fixed once at compile time rather than chosen per call, but a ruled-in
+annotation renders identically on both tiers:
+
+```python
+from json_schema_engine.compiler import compile_evaluator
+
+evaluator = compile_evaluator(engine, uri, annotations=True)
+compiled = evaluator.evaluate({"retries": 3}, output="basic")
+interpreted = engine.evaluate(uri, {"retries": 3}, output="basic", annotations=True)
+assert compiled.annotations == interpreted.annotations
+```

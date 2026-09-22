@@ -42,9 +42,9 @@ from json_schema_engine.core.lowering import (
     Const,
     LoweringContext,
     and_,
+    annotate,
     fail,
     format_test,
-    lower_nothing,
     not_,
     type_is,
     when,
@@ -56,12 +56,16 @@ def _format_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
     return True
 
 
+def _format_annotate_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    lctx.emit(annotate())
+
+
 # Annotation-only: no facts. A `formats` fact means "this keyword tests the
 # name against the engine's table", which only the asserting behavior does.
 format_annotation = KeywordBehavior(
     id=keyword_id(VOCAB_FORMAT_ANNOTATION, "format"),
     evaluate=_format_evaluate,
-    lower=lower_nothing,
+    lower=_format_annotate_lower,
 )
 
 FORMAT_ANNOTATION_VOCABULARY = {"format": format_annotation}
@@ -120,6 +124,7 @@ def asserting_format(
         return False
 
     def lower(value: JsonValue, lctx: LoweringContext) -> None:
+        lctx.emit(annotate())
         if not isinstance(value, str):
             return
         definition = table.get(value)

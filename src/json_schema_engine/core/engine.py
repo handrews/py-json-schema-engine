@@ -5,7 +5,7 @@
 # Dependency direction: imports everything below it in `core`. Nothing in
 # `core` imports this module.
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from json_schema_engine.core.channel import AnnotationRecord
 from json_schema_engine.core.dialect import (
@@ -21,7 +21,7 @@ from json_schema_engine.core.errors import (
     UnknownDialectError,
     UnknownVocabularyError,
 )
-from json_schema_engine.core.evaluator import run_evaluation
+from json_schema_engine.core.evaluator import EvalState, run_evaluation
 from json_schema_engine.core.formats import FormatTable
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import (
@@ -59,6 +59,7 @@ from json_schema_engine.core.registry import (
     effective_dialect_uri,
 )
 from json_schema_engine.core.result import (
+    OutputDemand,
     OutputFormat,
     Result,
     UnitSets,
@@ -246,12 +247,6 @@ class Engine:
             source["range"] = found
         return source
 
-    def _decorate(self, units: list[ErrorUnit] | list[AnnotationUnit] | None) -> None:
-        for unit in units or []:
-            source = self.locate(unit["schemaLocation"])
-            if source is not None:
-                unit["source"] = source
-
     # --- dialects --------------------------------------------------------
 
     def _ensure_dialect_for(
@@ -396,60 +391,91 @@ class Engine:
             max_depth=self._max_depth,
             tracing=demand.tracing,
         )
-        if demand.format is OutputFormat.FLAG:
-            return Result(valid, None, None, None)
-
-        # The flat surface first; its record lists stay paired with the unit
-        # lists so the located tree can index the units.
-        params = demand.error_params
-        units = UnitSets(
-            errors=[render_error(e, error_params=params) for e in state.errors]
-        )
-        records = RecordSets(errors=state.errors)
-        if valid and demand.annotations is not None:
-            selected = render_selected(state.root_annotations, annotations)
-            units.annotations.extend(selected.units)
-            records = RecordSets(errors=state.errors, annotations=selected.records)
-        if demand.verbose:
-            units.dropped_errors.extend(
-                render_error(e, error_params=params) for e in state.dropped_errors
-            )
-            dropped_records: list[AnnotationRecord] = []
-            if demand.annotations is not None:
-                # The relevant annotations are a valid run's root survivors;
-                # an invalid run has none (draft-03 §12.2). Identity, not
-                # equality: two keywords may record equal-looking values.
-                relevant = {id(a) for a in (state.root_annotations if valid else ())}
-                candidates = [
-                    a for a in state.all_annotations or () if id(a) not in relevant
-                ]
-                selected = render_selected(candidates, annotations)
-                units.dropped_annotations.extend(selected.units)
-                dropped_records = selected.records
-            records = RecordSets(
-                errors=state.errors,
-                dropped_errors=state.dropped_errors,
-                annotations=records.annotations,
-                dropped_annotations=dropped_records,
-            )
-        root = None
-        if demand.tracing:
-            assert state.trace_root is not None
-            root = to_render_node(state.trace_root, records)
-        result = assemble_result(
-            demand,
+        return assemble_evaluation(
+            state,
             valid,
-            units,
-            root,
+            demand,
+            annotations,
             self.schemas.root_ref(schema_uri).location,
             trace,
+            locate=self.locate if positions else None,
         )
-        if positions:
-            self._decorate(result.errors)
-            self._decorate(result.annotations)
-            self._decorate(result.dropped_errors)
-            self._decorate(result.dropped_annotations)
-        return result
+
+
+def assemble_evaluation(
+    state: EvalState,
+    valid: bool,
+    demand: OutputDemand,
+    annotations: AnnotationsOption,
+    root_location: str,
+    trace: bool,
+    *,
+    locate: Callable[[str], SourceLocation | None] | None = None,
+) -> Result:
+    """Turn a finished evaluation state into a `Result` for `demand`: the
+    interpreter's own assembly, shared with the compiled evaluator (M9),
+    whose artifacts run on the same `EvalState`. `locate` decorates the
+    flat units with source positions when given (D17)."""
+    if demand.format is OutputFormat.FLAG:
+        return Result(valid, None, None, None)
+
+    # The flat surface first; its record lists stay paired with the unit
+    # lists so the located tree can index the units.
+    params = demand.error_params
+    units = UnitSets(
+        errors=[render_error(e, error_params=params) for e in state.errors]
+    )
+    records = RecordSets(errors=state.errors)
+    if valid and demand.annotations is not None:
+        selected = render_selected(state.root_annotations, annotations)
+        units.annotations.extend(selected.units)
+        records = RecordSets(errors=state.errors, annotations=selected.records)
+    if demand.verbose:
+        units.dropped_errors.extend(
+            render_error(e, error_params=params) for e in state.dropped_errors
+        )
+        dropped_records: list[AnnotationRecord] = []
+        if demand.annotations is not None:
+            # The relevant annotations are a valid run's root survivors;
+            # an invalid run has none (draft-03 §12.2). Identity, not
+            # equality: two keywords may record equal-looking values.
+            relevant = {id(a) for a in (state.root_annotations if valid else ())}
+            candidates = [
+                a for a in state.all_annotations or () if id(a) not in relevant
+            ]
+            selected = render_selected(candidates, annotations)
+            units.dropped_annotations.extend(selected.units)
+            dropped_records = selected.records
+        records = RecordSets(
+            errors=state.errors,
+            dropped_errors=state.dropped_errors,
+            annotations=records.annotations,
+            dropped_annotations=dropped_records,
+        )
+    root = None
+    if demand.tracing:
+        assert state.trace_root is not None
+        root = to_render_node(state.trace_root, records)
+    result = assemble_result(demand, valid, units, root, root_location, trace)
+    if locate is not None:
+        for unit_list in (
+            result.errors,
+            result.annotations,
+            result.dropped_errors,
+            result.dropped_annotations,
+        ):
+            _decorate_units(unit_list, locate)
+    return result
+
+
+def _decorate_units(
+    units: list[ErrorUnit] | list[AnnotationUnit] | None,
+    locate: Callable[[str], SourceLocation | None],
+) -> None:
+    for unit in units or []:
+        source = locate(unit["schemaLocation"])
+        if source is not None:
+            unit["source"] = source
 
 
 def create_engine(

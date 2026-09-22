@@ -84,7 +84,9 @@ def test_static_name_coverage_plans_static_and_emits_a_sweep() -> None:
     assert "for " in compiled.source
 
 
-def test_dynamic_contributor_falls_back_to_interpreted() -> None:
+def test_dynamic_contributor_is_tracked_at_runtime() -> None:
+    # M9: a runtime-conditional contributor no longer islands the consumer;
+    # the unit is static and tracks coverage through a channel.
     engine = create_engine()
     uri = engine.register_schema(
         {"anyOf": [{"properties": {"a": True}}], "unevaluatedProperties": False},
@@ -92,5 +94,5 @@ def test_dynamic_contributor_falls_back_to_interpreted() -> None:
     )
     compiled = compile_validator(engine, uri)
     root = compiled.plan.units[compiled.plan.root_key]
-    assert root.kind == "interpreted"
-    assert root.cause == "unlowerable"
+    assert root.kind == "static" and root.tracked
+    assert compiled.plan.targets == ()

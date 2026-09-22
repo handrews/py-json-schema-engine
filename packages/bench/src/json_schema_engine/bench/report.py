@@ -30,9 +30,11 @@ def _fmt_ratio(numerator: float | None, denominator: float | None) -> str:
 
 
 def format_table(results: Results) -> str:
-    """A per-corpus table of subjects x partitions (ops/s), plus two
-    compiled-vs-reference ratio lines per corpus. No thresholds — this is
-    reporting, not a gate."""
+    """A per-corpus table of subjects x partitions (ops/s), plus five
+    ratio lines per corpus: the compiled flag validator against the
+    interpreter and the two competitors, the interpreter against
+    `jsonschema`, and the compiled evaluator's `list` output against the
+    interpreter's. No thresholds — this is reporting, not a gate."""
     subject_versions = ", ".join(
         f"{name} {version}" for name, version in results.subjects.items()
     )
@@ -81,6 +83,12 @@ def format_table(results: Results) -> str:
         lines.append(
             "  interpreter/jsonschema (hot): "
             + _fmt_ratio(interpreter.get("hot"), jsonschema_.get("hot"))
+        )
+        compiled_evaluator = by_subject.get("jse compiled evaluator (list)", {})
+        interpreter_list = by_subject.get("jse interpreter list", {})
+        lines.append(
+            "  compiled evaluator/interpreter list (hot): "
+            + _fmt_ratio(compiled_evaluator.get("hot"), interpreter_list.get("hot"))
         )
         lines.append("")
 

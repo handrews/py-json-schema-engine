@@ -88,6 +88,10 @@ def emit_standalone(
                 ("json_equal", e.H_EQ),
             ],
         ),
+        _import_from(
+            "json_schema_engine.core.coverage",
+            [("fold_index_coverage", e.H_COVI), ("fold_name_coverage", e.H_COVN)],
+        ),
         e.assign(e.H_MAXD, e.const(budget)),
         e.function(
             e.H_DEEP,

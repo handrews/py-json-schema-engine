@@ -24,6 +24,9 @@ H_EQ = "H_EQ"  # json_equal
 H_MOF = "H_MOF"  # is_multiple_of
 H_DUP = "H_DUP"  # has_duplicate_items
 H_FRAG = "H_FRAG"  # trampoline into the interpreter
+H_FRAGC = "H_FRAGC"  # trampoline that harvests coverage into the channel (M9)
+H_COVN = "H_COVN"  # fold_name_coverage (M9)
+H_COVI = "H_COVI"  # fold_index_coverage (M9)
 H_DEEP = "H_DEEP"  # raise MaxDepthExceededError
 H_MAXD = "H_MAXD"  # the depth budget
 TARGETS = "T"  # interpreted-unit table
@@ -33,6 +36,55 @@ VALIDATE = "validate"
 VALUE = "v"
 DEPTH = "d"
 SCOPE = "s"
+CHANNEL = "ev"  # the region's coverage channel (M9)
+# Evaluator mode (M9): the shared `EvalState`, the application's path node
+# and cursor, the site table, and the channel/trace helpers.
+STATE = "st"
+PATH = "pn"
+CURSOR = "cu"
+SITES = "X"
+EVALUATE = "evaluate"
+H_ERR = "H_ERR"  # emit_error
+H_ANN = "H_ANN"  # emit_annotation
+H_ENTER = "H_ENTER"  # trace_enter
+H_KWS = "H_KWS"  # trace_keywords
+H_EXIT = "H_EXIT"  # trace_exit
+H_TRUE = "H_TRUE"  # apply_true
+H_FALSE = "H_FALSE"  # apply_false
+H_EMARK = "H_EMARK"  # error_mark
+H_DROP = "H_DROP"  # drop_errors
+H_AMARK = "H_AMARK"  # annotation_mark
+H_ACUT = "H_ACUT"  # cut_annotations
+H_PATH = "H_PATH"  # PathNode
+H_CHILD = "H_CHILD"  # child_cursor
+H_ROOT = "H_ROOT"  # root_cursor
+H_FRAGE = "H_FRAGE"  # trampoline on the shared state
+H_FDP = "H_FDP"  # first_duplicate_pair
+H_TYPE = "H_TYPE"  # json_type_name
+EVALUATOR_NAMES = (
+    STATE,
+    PATH,
+    CURSOR,
+    SITES,
+    EVALUATE,
+    H_ERR,
+    H_ANN,
+    H_ENTER,
+    H_KWS,
+    H_EXIT,
+    H_TRUE,
+    H_FALSE,
+    H_EMARK,
+    H_DROP,
+    H_AMARK,
+    H_ACUT,
+    H_PATH,
+    H_CHILD,
+    H_ROOT,
+    H_FRAGE,
+    H_FDP,
+    H_TYPE,
+)
 
 BUILTINS_USED = frozenset(
     {
@@ -247,6 +299,31 @@ def starred_append(name: str, value: ast.expr) -> ast.Tuple:
 def module(body: Sequence[ast.stmt]) -> ast.Module:
     tree = ast.Module(body=list(body), type_ignores=[])
     return ast.fix_missing_locations(tree)
+
+
+def list_literal(values: Sequence[ast.expr] = ()) -> ast.List:
+    return ast.List(elts=list(values), ctx=ast.Load())
+
+
+def del_slice_from(name: str, start: ast.expr) -> ast.Delete:
+    """`del name[start:]`: truncate a channel back to a mark."""
+    return ast.Delete(
+        targets=[
+            ast.Subscript(
+                value=load(name),
+                slice=ast.Slice(lower=start, upper=None, step=None),
+                ctx=ast.Del(),
+            )
+        ]
+    )
+
+
+def if_expr(test: ast.expr, body: ast.expr, orelse: ast.expr) -> ast.IfExp:
+    return ast.IfExp(test=test, body=body, orelse=orelse)
+
+
+def method_call(value: ast.expr, name: str, *args: ast.expr) -> ast.Call:
+    return call(attr(value, name), *args)
 
 
 def frozenset_literal(values: Sequence[JsonValue]) -> ast.expr:

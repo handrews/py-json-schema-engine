@@ -5,6 +5,11 @@
 # module, never on `json_schema_engine.compiler`, so keyword knowledge
 # stays in exactly one module per keyword.
 #
+# Public API (M9): every name in `__all__` below is documented under
+# `json_schema_engine.core.lowering` in docs/reference.md, so a custom
+# keyword can give itself a `lower` form without reaching into a private
+# module.
+#
 # Dependency direction: imports only `json_model`. `dialect.py` imports
 # this for the `lower` slot's type; the compiler package consumes it.
 #
@@ -20,19 +25,98 @@
 #    licensed emitter optimization in verdict-only regions (§4 rule 7),
 #    never an IR semantic.
 #
-# Scope (M6, the flag validator): the TS engine's `annotate`, `produce`,
-# `coverageFold`, `coverageCovers`, `tally`, and `tallyList` nodes serve
-# list/annotation output and runtime coverage tracking (M9) and are not
-# defined yet (`FormatTest` arrived with the formats package, M7). `Fail`
-# keeps its message and params although flag emission ignores them, so a
-# keyword shares one message builder between `evaluate` and `lower` from
-# the start and list-mode parity is mechanical later.
+# Runtime coverage tracking (M9): a producer keyword describes the
+# dependency data it would `ctx.produce()` with `Produce` (the same value
+# shapes: name lists, `True`, an index), collected on the way with
+# `Collect`/`Append`; a consumer that the planner tracks at runtime (no
+# static licence) folds the region's channel once with `CoverageFold` and
+# tests membership with `Covers`. Outside a tracked region the emitter
+# elides all of them, so flag code there is unchanged. `Fail` keeps its
+# message and params although flag emission ignores them, so a keyword
+# shares one message builder between `evaluate` and `lower` from the
+# start and evaluator-mode parity is mechanical.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from json_schema_engine.core.json_model import JsonValue
+
+__all__ = [
+    "HERE",
+    "INSTANCE",
+    "Annotate",
+    "Append",
+    "Apply",
+    "ApplyExpr",
+    "Binding",
+    "Child",
+    "Cmp",
+    "CmpOp",
+    "Collect",
+    "CombineCheck",
+    "Cond",
+    "Const",
+    "CountRange",
+    "CoverageFold",
+    "Covers",
+    "Expr",
+    "Fail",
+    "Fold",
+    "ForEachIndex",
+    "ForEachKey",
+    "FormatTest",
+    "HasKey",
+    "Helper",
+    "HelperName",
+    "Here",
+    "If",
+    "InConsts",
+    "Instance",
+    "Item",
+    "Key",
+    "Logic",
+    "LowerApply",
+    "LowerCursor",
+    "LowerFn",
+    "LowerMessage",
+    "LowerParams",
+    "LoweringContext",
+    "Member",
+    "Not",
+    "Produce",
+    "RegexTest",
+    "StaticCoverage",
+    "Stmt",
+    "TypeIs",
+    "TypeName",
+    "and_",
+    "annotate",
+    "append",
+    "apply",
+    "apply_expr",
+    "child",
+    "cmp",
+    "collect",
+    "combine_check",
+    "cond",
+    "const",
+    "coverage_fold",
+    "covers",
+    "fail",
+    "format_test",
+    "has_key",
+    "helper",
+    "in_consts",
+    "key",
+    "lower_nothing",
+    "not_",
+    "or_",
+    "produce",
+    "regex_test",
+    "type_is",
+    "when",
+]
 
 # --- expressions -----------------------------------------------------------
 
@@ -46,8 +130,10 @@ type HelperName = Literal[
     "json_equal",
     "is_multiple_of",
     "has_duplicate_items",
+    "first_duplicate_pair",
     "length_of",
     "code_point_length",
+    "json_type_name",
 ]
 type CmpOp = Literal["<", "<=", ">", ">=", "==", "!="]
 
@@ -171,6 +257,24 @@ class ApplyExpr:
     apply: "LowerApply"
 
 
+@dataclass(frozen=True, slots=True)
+class Cond:
+    """A conditional expression: `then` when `test` holds, else `orelse`."""
+
+    test: "Expr"
+    then: "Expr"
+    orelse: "Expr"
+
+
+@dataclass(frozen=True, slots=True)
+class Covers:
+    """Whether the coverage bound by a `CoverageFold` covers `target` (a
+    swept name or index)."""
+
+    fold: int
+    target: "Expr"
+
+
 type Expr = (
     Instance
     | Const
@@ -187,6 +291,8 @@ type Expr = (
     | Not
     | Logic
     | ApplyExpr
+    | Cond
+    | Covers
 )
 
 # --- cursors and applications ------------------------------------------------
@@ -228,9 +334,13 @@ class LowerApply:
     `path=()` with the binding in the cursor). `sibling` names a sibling
     keyword whose value is applied (`if` → `then`/`else`); `ref` is a
     reference value resolved at plan time against the unit's lexical base
-    (then `path` is ignored). `fold` says how the verdict folds into the
-    keyword's verdict; `message`/`params` accompany folds that report
-    their own failure (`negate`).
+    (then `path` is ignored); `resolution` marks a reference the plan
+    resolved against the dynamic scope (`"dynamic"`/`"recursive"`, D8),
+    which the lowered apply carries only so the serializer can find the
+    planner's edge — the target is the plan's decision, never the IR's.
+    `fold` says how the verdict folds into the keyword's verdict;
+    `message`/`params` accompany folds that report their own failure
+    (`negate`).
     """
 
     path: tuple[str | int, ...]
@@ -240,6 +350,7 @@ class LowerApply:
     ref: str | None = None
     message: LowerMessage | None = None
     params: LowerParams | None = None
+    resolution: Literal["dynamic", "recursive"] | None = None
 
 
 # --- statements ------------------------------------------------------------
@@ -291,16 +402,21 @@ class CombineCheck:
     """Closes the immediately preceding run of `any_may_pass`/`exactly_one`
     applies: the keyword fails with `message` when the run's combined
     verdict fails. Emitted by the keyword so failure text stays keyword
-    knowledge (D1)."""
+    knowledge (D1). `count`/`passing` are bindings the message and params
+    may reference: the number of passing branches and their indexes."""
 
     message: LowerMessage
     params: LowerParams | None = None
+    count: int | None = None
+    passing: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class CountRange:
     """`contains`' shape: probe every index, count the matches, fail when
-    the count falls outside `[minimum, maximum]` (`None` = unbounded)."""
+    the count falls outside `[minimum, maximum]` (`None` = unbounded).
+    `matched`, when set, is a list binding that collects the matching
+    indexes (the keyword's dependency data)."""
 
     target: Expr
     binding: int
@@ -309,9 +425,69 @@ class CountRange:
     maximum: int | None
     message: LowerMessage
     params: LowerParams | None = None
+    matched: int | None = None
+    # A binding the message and params may reference: the match count.
+    count: int | None = None
 
 
-type Stmt = If | ForEachKey | ForEachIndex | Fail | Apply | CombineCheck | CountRange
+@dataclass(frozen=True, slots=True)
+class Annotate:
+    """The keyword's own value as an annotation at the current cursor (§4
+    rule 2). Elided when the artifact's selection rules the keyword out."""
+
+
+@dataclass(frozen=True, slots=True)
+class Collect:
+    """Bind an empty list to accumulate dependency data."""
+
+    binding: int
+
+
+@dataclass(frozen=True, slots=True)
+class Append:
+    """Append `value` to a `Collect` binding (`unique`: only when absent)."""
+
+    binding: int
+    value: Expr
+    unique: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Produce:
+    """The keyword's dependency data at the current cursor (§4 rule 2):
+    the value `ctx.produce()` would carry. Reached only along the keyword's
+    accepting path (rule 6). Elided unless a tracked consumer reads it."""
+
+    value: Expr
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageFold:
+    """Bind the runtime evaluated coverage a tracked consumer reads: the
+    region channel's productions from the producers in `consumes`, folded
+    by core's coverage folds (`half` selects names or indexes)."""
+
+    binding: int
+    half: Literal["names", "indexes"]
+    consumes: tuple[str, ...]
+    contains_id: str | None = None
+    prefix_id: str | None = None
+
+
+type Stmt = (
+    If
+    | ForEachKey
+    | ForEachIndex
+    | Fail
+    | Apply
+    | CombineCheck
+    | CountRange
+    | Collect
+    | Append
+    | Produce
+    | CoverageFold
+    | Annotate
+)
 
 # --- the lowering service --------------------------------------------------
 
@@ -346,8 +522,15 @@ class LoweringContext(Protocol):
 
     def static_coverage(self) -> StaticCoverage | None:
         """The planner's static coverage for this schema object; `None`
-        means the planner did not license a static consumer here, which a
-        lowered consumer treats as a planner bug."""
+        means the planner did not license a static consumer here (it is
+        then tracked at runtime, `runtime_coverage()`)."""
+        ...
+
+    def runtime_coverage(self) -> bool:
+        """Whether the planner tracks this schema object's consumers at
+        runtime (M9): the consumer folds the region channel instead of a
+        static coverage. Exactly one of this and `static_coverage()` is
+        available to a consumer; neither means a planner bug."""
         ...
 
     def emit(self, *stmts: Stmt) -> None:
@@ -442,8 +625,11 @@ def apply(
     ref: str | None = None,
     message: LowerMessage | None = None,
     params: LowerParams | None = None,
+    resolution: Literal["dynamic", "recursive"] | None = None,
 ) -> Apply:
-    return Apply(LowerApply(path, cursor, fold, sibling, ref, message, params))
+    return Apply(
+        LowerApply(path, cursor, fold, sibling, ref, message, params, resolution)
+    )
 
 
 def apply_expr(
@@ -458,6 +644,45 @@ def apply_expr(
 
 
 def combine_check(
-    message: LowerMessage, params: LowerParams | None = None
+    message: LowerMessage,
+    params: LowerParams | None = None,
+    *,
+    count: int | None = None,
+    passing: int | None = None,
 ) -> CombineCheck:
-    return CombineCheck(message, params)
+    return CombineCheck(message, params, count, passing)
+
+
+def annotate() -> Annotate:
+    return Annotate()
+
+
+def cond(test: Expr, then: Expr, orelse: Expr) -> Cond:
+    return Cond(test, then, orelse)
+
+
+def covers(fold: int, target: Expr) -> Covers:
+    return Covers(fold, target)
+
+
+def collect(binding: int) -> Collect:
+    return Collect(binding)
+
+
+def append(binding: int, value: Expr, *, unique: bool = False) -> Append:
+    return Append(binding, value, unique)
+
+
+def produce(value: Expr) -> Produce:
+    return Produce(value)
+
+
+def coverage_fold(
+    binding: int,
+    half: Literal["names", "indexes"],
+    consumes: tuple[str, ...],
+    *,
+    contains_id: str | None = None,
+    prefix_id: str | None = None,
+) -> CoverageFold:
+    return CoverageFold(binding, half, consumes, contains_id, prefix_id)

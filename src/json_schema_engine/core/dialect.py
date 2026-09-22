@@ -87,6 +87,9 @@ type ApplyMode = Literal[
 ]
 
 
+type Resolution = Literal["dynamic", "recursive"]
+
+
 @dataclass(frozen=True, slots=True)
 class SubschemaApplication:
     """How one keyword applies one subschema (D1, M6): the planner's edge.
@@ -100,7 +103,11 @@ class SubschemaApplication:
     subschema's verdict feeds this keyword's verdict (false for `if`'s
     condition role and `contains`' per-item probes); `inverted` means it
     feeds negated (`not`), so its records never survive the parent-success
-    path and coverage analysis skips the edge.
+    path and coverage analysis skips the edge. `resolution` marks a
+    reference whose target depends on the dynamic scope (D8): `"dynamic"`
+    for `$dynamicRef`, `"recursive"` for `$recursiveRef`. The planner
+    resolves such a site at plan time when every path reaching it agrees
+    on the target, and islands it otherwise (M9).
     """
 
     path: SubschemaPath
@@ -110,6 +117,7 @@ class SubschemaApplication:
     sibling: str | None = None
     ref: str | None = None
     inverted: bool = False
+    resolution: Resolution | None = None
 
 
 @dataclass(frozen=True, slots=True)

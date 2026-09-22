@@ -281,3 +281,20 @@ else:
 `source` location (document URI, pointer, and range) when the owning
 document was loaded through a loader that reports positions — see
 [Source positions](source-positions.md).
+
+## The compiled evaluator
+
+`compile_evaluator` (see [Compiling schemas](compiled.md#every-output-format))
+produces every output format documented on this page too, byte for byte
+the same as `Engine.evaluate`'s:
+
+```python
+from json_schema_engine.compiler import compile_evaluator
+
+evaluator = compile_evaluator(engine, uri, annotations=True)
+compiled_result = evaluator.evaluate({"item": "widget", "count": "nope"}, output="list")
+interpreted_result = engine.evaluate(
+    uri, {"item": "widget", "count": "nope"}, output="list", annotations=True
+)
+assert compiled_result.output_document == interpreted_result.output_document
+```

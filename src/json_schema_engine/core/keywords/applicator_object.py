@@ -30,16 +30,20 @@ from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
+    Const,
     Expr,
     ForEachKey,
     LoweringContext,
+    append,
     apply,
     child,
+    collect,
     has_key,
     in_consts,
     key,
     not_,
     or_,
+    produce,
     regex_test,
     type_is,
     when,
@@ -73,12 +77,23 @@ def _properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
+    n = lctx.binding()
     lctx.emit(
         when(
             type_is(instance, "object"),
-            tuple(
-                when(has_key(instance, name), (apply((name,), child(HERE, name)),))
-                for name in value
+            (
+                collect(n),
+                *(
+                    when(
+                        has_key(instance, name),
+                        (
+                            append(n, Const(name)),
+                            apply((name,), child(HERE, name)),
+                        ),
+                    )
+                    for name in value
+                ),
+                produce(Binding(n)),
             ),
         )
     )
@@ -138,21 +153,31 @@ def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
         return
     instance = lctx.instance
     b = lctx.binding()
+    n = lctx.binding()
+    # Pattern-outermost, as `evaluate` sweeps: the error and annotation
+    # order (and the produced name order) must match the interpreter's.
     lctx.emit(
         when(
             type_is(instance, "object"),
             (
-                ForEachKey(
-                    instance,
-                    b,
-                    tuple(
-                        when(
-                            regex_test(pattern, Binding(b)),
-                            (apply((pattern,), child(HERE, Binding(b))),),
-                        )
-                        for pattern in value
-                    ),
+                collect(n),
+                *(
+                    ForEachKey(
+                        instance,
+                        b,
+                        (
+                            when(
+                                regex_test(pattern, Binding(b)),
+                                (
+                                    append(n, Binding(b), unique=True),
+                                    apply((pattern,), child(HERE, Binding(b))),
+                                ),
+                            ),
+                        ),
+                    )
+                    for pattern in value
                 ),
+                produce(Binding(n)),
             ),
         )
     )
@@ -213,6 +238,7 @@ def _additional_properties_lower(_value: JsonValue, lctx: LoweringContext) -> No
     sibling_patterns = lctx.schema.get("patternProperties")
     patterns = tuple(sibling_patterns) if is_object(sibling_patterns) else ()
     b = lctx.binding()
+    n = lctx.binding()
     parts: list[Expr] = []
     if names:
         parts.append(in_consts(Binding(b), names))
@@ -222,11 +248,21 @@ def _additional_properties_lower(_value: JsonValue, lctx: LoweringContext) -> No
         when(
             type_is(instance, "object"),
             (
+                collect(n),
                 ForEachKey(
                     instance,
                     b,
-                    (when(not_(covered), (apply((), child(HERE, Binding(b))),)),),
+                    (
+                        when(
+                            not_(covered),
+                            (
+                                append(n, Binding(b)),
+                                apply((), child(HERE, Binding(b))),
+                            ),
+                        ),
+                    ),
                 ),
+                produce(Binding(n)),
             ),
         )
     )

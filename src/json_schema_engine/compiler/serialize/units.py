@@ -14,8 +14,11 @@ from json_schema_engine.compiler.serialize.context import SerializeError
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.lowering import (
     INSTANCE,
+    Append,
     Cmp,
+    Cond,
     CountRange,
+    Covers,
     Expr,
     ForEachIndex,
     ForEachKey,
@@ -29,6 +32,7 @@ from json_schema_engine.core.lowering import (
     Logic,
     Member,
     Not,
+    Produce,
     RegexTest,
     StaticCoverage,
     Stmt,
@@ -43,6 +47,7 @@ class _Lowering:
 
     _schema: Mapping[str, JsonValue]
     _coverage: StaticCoverage | None
+    _tracked: bool
     next_binding: int
     stmts: list[Stmt] = field(default_factory=list[Stmt])
 
@@ -57,6 +62,9 @@ class _Lowering:
     def static_coverage(self) -> StaticCoverage | None:
         return self._coverage
 
+    def runtime_coverage(self) -> bool:
+        return self._tracked
+
     def emit(self, *stmts: Stmt) -> None:
         self.stmts.extend(stmts)
 
@@ -67,11 +75,24 @@ class _Lowering:
 
 
 @dataclass(frozen=True, slots=True)
+class KeywordIR:
+    """One present keyword's lowered statements and its identity."""
+
+    name: str
+    behavior_id: str
+    vocabulary_uri: str
+    structural: bool
+    stmts: tuple[Stmt, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UnitIR:
     """A unit's lowered body: one statement list per present keyword, in
-    dialect evaluation order."""
+    dialect evaluation order, plus the unknown keywords (annotations with
+    the keyword's value, in node order; empty under `ref_ignores_siblings`)."""
 
-    keywords: tuple[tuple[str, tuple[Stmt, ...]], ...]
+    keywords: tuple[KeywordIR, ...]
+    unknown: tuple[str, ...] = ()
 
 
 def lower_unit(registry: SchemaRegistry, unit: PlannedUnit) -> UnitIR:
@@ -80,7 +101,7 @@ def lower_unit(registry: SchemaRegistry, unit: PlannedUnit) -> UnitIR:
     dialect = registry.dialect_for(unit.ref.base_uri)
     ref_only = dialect.ref_ignores_siblings and "$ref" in node
     next_binding = 0
-    keywords: list[tuple[str, tuple[Stmt, ...]]] = []
+    keywords: list[KeywordIR] = []
     for entry in dialect.ordered:
         if ref_only and entry.name != "$ref":
             continue
@@ -89,11 +110,22 @@ def lower_unit(registry: SchemaRegistry, unit: PlannedUnit) -> UnitIR:
         lower = entry.behavior.lower
         if lower is None:
             raise SerializeError(f"unlowerable keyword {entry.name!r} in a static unit")
-        ctx = _Lowering(node, unit.coverage, next_binding)
+        ctx = _Lowering(node, unit.coverage, unit.tracked, next_binding)
         lower(node[entry.name], ctx)
         next_binding = ctx.next_binding
-        keywords.append((entry.name, tuple(ctx.stmts)))
-    return UnitIR(tuple(keywords))
+        keywords.append(
+            KeywordIR(
+                entry.name,
+                entry.behavior.id,
+                entry.vocabulary_uri,
+                entry.behavior.structural,
+                tuple(ctx.stmts),
+            )
+        )
+    unknown = (
+        () if ref_only else tuple(name for name in node if name not in dialect.keywords)
+    )
+    return UnitIR(tuple(keywords), unknown)
 
 
 def _exprs_of(expr: Expr) -> Iterator[Expr]:
@@ -122,6 +154,12 @@ def _exprs_of(expr: Expr) -> Iterator[Expr]:
                 yield from _exprs_of(arg)
         case Not(inner):
             yield from _exprs_of(inner)
+        case Cond(test, then, orelse):
+            yield from _exprs_of(test)
+            yield from _exprs_of(then)
+            yield from _exprs_of(orelse)
+        case Covers(_, target):
+            yield from _exprs_of(target)
         case _:
             # `Instance`, `Const`, `Binding`, and `ApplyExpr` (whose cursor
             # segments are bindings, never type tests) contribute nothing.
@@ -141,6 +179,8 @@ def _stmt_exprs(stmt: Stmt) -> Iterator[Expr]:
         case CountRange(target=target, count_when=count_when):
             yield from _exprs_of(target)
             yield from _exprs_of(count_when)
+        case Append(_, value) | Produce(value):
+            yield from _exprs_of(value)
         case _:
             pass
 
@@ -148,8 +188,8 @@ def _stmt_exprs(stmt: Stmt) -> Iterator[Expr]:
 def uses_object_test(ir: UnitIR) -> bool:
     """Whether the body tests its own instance for object-ness (the guard
     is then hoisted once per body, D9)."""
-    for _, stmts in ir.keywords:
-        for stmt in stmts:
+    for keyword in ir.keywords:
+        for stmt in keyword.stmts:
             for expr in _stmt_exprs(stmt):
                 if (
                     isinstance(expr, TypeIs)
@@ -178,4 +218,4 @@ def loop_height(stmts: tuple[Stmt, ...]) -> int:
 
 
 def ir_loop_height(ir: UnitIR) -> int:
-    return max((loop_height(stmts) for _, stmts in ir.keywords), default=0)
+    return max((loop_height(k.stmts) for k in ir.keywords), default=0)

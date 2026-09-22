@@ -9,7 +9,13 @@ from typing import cast
 
 import pytest
 
-from json_schema_engine.compiler import compile_validator, emit_standalone
+from json_schema_engine.compiler import (
+    build_plan,
+    compile_evaluator,
+    compile_validator,
+    emit_standalone,
+    explain_compilation,
+)
 from json_schema_engine.core import (
     Engine,
     JsonValue,
@@ -41,13 +47,16 @@ def test_recursive_ref_chain_trips_the_budget_on_every_surface() -> None:
     )
     compiled = compile_validator(engine, uri).validate
     standalone = _standalone(engine, uri)
+    evaluator = compile_evaluator(engine, uri).evaluate
     shallow = _nest(20)
     assert engine.evaluate(uri, shallow).valid
     assert compiled(shallow) is True
     assert standalone(shallow) is True
+    assert evaluator(shallow, output="hierarchical").valid is True
     deep = _nest(200)
     surfaces: list[Callable[[], bool]] = [
         lambda: engine.evaluate(uri, deep).valid,
+        lambda: evaluator(deep, output="hierarchical", trace=True).valid,
         lambda: compiled(deep),
         lambda: standalone(deep),
     ]
@@ -57,19 +66,39 @@ def test_recursive_ref_chain_trips_the_budget_on_every_surface() -> None:
 
 
 def test_island_shares_the_budget() -> None:
+    # Two declarers of `node` keep the site an island (M9), so the recursion
+    # runs through the trampoline and the interpreter's own depth counter.
     engine = create_engine(max_depth=20)
     uri = engine.register_schema(
         {
             "$defs": {
-                "node": {
-                    "$dynamicAnchor": "node",
+                "tree": {
+                    "$id": "tree",
+                    "$defs": {"node": {"$dynamicAnchor": "node", "type": "object"}},
                     "properties": {"child": {"$dynamicRef": "#node"}},
-                }
+                },
+                "strict": {
+                    "$id": "strict",
+                    "$defs": {
+                        "node": {
+                            "$dynamicAnchor": "node",
+                            "$ref": "tree",
+                            "required": ["child"],
+                        }
+                    },
+                    "$ref": "tree",
+                },
+                "loose": {
+                    "$id": "loose",
+                    "$defs": {"node": {"$dynamicAnchor": "node", "$ref": "tree"}},
+                    "$ref": "tree",
+                },
             },
-            "properties": {"child": {"$ref": "#/$defs/node"}},
+            "anyOf": [{"$ref": "#/$defs/strict"}, {"$ref": "#/$defs/loose"}],
         },
         "https://depth.example/island",
     )
+    assert explain_compilation(build_plan(engine, uri)).causes == {"dynamic": 1}
     compiled = compile_validator(engine, uri).validate
     assert compiled(_nest(5)) is True
     with pytest.raises(MaxDepthExceededError):

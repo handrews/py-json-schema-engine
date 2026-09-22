@@ -14,29 +14,43 @@ inlined ahead of time.
 Only `output: "flag"` is served; `"annotations"` cases are reported as
 skipped. The engine renders annotations (M5), but wiring Bowtie's
 annotation protocol is a separate piece of work.
+
+Two tiers (M9 Step 4): `interpreter` (the default) validates each test
+through `Engine.evaluate(uri, instance).valid`, exactly as before;
+`compiled` compiles the case schema once with `compile_validator` and
+validates every test through the resulting `validate`. Both report
+verdicts only — the IO protocol carries no records — so the tiers are
+indistinguishable to Bowtie beyond timing. Selected by `--tier` or, absent
+that flag, by `JSE_TIER`, defaulting to `interpreter`.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib.metadata
 import json
+import os
 import platform
 import sys
 import traceback
 from collections.abc import Callable, Iterable
-from typing import IO, Any
+from typing import IO, Any, Literal
 
+from json_schema_engine.compiler import compile_validator
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
     DIALECT_DRAFT_06,
     DIALECT_DRAFT_07,
+    Engine,
     JsonSchemaEngineError,
     LoadedDocument,
     create_engine,
 )
 
 PROTOCOL_VERSION = 1
+
+Tier = Literal["interpreter", "compiled"]
 
 # Neutral retrieval URI for case schemas that carry no `$id` of their own;
 # an http-scheme URI so relative references resolve through normal URI
@@ -90,11 +104,24 @@ def _registry_loader(
     return loader
 
 
+def _interpreter_validate(engine: Engine, uri: str) -> Callable[[Any], bool]:
+    """A separate module-scope function, not a nested `def` inside
+    `handle_run`: a nested function there would redeclare the `validate`
+    variable pyright already sees annotated from the compiled-tier branch
+    (reportRedeclaration), since both branches assign the same name."""
+
+    def validate(instance: Any) -> bool:
+        return engine.evaluate(uri, instance).valid
+
+    return validate
+
+
 class Harness:
     """Holds the small bit of state the protocol carries between commands."""
 
-    def __init__(self) -> None:
+    def __init__(self, tier: Tier = "interpreter") -> None:
         self.current_dialect: str = SUPPORTED_DIALECTS[0]
+        self.tier: Tier = tier
 
     def handle_start(self, request: dict[str, Any]) -> dict[str, Any] | None:
         version = request.get("version")
@@ -141,6 +168,14 @@ class Harness:
                 loaders=[_registry_loader(registry)],
             )
             uri = engine.load_schema(case["schema"], RETRIEVAL_URI)
+            validate: Callable[[Any], bool]
+            if self.tier == "compiled":
+                # Compiled once per case, ahead of the tests: a compile
+                # failure is a case-level error, exactly like a schema
+                # load failure above.
+                validate = compile_validator(engine, uri).validate
+            else:
+                validate = _interpreter_validate(engine, uri)
         except JsonSchemaEngineError as exc:
             return {"seq": seq, "errored": True, "context": _error_context(exc)}
         except Exception as exc:
@@ -149,8 +184,7 @@ class Harness:
         results: list[dict[str, Any]] = []
         for test in case["tests"]:
             try:
-                result = engine.evaluate(uri, test["instance"])
-                results.append({"valid": result.valid})
+                results.append({"valid": validate(test["instance"])})
             except Exception as exc:
                 results.append({"errored": True, "context": _error_context(exc)})
         return {"seq": seq, "results": results}
@@ -161,8 +195,24 @@ def _write(stdout: IO[str], response: dict[str, Any]) -> None:
     stdout.flush()
 
 
-def main(stdin: IO[str], stdout: IO[str]) -> int:
-    harness = Harness()
+def _resolve_tier(argv: list[str]) -> Tier:
+    """`--tier`, else `JSE_TIER`, else `interpreter` (an unrecognized value
+    from either source falls back to `interpreter` rather than raising —
+    this harness is a conformance runner, not a CLI to validate inputs
+    against the user)."""
+    parser = argparse.ArgumentParser(prog="harness.py", add_help=False)
+    parser.add_argument(
+        "--tier",
+        choices=("interpreter", "compiled"),
+        default=os.environ.get("JSE_TIER", "interpreter"),
+    )
+    parsed, _ = parser.parse_known_args(argv)
+    tier: str = parsed.tier
+    return "compiled" if tier == "compiled" else "interpreter"
+
+
+def main(stdin: IO[str], stdout: IO[str], tier: Tier = "interpreter") -> int:
+    harness = Harness(tier)
     for line in _iter_lines(stdin):
         try:
             request = json.loads(line)
@@ -197,4 +247,4 @@ def _iter_lines(stdin: IO[str]) -> Iterable[str]:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.stdin, sys.stdout))
+    raise SystemExit(main(sys.stdin, sys.stdout, _resolve_tier(sys.argv[1:])))

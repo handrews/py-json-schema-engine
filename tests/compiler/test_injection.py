@@ -11,7 +11,7 @@
 #   - round-trips through `ast.unparse(ast.parse(source))`,
 #   - never turns a hostile string into an identifier: every `ast.Name`,
 #     `ast.arg`, and `ast.FunctionDef` in the module is one of the fixed
-#     helper names, the emitter's builtins, or a minted `[ubtgcrk]\d+`
+#     helper names, the emitter's builtins, or a minted `[ubtgcrkm]\d+`
 #     name — even when a hostile string is itself spelled exactly like one
 #     of those (e.g. the corpus includes literal "validate", "v", "u0"),
 #   - carries the hostile string only as a string `ast.Constant`, present
@@ -36,8 +36,12 @@ import re
 
 import pytest
 
-from json_schema_engine.compiler import compile_validator, emit_standalone
-from json_schema_engine.compiler.emit import BUILTINS_USED
+from json_schema_engine.compiler import (
+    compile_evaluator,
+    compile_validator,
+    emit_standalone,
+)
+from json_schema_engine.compiler.emit import BUILTINS_USED, EVALUATOR_NAMES
 from json_schema_engine.core import (
     Engine,
     JsonSchemaEngineError,
@@ -98,15 +102,22 @@ MINTED_VOCABULARY = {
     "H_MOF",
     "H_DUP",
     "H_FRAG",
+    "H_FRAGC",
+    "H_COVN",
+    "H_COVI",
+    "ev",
     "H_DEEP",
     "H_MAXD",
     "MaxDepthExceededError",
 } | BUILTINS_USED
-_MINTED_PATTERN = re.compile(r"(?:[ubtgcrk]|fmt)\d+$")
+_MINTED_PATTERN = re.compile(r"(?:[ubtgcrkmwx]|fmt)\d+$")
+# Evaluator artifacts (M9) add the shared state, path node, cursor, the
+# site table, and the record/trace helpers; still nothing minted from data.
+EVALUATOR_VOCABULARY = MINTED_VOCABULARY | set(EVALUATOR_NAMES)
 
 
 def _is_minted(name: str) -> bool:
-    return name in MINTED_VOCABULARY or bool(_MINTED_PATTERN.fullmatch(name))
+    return name in EVALUATOR_VOCABULARY or bool(_MINTED_PATTERN.fullmatch(name))
 
 
 def _assert_only_minted_identifiers(module: ast.Module) -> list[str]:
@@ -118,11 +129,11 @@ def _assert_only_minted_identifiers(module: ast.Module) -> list[str]:
         if isinstance(node, ast.Name):
             assert _is_minted(node.id), node.id
         elif isinstance(node, ast.arg):
-            assert node.arg in ("v", "d", "s"), node.arg
+            assert node.arg in ("v", "d", "s", "ev", "st", "pn", "cu"), node.arg
         elif isinstance(node, ast.FunctionDef):
-            assert node.name == "validate" or re.fullmatch(r"u\d+", node.name), (
-                node.name
-            )
+            assert node.name in ("validate", "evaluate") or re.fullmatch(
+                r"u\d+", node.name
+            ), node.name
         elif isinstance(node, ast.alias):
             # None expected in runtime mode (`assemble` never emits an
             # import); audited the same way if that ever changes.
@@ -168,6 +179,26 @@ def _run_checks(
         assert compiled.source == ast.unparse(ast.parse(compiled.source))
         constants = _assert_only_minted_identifiers(compiled.module)
         assert (needle in constants) is expect_present, (needle, expect_present, h)
+
+    # The evaluator artifact (M9) records annotations, so a hostile
+    # keyword value or unknown keyword name reaches the module — only ever
+    # as an `ast.Constant`, and every result equals the interpreter's.
+    evaluator = compile_evaluator(engine, registered, annotations=True)
+    assert evaluator.source == ast.unparse(ast.parse(evaluator.source))
+    _assert_only_minted_identifiers(evaluator.module)
+    for inst in instances:
+        try:
+            want = engine.evaluate(
+                registered, inst, output="hierarchical", annotations=True, trace=True
+            )
+        except JsonSchemaEngineError as error:
+            with pytest.raises(type(error)):
+                evaluator.evaluate(inst, output="hierarchical", trace=True)
+            continue
+        assert evaluator.evaluate(inst, output="hierarchical", trace=True) == want, (
+            h,
+            inst,
+        )
 
     if not fast.plan.targets:  # fully static: emit_standalone must also work
         source = emit_standalone(engine, registered)

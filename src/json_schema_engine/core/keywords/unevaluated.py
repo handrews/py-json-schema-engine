@@ -16,8 +16,7 @@
 # `applicator_array` module (for the array producer ids). Never the
 # evaluator or the registry.
 
-from typing import cast
-
+from json_schema_engine.core.coverage import fold_index_coverage, fold_name_coverage
 from json_schema_engine.core.cursor import Cursor, child_cursor
 from json_schema_engine.core.dialect import (
     AllIndexes,
@@ -48,11 +47,20 @@ from json_schema_engine.core.lowering import (
     ForEachIndex,
     ForEachKey,
     LoweringContext,
+    Stmt,
+    append,
     apply,
     child,
+    cmp,
+    collect,
+    const,
+    coverage_fold,
+    covers,
+    helper,
     in_consts,
     not_,
     or_,
+    produce,
     regex_test,
     type_is,
     when,
@@ -92,27 +100,47 @@ def unevaluated_properties(
         )
 
     def lower(_value: JsonValue, lctx: LoweringContext) -> None:
-        cov = lctx.static_coverage()
-        if cov is None:
-            raise RuntimeError("unevaluatedProperties lowered without static coverage")
-        if cov.covers_all_names:
-            return
         instance = lctx.instance
         b = lctx.binding()
-        parts: list[Expr] = []
-        if cov.names:
-            parts.append(in_consts(Binding(b), tuple(sorted(cov.names))))
-        parts.extend(regex_test(pattern, Binding(b)) for pattern in cov.patterns)
-        covered = or_(*parts)
+        n = lctx.binding()
+        head: list[Stmt] = [collect(n)]
+        if lctx.runtime_coverage():
+            # Tracked (M9): fold the region channel once, then sweep.
+            f = lctx.binding()
+            head.insert(0, coverage_fold(f, "names", consumes))
+            uncovered: Expr = not_(covers(f, Binding(b)))
+        else:
+            cov = lctx.static_coverage()
+            if cov is None:
+                raise RuntimeError(
+                    "unevaluatedProperties lowered without static coverage"
+                )
+            if cov.covers_all_names:
+                return
+            parts: list[Expr] = []
+            if cov.names:
+                parts.append(in_consts(Binding(b), tuple(sorted(cov.names))))
+            parts.extend(regex_test(pattern, Binding(b)) for pattern in cov.patterns)
+            uncovered = not_(or_(*parts))
         lctx.emit(
             when(
                 type_is(instance, "object"),
                 (
+                    *head,
                     ForEachKey(
                         instance,
                         b,
-                        (when(not_(covered), (apply((), child(HERE, Binding(b))),)),),
+                        (
+                            when(
+                                uncovered,
+                                (
+                                    append(n, Binding(b)),
+                                    apply((), child(HERE, Binding(b))),
+                                ),
+                            ),
+                        ),
                     ),
+                    produce(Binding(n)),
                 ),
             )
         )
@@ -124,10 +152,10 @@ def unevaluated_properties(
         # §4 rule 4: visibility is filtered by cursor identity, so this sees
         # only this instance location's own-schema and successfully-merged
         # in-place producers — never a cousin's, never a failed branch's.
-        covered: set[str] = set()
-        for view in ctx.visible(consumes):
-            for name in cast(list[str], view.data):
-                covered.add(name)
+        covered = fold_name_coverage(
+            ((view.behavior_id, view.data) for view in ctx.visible(consumes)),
+            consumes,
+        )
         ok = True
         matched: list[str] = []
         for name in instance:
@@ -180,22 +208,53 @@ def unevaluated_items(
         )
 
     def lower(_value: JsonValue, lctx: LoweringContext) -> None:
-        cov = lctx.static_coverage()
-        if cov is None:
-            raise RuntimeError("unevaluatedItems lowered without static coverage")
-        if cov.covers_all_indexes:
-            return
         instance = lctx.instance
         b = lctx.binding()
+        n = lctx.binding()
+        if lctx.runtime_coverage():
+            f = lctx.binding()
+            sweep = ForEachIndex(
+                instance,
+                b,
+                (
+                    when(
+                        not_(covers(f, Binding(b))),
+                        (append(n, Binding(b)), apply((), child(HERE, Binding(b)))),
+                    ),
+                ),
+            )
+            head: tuple[Stmt, ...] = (
+                coverage_fold(
+                    f,
+                    "indexes",
+                    consumes,
+                    contains_id=contains_id,
+                    prefix_id=prefix_producer_id,
+                ),
+                collect(n),
+            )
+        else:
+            cov = lctx.static_coverage()
+            if cov is None:
+                raise RuntimeError("unevaluatedItems lowered without static coverage")
+            if cov.covers_all_indexes:
+                return
+            sweep = ForEachIndex(
+                instance,
+                b,
+                (append(n, Binding(b)), apply((), child(HERE, Binding(b)))),
+                start=cov.prefix_count,
+            )
+            head = (collect(n),)
         lctx.emit(
             when(
                 type_is(instance, "array"),
                 (
-                    ForEachIndex(
-                        instance,
-                        b,
-                        (apply((), child(HERE, Binding(b))),),
-                        start=cov.prefix_count,
+                    *head,
+                    sweep,
+                    when(
+                        cmp(">", helper("length_of", Binding(n)), const(0)),
+                        (produce(const(True)),),
                     ),
                 ),
             )
@@ -206,19 +265,13 @@ def unevaluated_items(
         if not isinstance(instance, list):
             return True
         length = len(instance)
-        covered_prefix = 0
-        covered: set[int] = set()
-        for view in ctx.visible(consumes):
-            if view.behavior_id == contains_id:
-                if view.data is True:
-                    covered_prefix = length
-                else:
-                    for index in cast(list[int], view.data):
-                        covered.add(index)
-            elif view.data is True:
-                covered_prefix = length
-            elif view.behavior_id == prefix_producer_id and isinstance(view.data, int):
-                covered_prefix = max(covered_prefix, view.data + 1)
+        covered_prefix, covered = fold_index_coverage(
+            ((view.behavior_id, view.data) for view in ctx.visible(consumes)),
+            length,
+            consumes,
+            contains_id,
+            prefix_producer_id,
+        )
         ok = True
         applied = False
         for index in range(covered_prefix, length):

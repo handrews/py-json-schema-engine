@@ -19,7 +19,13 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_CORE_2019,
     keyword_id,
 )
-from json_schema_engine.core.lowering import HERE, LoweringContext, apply, lower_nothing
+from json_schema_engine.core.lowering import (
+    HERE,
+    LoweringContext,
+    annotate,
+    apply,
+    lower_nothing,
+)
 
 _EMPTY_FACTS = StaticFacts()
 
@@ -55,9 +61,11 @@ def annotation_only(behavior_id: str) -> KeywordBehavior:
         ctx.annotate()
         return True
 
-    # Annotation-only keywords assert nothing; the flag tier lowers them to
-    # nothing (M9 adds the annotation recipe).
-    return KeywordBehavior(behavior_id, _evaluate, lower=lower_nothing)
+    def _lower(_value: JsonValue, lctx: LoweringContext) -> None:
+        # Asserts nothing; the evaluator tier records the annotation (M9).
+        lctx.emit(annotate())
+
+    return KeywordBehavior(behavior_id, _evaluate, lower=_lower)
 
 
 def inert_subschema(behavior_id: str) -> KeywordBehavior:
@@ -114,7 +122,31 @@ ref = KeywordBehavior(
 def _dynamic_ref_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     if not isinstance(value, str):
         return _EMPTY_FACTS
-    return StaticFacts(references=(value,), dynamic_scope_sensitive=True)
+    # The application carries the `resolution` fact (M9): the planner
+    # resolves the site at plan time when every path agrees on the target
+    # and islands it otherwise; `dynamic_scope_sensitive` still says the
+    # keyword needs discharging — a dynamic keyword without such a fact
+    # islands unconditionally.
+    return StaticFacts(
+        references=(value,),
+        dynamic_scope_sensitive=True,
+        applications=(
+            SubschemaApplication(
+                (),
+                "in_place",
+                conditional=False,
+                asserts=True,
+                ref=value,
+                resolution="dynamic",
+            ),
+        ),
+    )
+
+
+def _dynamic_ref_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    # Lowers exactly like `$ref`: the plan holds the resolved target.
+    if isinstance(value, str):
+        lctx.emit(apply((), HERE, ref=value, resolution="dynamic"))
 
 
 def _dynamic_ref_evaluate(
@@ -132,13 +164,32 @@ dynamic_ref = KeywordBehavior(
     keyword_id(VOCAB_CORE, "$dynamicRef"),
     _dynamic_ref_evaluate,
     analyze=_dynamic_ref_analyze,
+    lower=_dynamic_ref_lower,
 )
 
 
 def _recursive_ref_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     if not isinstance(value, str):
         return _EMPTY_FACTS
-    return StaticFacts(references=(value,), dynamic_scope_sensitive=True)
+    return StaticFacts(
+        references=(value,),
+        dynamic_scope_sensitive=True,
+        applications=(
+            SubschemaApplication(
+                (),
+                "in_place",
+                conditional=False,
+                asserts=True,
+                ref=value,
+                resolution="recursive",
+            ),
+        ),
+    )
+
+
+def _recursive_ref_lower(value: JsonValue, lctx: LoweringContext) -> None:
+    if isinstance(value, str):
+        lctx.emit(apply((), HERE, ref=value, resolution="recursive"))
 
 
 def _recursive_ref_evaluate(
@@ -155,6 +206,7 @@ recursive_ref = KeywordBehavior(
     keyword_id(VOCAB_CORE_2019, "$recursiveRef"),
     _recursive_ref_evaluate,
     analyze=_recursive_ref_analyze,
+    lower=_recursive_ref_lower,
 )
 
 # Indexed by the registration walk through the 2019-09 identifier

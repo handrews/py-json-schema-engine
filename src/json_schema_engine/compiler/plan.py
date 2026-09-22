@@ -1,13 +1,27 @@
-# The compilation planner (DESIGN.md D1, D8, D9; M6): classifies every
+# The compilation planner (DESIGN.md D1, D8, D9; M6, M9): classifies every
 # schema node reachable from a root as a static (compilable) or interpreted
 # (trampoline) unit, using only public core APIs and `analyze()` facts —
 # never keyword names. Conservative by design: anything uncertain falls
 # back to the interpreter, which is always correct.
 #
+# Dynamic references (M9, after the TS engine's ADR 0004): a `$dynamicRef`
+# or `$recursiveRef` site is resolved at plan time when every path that can
+# reach it yields the same target, and compiled as an ordinary static edge.
+# The dynamic scope at a compiled site is the chain of resource URIs from
+# the artifact root (the trampoline is one-way, so a compiled site is
+# reached only through compiled ancestors), and the interpreter's rule is
+# "the outermost scope entry that declares the anchor wins". Per anchor, a
+# forward dataflow over the unit graph computes, for each unit, the set of
+# resources that can be the outermost declarer on arrival; the graph
+# over-approximates real paths, so the analysis errs only toward islanding.
+# A resolved site adds its target's subtree — and so new paths — to the
+# graph, so the plan is built in rounds under the current site decisions;
+# decisions move only unknown → resolved → unstable, which bounds the loop.
+#
 # Dependency direction: imports core's registry/dialect/ref/errors and the
 # engine façade's type. The serializer and the public API import this.
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -31,10 +45,19 @@ from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.registry import SchemaRegistry
 
 type FallbackCause = Literal["dynamic", "unlowerable", "cycle", "non_schema"]
-"""Why a unit is interpreted: a `$dynamicRef`-class keyword; a keyword
-without `lower()`, an unresolvable edge, or a consumer without static
-coverage; a possible in-place cycle; a reference into non-schema data
-(the interpreter's D19 backstop reports it)."""
+"""Why a unit is interpreted: a dynamic-reference site the plan cannot
+resolve (its target differs by path, or the keyword declares no
+resolution fact); a keyword without `lower()`, an unresolvable edge, or a
+consumer without static coverage; a possible in-place cycle; a reference
+into non-schema data (the interpreter's D19 backstop reports it)."""
+
+
+@dataclass(frozen=True, slots=True)
+class DynamicResolution:
+    """How a dynamic-reference edge was resolved at plan time: the resource
+    whose anchor won (`None` when the reference behaved like `$ref`)."""
+
+    winner: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +67,7 @@ class PlannedApplication:
     keyword: str
     app: SubschemaApplication
     target_key: str
+    dynamic: DynamicResolution | None = None
 
 
 @dataclass(slots=True)
@@ -63,6 +87,16 @@ class PlannedUnit:
     reaches_interpreted: bool = False
     # Planned edges targeting this unit (D9c inline licensing).
     use_count: int = 0
+    # M9 runtime coverage tracking: a tracked unit owns a coverage channel
+    # its consumers fold at runtime (no static licence); a region unit is
+    # reachable in place from a tracked unit and produces into the channel
+    # it is handed. Both take the channel as a parameter and never inline.
+    tracked: bool = False
+    in_region: bool = False
+
+    @property
+    def takes_channel(self) -> bool:
+        return self.tracked or self.in_region
 
     def interpret(self, cause: FallbackCause) -> None:
         self.kind = "interpreted"
@@ -81,10 +115,118 @@ class CompilationPlan:
     formats: tuple[str, ...]
     # Interpreted units in stable order; index = target-table slot.
     targets: tuple[PlannedUnit, ...]
+    # Producer ids some tracked consumer reads (M9): only their productions
+    # are recorded on a channel.
+    coverage_ids: frozenset[str] = frozenset()
 
 
 def unit_key(ref: SchemaRef) -> str:
     return ref.location
+
+
+# --- dynamic-reference sites -----------------------------------------------
+
+# (unit key, keyword, reference value): one decision per site.
+type SiteKey = tuple[str, str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSite:
+    target: SchemaRef
+    winner: str | None
+
+
+# A site's decision; `"unstable"` is permanent.
+type SiteState = ResolvedSite | Literal["unstable"]
+type SiteDecisions = dict[SiteKey, SiteState]
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingSite:
+    """A site met during a round with no decision yet."""
+
+    key: SiteKey
+    unit_key: str
+    kind: Literal["dynamic", "recursive"]
+    anchor: str
+    lexical: SchemaRef
+
+
+@dataclass(frozen=True, slots=True)
+class _Resolved:
+    target: SchemaRef
+    dynamic: DynamicResolution | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Pending:
+    site: _PendingSite
+
+
+type _EdgeResolution = _Resolved | _Pending | Literal["unresolvable", "unstable"]
+
+# The 2019-09 rebinding has no anchor name; one sentinel keys its dataflow.
+_RECURSIVE_ANCHOR = "$recursiveAnchor"
+
+
+def _resolve_edge(
+    registry: SchemaRegistry,
+    ref: SchemaRef,
+    keyword: str,
+    app: SubschemaApplication,
+    sites: SiteDecisions,
+) -> _EdgeResolution:
+    """Where an application edge lands, under the current site decisions."""
+    if app.ref is None:
+        head = app.sibling if app.sibling is not None else keyword
+        return _Resolved(registry.child(ref, [head, *app.path]))
+    try:
+        if app.resolution is None:
+            return _Resolved(registry.resolve_ref(app.ref, ref.base_uri))
+        if app.resolution == "dynamic":
+            dynamic = registry.dynamic_reference(app.ref, ref.base_uri)
+            if dynamic.anchor is None:
+                return _Resolved(dynamic.lexical, DynamicResolution(None))
+            anchor = dynamic.anchor
+            lexical = dynamic.lexical
+        else:
+            recursive = registry.recursive_reference(app.ref, ref.base_uri)
+            if not recursive.recursive:
+                return _Resolved(recursive.lexical, DynamicResolution(None))
+            anchor = _RECURSIVE_ANCHOR
+            lexical = recursive.lexical
+    except UnresolvableReferenceError:
+        return "unresolvable"
+    key: SiteKey = (unit_key(ref), keyword, app.ref)
+    state = sites.get(key)
+    if state is None:
+        return _Pending(
+            _PendingSite(key, unit_key(ref), app.resolution, anchor, lexical)
+        )
+    if state == "unstable":
+        return "unstable"
+    return _Resolved(state.target, DynamicResolution(state.winner))
+
+
+def edge_target(
+    registry: SchemaRegistry, ref: SchemaRef, keyword: str, app: SubschemaApplication
+) -> SchemaRef:
+    """The schema position a scope-independent application edge lands on.
+
+    Raises `UnresolvableReferenceError` for a missing target and
+    `ValueError` for a dynamic site (whose target is a plan decision).
+    """
+    resolution = _resolve_edge(registry, ref, keyword, app, {})
+    match resolution:
+        case _Resolved(target):
+            return target
+        case "unresolvable":
+            raise UnresolvableReferenceError(f"unresolvable reference {app.ref!r}")
+        case _:
+            raise ValueError("a dynamic-reference site has no plan-independent target")
+
+
+# --- coverage licensing ------------------------------------------------------
 
 
 @dataclass(slots=True)
@@ -105,6 +247,7 @@ def coverage_halves(
     ref: SchemaRef,
     visiting: set[str],
     exclude_consumers: bool,
+    sites: SiteDecisions | None = None,
 ) -> tuple[_NameHalf | None, _IndexHalf | None]:
     """The evaluated coverage a schema node contributes at its own cursor
     (D9a), including — transitively — unconditional asserting in-place
@@ -113,8 +256,12 @@ def coverage_halves(
     `exclude_consumers` is true only for the licensing node itself: a
     consumer's own coverage fact describes the state after it runs. Facts
     come from `analyze()` alone, so contribution is independent of which
-    tier evaluates the target.
+    tier evaluates the target. Dynamic-reference edges resolve through
+    `sites`; a pending or unstable site is unknowable, exactly like an
+    unresolvable `$ref`.
     """
+    if sites is None:
+        sites = {}
     key = unit_key(ref)
     if key in visiting:
         return None, None
@@ -136,7 +283,9 @@ def coverage_halves(
             if entry.name not in node:
                 continue
             facts = entry.behavior.facts(node[entry.name], node)
-            if facts.dynamic_scope_sensitive:
+            if facts.dynamic_scope_sensitive and not any(
+                app.resolution is not None for app in facts.applications
+            ):
                 return None, None
             is_consumer = len(facts.consumes) > 0
             if not (exclude_consumers and is_consumer):
@@ -147,12 +296,11 @@ def coverage_halves(
                     continue
                 if app.conditional or not app.asserts:
                     return None, None
-                try:
-                    target = _edge_target(registry, ref, entry.name, app)
-                except UnresolvableReferenceError:
+                resolution = _resolve_edge(registry, ref, entry.name, app, sites)
+                if not isinstance(resolution, _Resolved):
                     return None, None
                 sub_names, sub_indexes = coverage_halves(
-                    registry, target, visiting, False
+                    registry, resolution.target, visiting, False, sites
                 )
                 if name_half is not None:
                     if sub_names is None:
@@ -207,22 +355,6 @@ def _fold_indexes(half: _IndexHalf | None, facts: StaticFacts) -> _IndexHalf | N
     return half
 
 
-def _edge_target(
-    registry: SchemaRegistry, ref: SchemaRef, keyword: str, app: SubschemaApplication
-) -> SchemaRef:
-    if app.ref is not None:
-        return registry.resolve_ref(app.ref, ref.base_uri)
-    head = app.sibling if app.sibling is not None else keyword
-    return registry.child(ref, [head, *app.path])
-
-
-def edge_target(
-    registry: SchemaRegistry, ref: SchemaRef, keyword: str, app: SubschemaApplication
-) -> SchemaRef:
-    """The schema position an application edge lands on."""
-    return _edge_target(registry, ref, keyword, app)
-
-
 def _is_coverage_consumer(facts: StaticFacts) -> bool:
     # A coverage consumer (`unevaluated*`) declares `consumes` and an
     # evaluated-coverage fact; a keyword consuming other dependency data
@@ -230,6 +362,9 @@ def _is_coverage_consumer(facts: StaticFacts) -> bool:
     return len(facts.consumes) > 0 and (
         facts.evaluates_names is not None or facts.evaluates_indexes is not None
     )
+
+
+# --- planning ----------------------------------------------------------------
 
 
 def build_plan(engine: Engine, schema_uri: str) -> CompilationPlan:
@@ -242,10 +377,35 @@ def build_plan(engine: Engine, schema_uri: str) -> CompilationPlan:
     return build_plan_over(engine.schemas, schema_uri)
 
 
-def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPlan:
+@dataclass(slots=True)
+class _Round:
+    units: dict[str, PlannedUnit]
+    patterns: dict[str, None]
+    formats: dict[str, None]
+    pending: dict[SiteKey, _PendingSite]
+    root: PlannedUnit
+    coverage_ids: set[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _Edge:
+    keyword: str
+    app: SubschemaApplication
+    target: SchemaRef
+    dynamic: DynamicResolution | None
+
+
+def _plan_round(
+    registry: SchemaRegistry,
+    root_ref: SchemaRef,
+    sites: SiteDecisions,
+    track_all: bool,
+) -> _Round:
     units: dict[str, PlannedUnit] = {}
     patterns: dict[str, None] = {}
     formats: dict[str, None] = {}
+    pending: dict[SiteKey, _PendingSite] = {}
+    coverage_ids: set[str] = set()
 
     def plan(ref: SchemaRef, in_place_chain: tuple[str, ...]) -> PlannedUnit:
         key = unit_key(ref)
@@ -274,7 +434,10 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
             if entry.name not in node:
                 continue
             facts = entry.behavior.facts(node[entry.name], node)
-            if facts.dynamic_scope_sensitive:
+            if facts.dynamic_scope_sensitive and not any(
+                app.resolution is not None for app in facts.applications
+            ):
+                # A dynamic keyword the planner cannot discharge.
                 unit.interpret("dynamic")
                 return unit
             if entry.behavior.lower is None:
@@ -287,69 +450,226 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
             for format_name in facts.formats:
                 formats[format_name] = None
             present.append((entry.name, facts))
-        # Unknown keywords are annotations: nothing to assert in flag mode.
+        # Unknown keywords are annotations (recorded by the evaluator tier);
+        # a dialect that refuses them raises at evaluation time in the
+        # interpreter, which only the interpreter can reproduce.
+        if (
+            not ref_only
+            and not dialect.allow_unknown_keywords
+            and any(name not in dialect.keywords for name in node)
+        ):
+            unit.interpret("unlowerable")
+            return unit
 
-        # Consumer licensing (D9a): a consumer lowers only when the coverage
-        # half it needs is statically known — from this object's own
-        # contributors plus, transitively, unconditional asserting in-place
-        # applications. Anything runtime-conditional makes the coverage
-        # dynamic and (in M6, without runtime tracking) the node interpreted.
+        # Resolve every edge before any child is planned, so a unit that
+        # islands never leaves half-planned children behind.
+        edges: list[_Edge] = []
+        for name, facts in present:
+            for app in facts.applications:
+                resolution = _resolve_edge(registry, ref, name, app, sites)
+                match resolution:
+                    case _Resolved(target, dynamic):
+                        edges.append(_Edge(name, app, target, dynamic))
+                    case _Pending(site):
+                        # No edge this round; the round settles the site.
+                        pending.setdefault(site.key, site)
+                    case "unstable":
+                        unit.interpret("dynamic")
+                        return unit
+                    case "unresolvable":
+                        # Lazy-failure parity: the interpreter raises only
+                        # when the reference is followed, so the whole node
+                        # falls back.
+                        unit.interpret("unlowerable")
+                        return unit
+
+        # Consumer licensing (D9a): a consumer lowers against a static
+        # coverage when the half it needs is statically known — from this
+        # object's own contributors plus, transitively, unconditional
+        # asserting in-place applications. Anything runtime-conditional
+        # makes the coverage dynamic, and the unit is then tracked (M9):
+        # its consumers fold a runtime channel instead. A static licence
+        # models only the parent-success path, so a plan that must observe
+        # failed siblings (`track_all`, the evaluator) tracks every consumer.
         if consumer_present:
-            name_half, index_half = coverage_halves(registry, ref, set(), True)
-            needs_names = any(
-                len(f.consumes) > 0 and f.evaluates_names is not None
-                for _, f in present
+            consumers = [f for _, f in present if _is_coverage_consumer(f)]
+            name_half, index_half = (
+                (None, None)
+                if track_all
+                else coverage_halves(registry, ref, set(), True, sites)
             )
-            needs_indexes = any(
-                len(f.consumes) > 0 and f.evaluates_indexes is not None
-                for _, f in present
-            )
+            needs_names = any(f.evaluates_names is not None for f in consumers)
+            needs_indexes = any(f.evaluates_indexes is not None for f in consumers)
             if (needs_names and name_half is None) or (
                 needs_indexes and index_half is None
             ):
-                unit.interpret("unlowerable")
-                return unit
-            unit.coverage = StaticCoverage(
-                names=frozenset(name_half.names) if name_half else frozenset(),
-                patterns=tuple(name_half.patterns) if name_half else (),
-                covers_all_names=name_half.all if name_half else False,
-                prefix_count=index_half.prefix if index_half else 0,
-                covers_all_indexes=index_half.all if index_half else False,
-            )
-            for regex in unit.coverage.patterns:
-                patterns[regex] = None
+                unit.tracked = True
+                for f in consumers:
+                    coverage_ids.update(f.consumes)
+            else:
+                unit.coverage = StaticCoverage(
+                    names=frozenset(name_half.names) if name_half else frozenset(),
+                    patterns=tuple(name_half.patterns) if name_half else (),
+                    covers_all_names=name_half.all if name_half else False,
+                    prefix_count=index_half.prefix if index_half else 0,
+                    covers_all_indexes=index_half.all if index_half else False,
+                )
+                for regex in unit.coverage.patterns:
+                    patterns[regex] = None
 
-        # Resolve application edges; plan children.
-        for name, facts in present:
-            for app in facts.applications:
-                try:
-                    target = _edge_target(registry, ref, name, app)
-                except UnresolvableReferenceError:
-                    # Lazy-failure parity: the interpreter raises only when
-                    # the reference is followed, so the whole node falls back.
-                    unit.interpret("unlowerable")
-                    return unit
-                target_key = unit_key(target)
-                if app.mode == "in_place":
-                    if target_key in in_place_chain or target_key == key:
-                        # In-place cycle: same-cursor re-entry. The
-                        # interpreter's cycle guard gives exact
-                        # `InfiniteLoopError` parity.
-                        cyclic = units.get(target_key) or plan(
-                            target, (*in_place_chain, key)
-                        )
-                        cyclic.interpret("cycle")
-                        if cyclic is unit:
-                            return unit
-                        unit.edges.append(PlannedApplication(name, app, target_key))
-                        continue
-                    plan(target, (*in_place_chain, key))
-                else:
-                    plan(target, ())
-                unit.edges.append(PlannedApplication(name, app, target_key))
+        # Plan children.
+        for edge in edges:
+            target_key = unit_key(edge.target)
+            planned = PlannedApplication(
+                edge.keyword, edge.app, target_key, edge.dynamic
+            )
+            if edge.app.mode == "in_place":
+                if target_key in in_place_chain or target_key == key:
+                    # In-place cycle: same-cursor re-entry. The interpreter's
+                    # cycle guard gives exact `InfiniteLoopError` parity.
+                    cyclic = units.get(target_key) or plan(
+                        edge.target, (*in_place_chain, key)
+                    )
+                    cyclic.interpret("cycle")
+                    if cyclic is unit:
+                        return unit
+                    unit.edges.append(planned)
+                    continue
+                plan(edge.target, (*in_place_chain, key))
+            else:
+                plan(edge.target, ())
+            unit.edges.append(planned)
         return unit
 
-    root = plan(registry.root_ref(schema_uri), ())
+    root = plan(root_ref, ())
+    return _Round(units, patterns, formats, pending, root, coverage_ids)
+
+
+def _outermost_declarers(
+    units: Mapping[str, PlannedUnit],
+    root_key: str,
+    declares: Callable[[str], bool],
+) -> dict[str, set[str | None]]:
+    """Per unit, the resources that can be the outermost declarer of one
+    anchor when evaluation arrives there (`None`: no declarer yet).
+
+    Seeded at the root, propagated along every planned edge of every
+    static unit — in-place or child, conditional or not — with the
+    outermost-first rule (a bound winner sticks; otherwise the unit's own
+    resource binds if it declares), joined by union, to a fixpoint.
+    """
+
+    def own(unit: PlannedUnit, winner: str | None) -> str | None:
+        if winner is not None:
+            return winner
+        return unit.ref.base_uri if declares(unit.ref.base_uri) else None
+
+    arrival: dict[str, set[str | None]] = {root_key: {own(units[root_key], None)}}
+    worklist = [root_key]
+    while worklist:
+        key = worklist.pop()
+        unit = units[key]
+        if unit.kind != "static":
+            continue
+        for edge in unit.edges:
+            target = units[edge.target_key]
+            state = arrival.setdefault(edge.target_key, set())
+            before = len(state)
+            state.update(own(target, winner) for winner in arrival[key])
+            if len(state) != before:
+                worklist.append(edge.target_key)
+    return arrival
+
+
+def _settle_sites(
+    registry: SchemaRegistry, round_: _Round, sites: SiteDecisions
+) -> bool:
+    """Decide every pending site of a round; True when a decision changed."""
+    changed = False
+    by_anchor: dict[tuple[str, str], list[_PendingSite]] = {}
+    for site in round_.pending.values():
+        by_anchor.setdefault((site.kind, site.anchor), []).append(site)
+    for (kind, anchor), group in by_anchor.items():
+        if kind == "dynamic":
+
+            def declares(resource: str, anchor: str = anchor) -> bool:
+                return registry.dynamic_anchor(resource, anchor) is not None
+
+            def target_of(winner: str, anchor: str = anchor) -> SchemaRef:
+                hit = registry.dynamic_anchor(winner, anchor)
+                assert hit is not None
+                return hit
+
+        else:
+
+            def declares(resource: str, anchor: str = anchor) -> bool:
+                return registry.has_recursive_root(resource)
+
+            def target_of(winner: str, anchor: str = anchor) -> SchemaRef:
+                return registry.root_ref(winner)
+
+        arrival = _outermost_declarers(round_.units, round_.root.key, declares)
+        for site in group:
+            winners = arrival.get(site.unit_key)
+            if not winners:
+                # Unreachable from the root this round (only through an
+                # island): the interpreter resolves it there.
+                continue
+            targets: dict[str, tuple[SchemaRef, str | None]] = {}
+            for winner in sorted(winners, key=lambda w: (w is not None, w or "")):
+                target = site.lexical if winner is None else target_of(winner)
+                targets.setdefault(unit_key(target), (target, winner))
+            previous = sites.get(site.key)
+            if len(targets) == 1:
+                ((target, winner),) = targets.values()
+                if previous is None:
+                    sites[site.key] = ResolvedSite(target, winner)
+                    changed = True
+                elif previous != "unstable" and unit_key(previous.target) != unit_key(
+                    target
+                ):
+                    sites[site.key] = "unstable"
+                    changed = True
+            elif previous != "unstable":
+                sites[site.key] = "unstable"
+                changed = True
+    return changed
+
+
+def build_plan_over(
+    registry: SchemaRegistry, schema_uri: str, *, track_all: bool = False
+) -> CompilationPlan:
+    """Plan over a registry (normally a snapshot). `track_all` tracks every
+    coverage consumer at runtime instead of licensing static coverage
+    (the evaluator's plans, whose units continue past a failed sibling)."""
+    root_ref = registry.root_ref(schema_uri)
+    sites: SiteDecisions = {}
+    while True:
+        round_ = _plan_round(registry, root_ref, sites, track_all)
+        if not _settle_sites(registry, round_, sites):
+            break
+    units = round_.units
+
+    # Region fixpoint (M9): every static, non-boolean unit reachable in
+    # place from a tracked unit produces into that unit's channel. Every
+    # in-place edge counts — inverted (`not`) and non-asserting (`if`'s
+    # condition) ones too, since a passing negated or conditional
+    # subschema's records are visible to the consumer — and a tracked unit
+    # inside a region nests through its own entry mark.
+    worklist = [u.key for u in units.values() if u.tracked]
+    while worklist:
+        unit = units[worklist.pop()]
+        for edge in unit.edges:
+            target = units[edge.target_key]
+            if (
+                edge.app.mode != "in_place"
+                or target.kind != "static"
+                or isinstance(target.ref.node, bool)
+                or target.in_region
+            ):
+                continue
+            target.in_region = True
+            worklist.append(target.key)
 
     # `reaches_interpreted` fixpoint over the edge graph.
     changed = True
@@ -372,7 +692,28 @@ def build_plan_over(registry: SchemaRegistry, schema_uri: str) -> CompilationPla
             units[edge.target_key].use_count += 1
 
     targets = tuple(u for u in units.values() if u.kind == "interpreted")
-    return CompilationPlan(root.key, units, tuple(patterns), tuple(formats), targets)
+    return CompilationPlan(
+        round_.root.key,
+        units,
+        tuple(round_.patterns),
+        tuple(round_.formats),
+        targets,
+        frozenset(round_.coverage_ids),
+    )
+
+
+# --- explanation -------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDynamicSite:
+    """A dynamic-reference site the plan compiled as a static edge."""
+
+    unit: str
+    keyword: str
+    ref: str
+    target: str
+    winner: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,19 +726,38 @@ class CompilationExplanation:
     causes: Mapping[FallbackCause, int]
     interpreted_keys: tuple[str, ...]
     reaches_interpreted: int
+    resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...] = ()
+    # M9: consumers tracked at runtime, and the units in their regions.
+    tracked_units: int = 0
+    region_units: int = 0
 
 
 def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
     causes: dict[FallbackCause, int] = {}
     interpreted: list[str] = []
-    reaching = 0
+    reaching = tracked = region = 0
+    resolved: list[ResolvedDynamicSite] = []
     for unit in plan.units.values():
         if unit.kind == "interpreted":
             interpreted.append(unit.key)
             assert unit.cause is not None
             causes[unit.cause] = causes.get(unit.cause, 0) + 1
-        elif unit.reaches_interpreted:
+            continue
+        if unit.reaches_interpreted:
             reaching += 1
+        tracked += unit.tracked
+        region += unit.in_region
+        for edge in unit.edges:
+            if edge.dynamic is not None and edge.app.ref is not None:
+                resolved.append(
+                    ResolvedDynamicSite(
+                        unit.key,
+                        edge.keyword,
+                        edge.app.ref,
+                        edge.target_key,
+                        edge.dynamic.winner,
+                    )
+                )
     return CompilationExplanation(
         total_units=len(plan.units),
         static_units=len(plan.units) - len(interpreted),
@@ -405,6 +765,11 @@ def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
         causes=dict(sorted(causes.items())),
         interpreted_keys=tuple(sorted(interpreted)),
         reaches_interpreted=reaching,
+        resolved_dynamic_sites=tuple(
+            sorted(resolved, key=lambda s: (s.unit, s.keyword, s.ref))
+        ),
+        tracked_units=tracked,
+        region_units=region,
     )
 
 

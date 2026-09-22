@@ -309,7 +309,162 @@ from `json_schema_engine.core`'s lowering IR) would let the compiler emit
 it directly instead — a performance decision, never required for
 correctness, since the fallback is always available and always correct.
 
-M9 will document giving a custom keyword a `lower` form through the IR
-in `json_schema_engine.core.lowering`; until then a custom keyword is
-interpreted, as above, and its compiled artifacts stay exactly as
-correct as the interpreter.
+## Lowering a custom keyword
+
+`minWords` has no natural lowering: the IR's closed `HelperName` set has
+no "count words" operation — `helper("length_of", ...)` counts an
+instance's own length (a string's code points, a collection's size),
+never the number of whitespace-separated words inside it. Giving
+`minWords` a `lower` built from that helper would compile something that
+quietly disagrees with `evaluate` on multi-word strings, which is worse
+than staying interpreted. `minWords` stays interpreted, as demonstrated
+above, and every artifact using it stays exactly as correct as the
+interpreter.
+
+`isEven` below is a keyword the IR **can** express exactly: a type guard
+plus `Helper("is_multiple_of", ...)`, the same helper
+`core/keywords/validation.py`'s built-in `multipleOf` lowers to.
+
+```python
+from json_schema_engine.compiler import (
+    compile_evaluator,
+    compile_validator,
+    explain_compilation,
+)
+from json_schema_engine.core.lowering import (
+    and_,
+    annotate,
+    const,
+    fail,
+    helper,
+    not_,
+    type_is,
+    when,
+)
+
+IS_EVEN_ID = "https://ex.example/vocab/words#isEven"
+
+
+def _is_even_evaluate(value, cursor, ctx) -> bool:
+    if value is not True:
+        return True  # not turned on: nothing to enforce
+    instance = cursor.value
+    if isinstance(instance, bool) or not isinstance(instance, int | float):
+        return True  # vacuously true for a non-number instance
+    if instance % 2 != 0:
+        ctx.error("must be an even number", {"isEven": True})
+        return False
+    return True
+
+
+def _is_even_lower(value, lctx) -> None:
+    if value is not True:
+        return
+    instance = lctx.instance
+    lctx.emit(
+        when(
+            and_(
+                type_is(instance, "number"),
+                not_(helper("is_multiple_of", instance, const(2))),
+            ),
+            (fail(("must be an even number",), {"isEven": const(True)}),),
+        )
+    )
+
+
+is_even = KeywordBehavior(
+    id=IS_EVEN_ID, evaluate=_is_even_evaluate, lower=_is_even_lower
+)
+```
+
+`_is_even_lower` mirrors `_is_even_evaluate` guard for guard: vacuously
+true (no `Fail` emitted) unless the instance is a number and fails
+`is_multiple_of`, the same failure message and params on both tiers.
+
+Register `isEven` alongside the existing keywords and give `wordCount` a
+`lower` too — an annotation keyword's entire lowered form is a guarded
+`annotate()`, mirroring the same `value is True and isinstance(...,
+str)` test `_word_count_evaluate` runs:
+
+```python
+def _word_count_lower(value, lctx) -> None:
+    if value is not True:
+        return
+    lctx.emit(when(type_is(lctx.instance, "string"), (annotate(),)))
+
+
+word_count_lowered = KeywordBehavior(
+    id="https://ex.example/vocab/words#wordCount",
+    evaluate=_word_count_evaluate,
+    lower=_word_count_lower,
+)
+engine.dialects.register_vocabulary(
+    WORDS_VOCAB,
+    {"minWords": min_words, "wordCount": word_count_lowered, "isEven": is_even},
+)
+engine.dialects.register_dialect(WORDS_DIALECT, words_vocabs)
+```
+
+`isEven` evaluates the same on both tiers:
+
+```python
+even_uri = engine.register_schema(
+    {"isEven": True}, "https://ex.example/even-doc", dialect_uri=WORDS_DIALECT
+)
+assert engine.evaluate(even_uri, 4).valid is True
+
+odd_result = engine.evaluate(even_uri, 3, output="list", error_params=True)
+assert odd_result.valid is False
+(odd_error,) = odd_result.errors
+assert odd_error["error"] == "must be an even number"
+assert odd_error["params"] == {"isEven": True}
+```
+
+`explain_compilation` now reports zero interpreted units for a schema
+built entirely from keywords with a `lower`:
+
+```python
+even_compiled = compile_validator(engine, even_uri)
+assert even_compiled.validate(4) is True
+assert even_compiled.validate(3) is False
+
+even_explanation = explain_compilation(even_compiled.plan)
+assert even_explanation.interpreted_units == 0
+assert even_explanation.causes == {}
+```
+
+`compile_evaluator` produces the same error unit the interpreter does —
+same message, same params, same keyword:
+
+```python
+even_evaluator = compile_evaluator(engine, even_uri, annotations=True)
+compiled_odd = even_evaluator.evaluate(3, output="list", error_params=True)
+assert compiled_odd.valid is False
+assert compiled_odd.errors == odd_result.errors
+```
+
+And the annotation keyword's compiled and interpreted annotations agree
+too:
+
+```python
+wc_uri = engine.register_schema(
+    {"wordCount": True}, "https://ex.example/wc-lowered-doc", dialect_uri=WORDS_DIALECT
+)
+interpreted_wc = engine.evaluate(
+    wc_uri, "one two three", output="list", annotations=True
+)
+wc_evaluator = compile_evaluator(engine, wc_uri, annotations=True)
+compiled_wc = wc_evaluator.evaluate("one two three", output="list")
+assert compiled_wc.annotations == interpreted_wc.annotations
+assert explain_compilation(wc_evaluator.plan).interpreted_units == 0
+```
+
+**The contract.** `lower` must describe exactly what `evaluate` does —
+the same guards, the same failing condition, the same message and
+params — never an approximation or a different keyword in disguise. The
+compiler's differential fuzzer (`tests/compiler/test_fuzz.py`) is the
+referee: it generates schemas and instances and checks every tier against
+the interpreter, so a `lower` that drifts from its `evaluate` fails there,
+not in production. A keyword without `lower` is interpreted, never wrong —
+`lower` is a performance decision the IR either supports or doesn't, and
+"doesn't" is always a legitimate answer, as `minWords` shows above.

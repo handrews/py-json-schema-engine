@@ -79,36 +79,20 @@ def test_user_corpus_smoke() -> None:
 
 
 def test_oas_document_corpus() -> None:
-    """The interpreter and compiled tiers must survive oracle-checking and
-    get timed; `jse standalone` is the one legitimate jse exclusion.
-
-    Verified directly against `build_plan` (not asserted here, since it is
-    an implementation detail rather than part of the harness's contract):
-    the root unit's `anyOf` + `unevaluatedProperties` combination makes its
-    evaluated-property coverage statically unknowable (D9a consumer
-    licensing — an `anyOf` branch is conditional, so it never contributes
-    a static half), and planning reports that generic "unlowerable"
-    fallback for the root before it ever descends far enough to see the
-    schema's `$dynamicRef` sites. So the recorded reason names the
-    generic interpreter fallback, not `$dynamicRef` by keyword — this
-    assertion checks the reason the harness actually gives.
-    """
+    """Every jse tier must survive oracle-checking and get timed: since M9
+    the schema's `$dynamicRef` sites resolve at plan time and its root's
+    `anyOf` + `unevaluatedProperties` consumer is tracked at runtime, so
+    the plan has no interpreted unit and `jse standalone` emits it."""
     results = run(budget_ms=5, filter_regex="oas-document")
 
     assert results.results, "expected at least one timed task"
     assert all(row.corpus == "oas-document" for row in results.results)
 
     timed_subjects = {row.subject for row in results.results}
-    assert "jse interpreter flag" in timed_subjects
-    assert "jse compiled flag" in timed_subjects
-
-    jse_exclusions = [
-        exclusion
-        for exclusion in results.exclusions
-        if exclusion.subject.startswith("jse")
-    ]
-    assert [e.subject for e in jse_exclusions] == ["jse standalone"]
-    assert "needs the interpreter at evaluation time" in jse_exclusions[0].reason
+    assert {"jse interpreter flag", "jse compiled flag", "jse standalone"} <= (
+        timed_subjects
+    )
+    assert not [e for e in results.exclusions if e.subject.startswith("jse")]
 
 
 def test_api_payload_corpus_smoke() -> None:

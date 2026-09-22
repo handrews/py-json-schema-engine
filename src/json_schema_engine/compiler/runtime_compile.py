@@ -24,6 +24,14 @@ type Validator = Callable[[JsonValue], bool]
 
 def instantiate(module: ast.Module, namespace: dict[str, object]) -> Validator:
     """Execute an emitted module in `namespace` and return its `validate`."""
+    return cast(Validator, instantiate_entry(module, namespace, VALIDATE))
+
+
+def instantiate_entry(
+    module: ast.Module, namespace: dict[str, object], entry: str
+) -> Callable[..., object]:
+    """Execute an emitted module in `namespace` and return its `entry`
+    function (`validate` for a flag artifact, `evaluate` for an evaluator)."""
     code = compile(module, FILENAME, "exec")
     exec(code, namespace)
-    return cast(Validator, namespace[VALIDATE])
+    return cast(Callable[..., object], namespace[entry])

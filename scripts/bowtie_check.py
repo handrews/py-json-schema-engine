@@ -1,12 +1,14 @@
-"""Bowtie conformance gate for json-schema-engine (M3 Step 3).
+"""Bowtie conformance gate for json-schema-engine (M3 Step 3; M9 Step 4 adds
+the compiled tier).
 
-Builds the harness image locally, smokes it, then runs the official
+Builds the harness image(s) locally, smokes them, then runs the official
 JSON-Schema-Test-Suite through Bowtie's own runner and pins an exact
-per-dialect test count with zero failures/errors/skips. Local + CI only:
-the image stays `localhost/json-schema-engine-bowtie` and nothing leaves
-the machine.
+per-dialect test count with zero failures/errors/skips — once per tier.
+Local + CI only: images stay `localhost/json-schema-engine-bowtie` (the
+interpreter tier) and `localhost/json-schema-engine-bowtie-compiled` (the
+compiled tier), and nothing leaves the machine.
 
-Run with: `uv run python scripts/bowtie_check.py`
+Run with: `uv run python scripts/bowtie_check.py [--tier interpreter|compiled|both]`
 
 Requirements: a reachable container engine (Docker or Podman) and network
 access for `uvx` to fetch the pinned `bowtie-json-schema` release.
@@ -14,6 +16,7 @@ access for `uvx` to fetch the pinned `bowtie-json-schema` release.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -21,17 +24,22 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = "localhost/json-schema-engine-bowtie"
+IMAGES: dict[str, str] = {
+    "interpreter": "localhost/json-schema-engine-bowtie",
+    "compiled": "localhost/json-schema-engine-bowtie-compiled",
+}
 BOWTIE_PIN = "bowtie-json-schema==2026.6.1"
 # The `bowtie-json-schema` distribution's console script is named `bowtie`,
 # not `bowtie-json-schema`, so uvx needs `--from` to run it without
 # installing it into the active environment.
 BOWTIE_CMD = ["uvx", "--from", BOWTIE_PIN, "bowtie"]
 
-# Expected: every test in the dialect's suite directory runs and matches.
+# Expected: every test in the dialect's suite directory runs and matches,
+# for both tiers alike — the compiled tier's artifacts fall back to the
+# interpreter for anything they cannot emit, so it is exactly as complete.
 PINS = {
     "draft2020-12": 1301,
     "draft2019-09": 1261,
@@ -40,6 +48,8 @@ PINS = {
 }
 
 EXTRA_PATH_DIRS = ["/opt/podman/bin"]
+
+Tier = Literal["interpreter", "compiled"]
 
 
 def _extended_path() -> str:
@@ -89,41 +99,44 @@ def build_wheels() -> None:
     _run(["uv", "build", "--package", "ecma-regex"], cwd=ROOT)
 
 
-def build_image(container_tool: str) -> None:
-    _run(
-        [
-            container_tool,
-            "build",
-            "-q",
-            "-t",
-            IMAGE,
-            "-f",
-            str(ROOT / "bowtie" / "Containerfile"),
-            ".",
-        ],
-        cwd=ROOT,
-    )
+def build_image(container_tool: str, tier: Tier) -> None:
+    image = IMAGES[tier]
+    cmd = [
+        container_tool,
+        "build",
+        "-q",
+        "-t",
+        image,
+        "-f",
+        str(ROOT / "bowtie" / "Containerfile"),
+    ]
+    if tier == "compiled":
+        cmd += ["--build-arg", "TIER=compiled"]
+    cmd.append(".")
+    _run(cmd, cwd=ROOT)
 
 
-def run_smoke() -> None:
+def run_smoke(tier: Tier) -> None:
+    image = IMAGES[tier]
     result = _run(
-        [*BOWTIE_CMD, "smoke", "-i", f"image:{IMAGE}", "--format", "json"],
+        [*BOWTIE_CMD, "smoke", "-i", f"image:{image}", "--format", "json"],
         cwd=ROOT,
         stdout=subprocess.PIPE,
     )
     smoke: dict[str, Any] = json.loads(result.stdout)
     if not smoke.get("success"):
-        print("bowtie smoke FAILED", file=sys.stderr)
+        print(f"bowtie smoke FAILED ({tier})", file=sys.stderr)
         sys.exit(1)
 
 
-def run_suite(dialect: str, report_path: Path) -> str:
+def run_suite(tier: Tier, dialect: str, report_path: Path) -> str:
+    image = IMAGES[tier]
     result = _run(
         [
             *BOWTIE_CMD,
             "suite",
             "-i",
-            f"image:{IMAGE}",
+            f"image:{image}",
             str(ROOT / "test-suite" / "tests" / dialect),
         ],
         cwd=ROOT,
@@ -175,19 +188,20 @@ def count_and_check(report: str) -> tuple[int, int]:
     return tests, mismatches
 
 
-def main() -> int:
-    build_wheels()
-    container_tool = pick_container_tool()
-    build_image(container_tool)
+def run_tier(container_tool: str, tier: Tier) -> bool:
+    """Build, smoke, and suite-check one tier's image. Returns whether it
+    passed; every summary line is prefixed with the tier so a `both` run's
+    output tells the two apart."""
+    build_image(container_tool, tier)
 
-    print("bowtie smoke...")
-    run_smoke()
+    print(f"[{tier}] bowtie smoke...")
+    run_smoke(tier)
 
-    failed_overall = False
-    with tempfile.TemporaryDirectory(prefix="jse-bowtie-") as scratch:
+    tier_ok = True
+    with tempfile.TemporaryDirectory(prefix=f"jse-bowtie-{tier}-") as scratch:
         for dialect, pin in PINS.items():
             report_path = Path(scratch) / f"{dialect}.jsonl"
-            report = run_suite(dialect, report_path)
+            report = run_suite(tier, dialect, report_path)
             counts = summarize(report_path)
             tests, mismatches = count_and_check(report)
 
@@ -199,18 +213,48 @@ def main() -> int:
                 and tests == pin
             )
             print(
-                f"{dialect}: tests={tests} (pin {pin}) "
+                f"[{tier}] {dialect}: tests={tests} (pin {pin}) "
                 f"failed={counts['failed']} errored={counts['errored']} "
                 f"skipped={counts['skipped']} mismatches={mismatches} "
                 + ("OK" if ok else "FAIL")
             )
             if not ok:
-                failed_overall = True
+                tier_ok = False
+
+    return tier_ok
+
+
+def _parse_args(argv: list[str]) -> Tier | Literal["both"]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--tier",
+        choices=("interpreter", "compiled", "both"),
+        default="both",
+        help="which harness tier's image(s) to build and check (default: both)",
+    )
+    args = parser.parse_args(argv)
+    tier: Tier | Literal["both"] = args.tier
+    return tier
+
+
+def main(argv: list[str] | None = None) -> int:
+    selected = _parse_args(sys.argv[1:] if argv is None else argv)
+    tiers: tuple[Tier, ...] = (
+        ("interpreter", "compiled") if selected == "both" else (selected,)
+    )
+
+    build_wheels()
+    container_tool = pick_container_tool()
+
+    failed_overall = False
+    for tier in tiers:
+        if not run_tier(container_tool, tier):
+            failed_overall = True
 
     if failed_overall:
         print("BOWTIE CHECK FAIL", file=sys.stderr)
         return 1
-    print("BOWTIE CHECK PASS (all dialects exact, zero failures)")
+    print("BOWTIE CHECK PASS (all dialects exact, zero failures, all tiers)")
     return 0
 
 
