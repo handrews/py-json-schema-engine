@@ -16,6 +16,7 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.errors import (
     FormatsRequiredError,
+    JsonSchemaEngineError,
     MaxDepthExceededError,
     SchemaValidationError,
     UnknownDialectError,
@@ -35,6 +36,7 @@ from json_schema_engine.core.keywords.format import (
     format_assertion_vocabulary,
 )
 from json_schema_engine.core.loader import Loader, RangeLookup, SourceLocation
+from json_schema_engine.core.locations import LocationChain
 from json_schema_engine.core.metaschemas import bundled_metaschemas
 from json_schema_engine.core.output import (
     AnnotationsOption,
@@ -66,11 +68,40 @@ from json_schema_engine.core.result import (
     assemble_result,
     resolve_output_demand,
 )
-from json_schema_engine.core.uri import pointer_from_fragment, split_fragment
+from json_schema_engine.core.uri import (
+    pointer_from_fragment,
+    schema_location,
+    split_fragment,
+)
 
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
     return False
+
+
+def attach_location_chain(
+    registry: SchemaRegistry, error: JsonSchemaEngineError
+) -> None:
+    """Fill in an error's `location_chain` as it leaves the engine (P11).
+
+    Only a registry can build a chain, and no raise site has one — the
+    evaluator, the regex screen and a keyword's `analyze()` all hold a
+    location and nothing else. Doing it here instead of threading a
+    registry into all of them also fixes the chain at the moment of
+    failure, rather than whenever someone later thinks to ask.
+
+    A no-op without a location, or when an inner frame already attached
+    one, so nesting these is harmless: `load_schema` and `_fetch` route
+    through `register_schema`, and `_maybe_validate` through `evaluate`.
+
+    A free function rather than a method because the compiled tier needs
+    the same behavior and already imports from this module.
+    """
+    if error.location_chain is not None or error.schema_location is None:
+        return
+    chain = registry.location_chain(error.schema_location)
+    if chain:
+        error.location_chain = chain
 
 
 class Engine:
@@ -175,15 +206,21 @@ class Engine:
         (use `load_schema` for that). `get_range` is the D17 position
         capability for this document.
         """
-        self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
         try:
-            uri = self.schemas.register(schema, retrieval_uri, dialect_uri, get_range)
-        except RecursionError:
-            raise MaxDepthExceededError(
-                "schema nesting exceeded the interpreter's stack "
-                f"(max_depth={self._max_depth})"
-            ) from None
-        self._maybe_validate(uri)
+            self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
+            try:
+                uri = self.schemas.register(
+                    schema, retrieval_uri, dialect_uri, get_range
+                )
+            except RecursionError:
+                raise MaxDepthExceededError(
+                    "schema nesting exceeded the interpreter's stack "
+                    f"(max_depth={self._max_depth})"
+                ) from None
+            self._maybe_validate(uri)
+        except JsonSchemaEngineError as error:
+            attach_location_chain(self.schemas, error)
+            raise
         return uri
 
     def load_schema(
@@ -255,6 +292,20 @@ class Engine:
             source["range"] = found
         return source
 
+    def location_chain(self, schema_location: str) -> LocationChain:
+        """The enclosing `$id` resources of a schema location (P11).
+
+        Innermost first, ending at a root resource; empty for a resource
+        this engine never saw. A position in a plain single-resource
+        document gives one hop.
+
+        This is the identity question — which resource, inside which — and
+        `locate` is the physical one. They compose rather than overlap:
+        every hop's `.location` is a `locate` argument, which is how a
+        caller gets a source range for a hop.
+        """
+        return self.schemas.location_chain(schema_location)
+
     # --- dialects --------------------------------------------------------
 
     def _ensure_dialect_for(
@@ -312,12 +363,12 @@ class Engine:
                     f"metaschema '{uri}' declares the format-assertion "
                     "vocabulary but the engine has no format table; pass "
                     "formats= (e.g. create_engine(formats=FORMATS_2020_12))",
-                    schema_location=uri,
+                    schema_location=schema_location(uri, ""),
                 )
             elif required is True:
                 raise UnknownVocabularyError(
                     f"dialect '{uri}' requires unknown vocabulary '{vocabulary_uri}'",
-                    schema_location=uri,
+                    schema_location=schema_location(uri, ""),
                 )
             # An unknown optional vocabulary is skipped; its keywords fall
             # to unknown-keyword annotation handling (spec MUST for false).
@@ -348,7 +399,7 @@ class Engine:
             raise SchemaValidationError(
                 f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
                 list(result.errors or []),
-                schema_location=base_uri,
+                schema_location=schema_location(base_uri, ""),
             )
 
     # --- evaluation ------------------------------------------------------
@@ -390,15 +441,19 @@ class Engine:
         should_record = (
             demand.annotations if demand.annotations is not None else _record_nothing
         )
-        valid, state = run_evaluation(
-            self.schemas,
-            schema_uri,
-            instance,
-            compile_regex=self._regex.compile,
-            should_record=should_record,
-            max_depth=self._max_depth,
-            tracing=demand.tracing,
-        )
+        try:
+            valid, state = run_evaluation(
+                self.schemas,
+                schema_uri,
+                instance,
+                compile_regex=self._regex.compile,
+                should_record=should_record,
+                max_depth=self._max_depth,
+                tracing=demand.tracing,
+            )
+        except JsonSchemaEngineError as error:
+            attach_location_chain(self.schemas, error)
+            raise
         return assemble_evaluation(
             state,
             valid,

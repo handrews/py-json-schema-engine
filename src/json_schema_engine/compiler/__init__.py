@@ -38,7 +38,12 @@ from json_schema_engine.compiler.runtime_compile import instantiate, instantiate
 from json_schema_engine.compiler.serialize import Flags, assemble, serialize_plan
 from json_schema_engine.compiler.standalone import emit_standalone
 from json_schema_engine.core.channel_ops import cut_annotations
-from json_schema_engine.core.engine import Engine, assemble_evaluation
+from json_schema_engine.core.engine import (
+    Engine,
+    assemble_evaluation,
+    attach_location_chain,
+)
+from json_schema_engine.core.errors import JsonSchemaEngineError
 from json_schema_engine.core.evaluator import EvalState
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.output import AnnotationsOption, make_record_predicate
@@ -233,7 +238,14 @@ def compile_evaluator(
             max_depth=budget,
             tracing=demand.tracing,
         )
-        valid = bool(entry(instance, state))
+        try:
+            valid = bool(entry(instance, state))
+        except JsonSchemaEngineError as error:
+            # The interpreter's `Engine.evaluate` does the same (P11); a
+            # compiled artifact must not report a thinner error than the
+            # tier it was compiled from.
+            attach_location_chain(registry, error)
+            raise
         if not valid:
             # The root application's records never merge (rule 3).
             cut_annotations(state, 0)

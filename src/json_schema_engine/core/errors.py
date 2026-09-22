@@ -1,12 +1,15 @@
 # Every typed error the engine raises (DESIGN.md §2, module table).
 #
-# Dependency direction: the leaf of `core`. It imports nothing from the
-# engine so that any module may raise these without creating a cycle.
+# Dependency direction: all but a leaf of `core`. It imports `locations`,
+# which imports only `uri`; neither imports this module, so any module may
+# still raise these without creating a cycle.
 #
 # One root (`JsonSchemaEngineError`) lets an embedding application catch
 # everything this library raises with a single `except` clause, and lets it
 # distinguish engine faults from bugs (`TypeError`, `KeyError`) that must not
 # be swallowed.
+
+from json_schema_engine.core.locations import LocationChain, format_location_chain
 
 
 class JsonSchemaEngineError(Exception):
@@ -17,13 +20,32 @@ class JsonSchemaEngineError(Exception):
     so that any error can gain a location without a class change; errors that
     are not about a schema position (`OutputOptionsError`) simply leave it
     `None`.
+
+    `location_chain` is that position's enclosing `$id` resources (P11),
+    which only a registry can work out — so unlike `schema_location` it is
+    never passed at construction. The engine fills it in as the error
+    leaves a public entry point, which also freezes it at the moment of
+    failure rather than at the moment someone asks.
+
+    `str()` appends the chain only when it has more than one hop. A chain
+    of one says nothing the location did not, so a single-resource
+    document's message is exactly what it always was.
     """
 
     schema_location: str | None
+    location_chain: LocationChain | None
 
     def __init__(self, message: str, *, schema_location: str | None = None) -> None:
         super().__init__(message)
         self.schema_location = schema_location
+        self.location_chain = None
+
+    def __str__(self) -> str:
+        message = super().__str__()
+        chain = self.location_chain
+        if chain is None or len(chain) <= 1:
+            return message
+        return format_location_chain(chain, message=message)
 
 
 class JsonSyntaxError(JsonSchemaEngineError, ValueError):

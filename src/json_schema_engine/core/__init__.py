@@ -69,6 +69,11 @@ from json_schema_engine.core.loader import (
     SourceRange,
     SourceSpan,
 )
+from json_schema_engine.core.locations import (
+    LocationChain,
+    LocationHop,
+    format_location_chain,
+)
 from json_schema_engine.core.output import (
     AnnotationSelection,
     AnnotationsOption,
@@ -126,6 +131,8 @@ __all__ = [
     "LoadedDocument",
     "LoadedResource",
     "Loader",
+    "LocationChain",
+    "LocationHop",
     "MaxDepthExceededError",
     "OutputDocument",
     "OutputFormat",
@@ -157,6 +164,7 @@ __all__ = [
     "UnsupportedPatternError",
     "create_engine",
     "detect_unsafe_regex",
+    "format_location_chain",
     "json_equal",
     "parse_json_with_ranges",
 ]

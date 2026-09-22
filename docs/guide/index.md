@@ -20,6 +20,8 @@ plain pass/fail flag to a fully annotated, located evaluation tree.
   documents; write a custom loader.
 - [Source positions](source-positions.md) — map errors and annotations back
   to line/column in schema source text.
+- [Location chains](location-chains.md) — find an error inside a compound
+  document: which embedded resource it is in, and where that sits in the file.
 - [Metaschemas](metaschemas.md) — `$vocabulary`-defined dialects and
   schema-against-metaschema validation.
 - [Custom keywords and vocabularies](custom-keywords.md) — extend the engine
