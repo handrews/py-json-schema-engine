@@ -27,6 +27,16 @@ minor versions may change public API.
   discard that engine rather than continuing with it. Tracked as DESIGN.md §7
   item 8.
 
+### Fixed
+
+- **An error raised during evaluation now carries a schema location.** The
+  registration walk has always back-filled `schema_location` onto an error
+  escaping a keyword's `analyze()`, but the evaluation tier had no equivalent,
+  so an `UnresolvableReferenceError` from a `$ref` actually followed at
+  evaluation time reached the caller with `schema_location` still `None` —
+  naming neither the reference nor the schema that followed it. It now names
+  the keyword's own position, encoded per P10 and accepted by `Engine.locate`.
+
 - **A schema location is now a URI (DESIGN.md P10).** The JSON Pointer in
   `schemaLocation`, `absoluteKeywordLocation`, and the `schema_location`
   carried by a raised error is percent-encoded per RFC 3986's `fragment`

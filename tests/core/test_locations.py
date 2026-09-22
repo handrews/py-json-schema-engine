@@ -15,6 +15,7 @@ from json_schema_engine.core import (
     InvalidSchemaError,
     JsonValue,
     MaxDepthExceededError,
+    UnresolvableReferenceError,
     create_engine,
 )
 from json_schema_engine.core.positions import parse_json_with_ranges
@@ -223,3 +224,80 @@ def test_encoding_survives_an_embedded_id() -> None:
         "documentUri": "https://loc.example/outer",
         "pointer": "/$defs/inner/properties/100%/type",
     }
+
+
+# --- errors raised during evaluation ---------------------------------------
+#
+# The registration walk back-fills a location onto an error escaping a
+# keyword's `facts()`; `_evaluate_keyword` does the same for `evaluate()`.
+# Without it the `$ref` family -- the keywords most likely to fail at
+# evaluation time, and the ones whose failure is hardest to place by eye --
+# reached the caller with no location at all.
+
+
+def test_unresolvable_ref_during_evaluation_names_the_ref_keyword() -> None:
+    engine = create_engine()
+    uri = engine.register_schema(
+        {"$ref": "https://ev.example/missing"}, "https://ev.example/s"
+    )
+    with pytest.raises(UnresolvableReferenceError) as raised:
+        engine.evaluate(uri, 1)
+    assert raised.value.schema_location == "https://ev.example/s#/$ref"
+    # And it round-trips, which is what makes it worth printing.
+    assert engine.locate(raised.value.schema_location) == {
+        "documentUri": "https://ev.example/s",
+        "pointer": "/$ref",
+    }
+
+
+def test_evaluation_error_location_is_the_keyword_not_the_schema_object() -> None:
+    engine = create_engine()
+    uri = engine.register_schema(
+        {"properties": {"a b": {"$ref": "#/$defs/nope"}}}, "https://ev.example/deep"
+    )
+    with pytest.raises(UnresolvableReferenceError) as raised:
+        engine.evaluate(uri, {"a b": 1})
+    # Encoded per P10, and the keyword segment is appended, so the location
+    # names the `$ref` rather than the schema that holds it.
+    assert raised.value.schema_location == (
+        "https://ev.example/deep#/properties/a%20b/$ref"
+    )
+
+
+def test_evaluation_error_location_uses_the_embedded_resource() -> None:
+    # The P11 motivation in miniature: the location is canonical, so it
+    # names the embedded `$id` and not the document the caller registered.
+    engine = create_engine()
+    engine.register_schema(
+        {
+            "$id": "https://ev.example/bundle",
+            "$defs": {
+                "inner": {
+                    "$id": "https://ev.example/inner",
+                    "$ref": "#/$defs/absent",
+                }
+            },
+        },
+        "https://ev.example/bundle",
+    )
+    with pytest.raises(UnresolvableReferenceError) as raised:
+        engine.evaluate("https://ev.example/inner", 1)
+    assert raised.value.schema_location == "https://ev.example/inner#/$ref"
+    assert engine.locate(raised.value.schema_location) == {
+        "documentUri": "https://ev.example/bundle",
+        "pointer": "/$defs/inner/$ref",
+    }
+
+
+def test_a_backfilled_location_never_overwrites_one_already_set() -> None:
+    # First writer wins, innermost frame -- the same rule the registration
+    # walk follows, so a keyword that located its own error keeps it.
+    engine = create_engine()
+    uri = engine.register_schema(
+        {"properties": {"a": {"$ref": "#/$defs/gone"}}}, "https://ev.example/inner-most"
+    )
+    with pytest.raises(UnresolvableReferenceError) as raised:
+        engine.evaluate(uri, {"a": 1})
+    assert raised.value.schema_location == (
+        "https://ev.example/inner-most#/properties/a/$ref"
+    )
