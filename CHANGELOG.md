@@ -33,6 +33,14 @@ minor versions may change public API.
 - Because a failed registration is rolled back, `Engine.locate` can no longer
   place an error from one: there is no registered document to place it
   against. The error carries `schema_source` instead (below).
+- **`validate_schemas` now checks a document before registering it**, so one
+  that fails its metaschema is no longer registered. Previously the check ran
+  after the walk and nothing removed the document, leaving a caller who asked
+  for validation, caught the typed rejection, and carried on holding an invalid
+  schema that still evaluated. The option remains opt-in and off by default —
+  validating the OAS 3.1 schema costs 2.0 ms against 56.8 ms, a 28× difference
+  on registration. A document broken both ways at once now reports
+  `SchemaValidationError` rather than `InvalidSchemaError`.
 - A document-level `schema_location` is now `uri#` rather than a bare `uri`,
   so every location is a `base#pointer` (P10) that `Engine.locate` and
   `Engine.location_chain` accept. Affects `SchemaValidationError`,

@@ -9,6 +9,7 @@ from json_schema_engine.core import (
     SchemaValidationError,
     UnknownDialectError,
     UnknownVocabularyError,
+    UnresolvableReferenceError,
     create_engine,
 )
 
@@ -212,6 +213,11 @@ def test_validate_schemas_rejects_a_malformed_document() -> None:
     with pytest.raises(SchemaValidationError) as info:
         engine.register_schema({"minLength": -1}, "https://val.example/bad")
     assert info.value.errors
+    # "Rejects" means it is not registered: the check runs before the walk,
+    # so a document that fails its metaschema never enters the registry.
+    assert not engine.schemas.has("https://val.example/bad")
+    with pytest.raises(UnresolvableReferenceError):
+        engine.evaluate("https://val.example/bad", 1)
     assert engine.register_schema({"minLength": 1}, "https://val.example/ok")
 
 
@@ -219,7 +225,22 @@ def test_validate_schemas_checks_a_loaded_metaschema() -> None:
     engine = create_engine(loaders=[meta_loader], validate_schemas=True)
     with pytest.raises(SchemaValidationError):
         engine.load_schema({"$schema": BARE, "x": 1}, "https://val.example/d")
+    assert not engine.schemas.has("https://val.example/d")
     assert engine.load_schema({"$schema": BARE, "title": "t"}, "https://val.example/ok")
+
+
+def test_validate_schemas_reports_the_metaschema_before_the_walk() -> None:
+    # Ordering is observable when a document is broken both ways: the
+    # metaschema gets the first word, and it explains more — every
+    # violated keyword, rather than the first bad schema position.
+    engine = create_engine(validate_schemas=True)
+    with pytest.raises(SchemaValidationError) as info:
+        engine.register_schema(
+            {"minLength": -1, "properties": {"a": "not a schema"}},
+            "https://val.example/doubly-bad",
+        )
+    assert info.value.errors
+    assert not engine.schemas.has("https://val.example/doubly-bad")
 
 
 def test_validate_schemas_skips_a_dialect_without_a_metaschema_resource() -> None:

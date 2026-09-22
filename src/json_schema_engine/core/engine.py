@@ -206,6 +206,11 @@ class Engine:
         """
         try:
             self._ensure_dialect_for(schema, retrieval_uri, dialect_uri)
+            # Before the walk, not after: a document that fails its
+            # metaschema must not be registered at all. Nothing needs to be
+            # registered to check it — the metaschema sees the document as
+            # plain data — and skipping the walk makes the failure cheaper.
+            self._maybe_validate(schema, retrieval_uri, dialect_uri)
             try:
                 uri = self.schemas.register(
                     schema, retrieval_uri, dialect_uri, get_range
@@ -215,7 +220,6 @@ class Engine:
                     "schema nesting exceeded the interpreter's stack "
                     f"(max_depth={self._max_depth})"
                 ) from None
-            self._maybe_validate(uri)
         except JsonSchemaEngineError as error:
             attach_location_chain(self.schemas, error)
             raise
@@ -371,8 +375,16 @@ class Engine:
             else identifiers_2020,
         )
 
-    def _maybe_validate(self, base_uri: str) -> None:
+    def _maybe_validate(
+        self, schema: JsonValue, retrieval_uri: str, dialect_uri: str | None
+    ) -> None:
         """The `validate_schemas` policy: a document must satisfy its dialect.
+
+        Runs *before* registration, so a document that fails is never
+        registered — which is what the option has always been documented to
+        mean. `identify` names the resource and dialect the registration
+        would have used, so the message and location are the same either
+        way.
 
         Skipped when the metaschema is unavailable ("cannot check", not
         failure). Bundled resources never reach this path, since the
@@ -380,16 +392,16 @@ class Engine:
         """
         if not self._validate_schemas:
             return
-        dialect_uri = self.schemas.dialect_uri_for(base_uri)
-        if not self.schemas.has(dialect_uri):
+        identity = self.schemas.identify(schema, retrieval_uri, dialect_uri)
+        if not self.schemas.has(identity.dialect_uri):
             return
-        document = self.schemas.document(base_uri)
-        result = self.evaluate(dialect_uri, document, output="basic")
+        result = self.evaluate(identity.dialect_uri, schema, output="basic")
         if not result.valid:
             raise SchemaValidationError(
-                f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
+                f"schema '{identity.base_uri}' fails its metaschema "
+                f"'{identity.dialect_uri}'",
                 list(result.errors or []),
-                schema_location=schema_location(base_uri, ""),
+                schema_location=schema_location(identity.base_uri, ""),
             )
 
     # --- evaluation ------------------------------------------------------

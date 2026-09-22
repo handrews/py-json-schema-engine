@@ -15,7 +15,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
-from json_schema_engine.core.dialect import Dialect, DialectRegistry
+from json_schema_engine.core.dialect import Dialect, DialectRegistry, IdentifierFacts
 from json_schema_engine.core.errors import (
     DuplicateAnchorError,
     DuplicateResourceError,
@@ -120,6 +120,23 @@ class _Registration:
                 index[key] = prior
         for members, member in self.adds:
             members.discard(member)
+
+
+@dataclass(frozen=True, slots=True)
+class RootIdentity:
+    """What a document would register as, worked out without registering it.
+
+    `identify` returns this so a caller that must act *before* the walk —
+    `validate_schemas`, which refuses to register a document that fails its
+    metaschema — can name the same resource and dialect the registration
+    would have named, rather than guessing from the retrieval URI.
+    """
+
+    base_uri: str
+    dialect_uri: str
+    dialect: Dialect
+    root_ids: IdentifierFacts
+    retrieval_resource: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +437,23 @@ class SchemaRegistry:
             # half-built index that the rollback then takes away.
             self._reference_memo.clear()
 
+    def identify(
+        self, schema: JsonValue, retrieval_uri: str, dialect_uri: str | None
+    ) -> RootIdentity:
+        """Resolve a document's canonical base URI and dialect, registering
+        nothing. Raises `UnknownDialectError` for an unregistered dialect,
+        exactly as registering it would."""
+        effective = effective_dialect_uri(
+            schema, retrieval_uri, dialect_uri, self._default_dialect_uri
+        )
+        dialect = self._dialects.get_dialect(effective)
+        retrieval_resource = _resource_of(retrieval_uri)
+        root_ids = dialect.identifiers_of(schema)
+        base_uri = retrieval_resource
+        if root_ids.base_id is not None:
+            base_uri = _resource_of(resolve(base_uri, root_ids.base_id))
+        return RootIdentity(base_uri, effective, dialect, root_ids, retrieval_resource)
+
     def _index(
         self,
         schema: JsonValue,
@@ -427,16 +461,12 @@ class SchemaRegistry:
         dialect_uri: str | None,
         get_range: RangeLookup | None,
     ) -> str:
-        effective_dialect = effective_dialect_uri(
-            schema, retrieval_uri, dialect_uri, self._default_dialect_uri
-        )
-        dialect = self._dialects.get_dialect(effective_dialect)
-
-        retrieval_resource = _resource_of(retrieval_uri)
-        base_uri = retrieval_resource
-        root_ids = dialect.identifiers_of(schema)
-        if root_ids.base_id is not None:
-            base_uri = _resource_of(resolve(base_uri, root_ids.base_id))
+        identity = self.identify(schema, retrieval_uri, dialect_uri)
+        effective_dialect = identity.dialect_uri
+        dialect = identity.dialect
+        root_ids = identity.root_ids
+        retrieval_resource = identity.retrieval_resource
+        base_uri = identity.base_uri
         if base_uri != retrieval_resource:
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.
