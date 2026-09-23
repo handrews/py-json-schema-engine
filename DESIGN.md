@@ -67,7 +67,7 @@ not the intent), **N/A** (JavaScript-only).
 | D13 | Error model                    | carried | Keywords emit structured error data (keyword id, params, message) into units; rendering is presentation. Params are designed so a future compatibility adapter can reconstruct another library's error shape mechanically.                                                                                                                                                                                                                                                                       |
 | D14 | Strictness                     | carried | Core is spec-clean; strict-mode hygiene is opt-in only via a lint layer or stricter metaschemas. No python-jsonschema compatibility shim in the first release (owner decision 2026-09-20).                                                                                                                                                                                                                                                                                                       |
 | D15 | IP policy                      | carried | §0.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| D16 | Packaging                      | amended | One repository as a uv workspace. **One published distribution `json-schema-engine`** laid out as a PEP 420 namespace package: `json_schema_engine.core`, `.compiler`, `.formats`, `.dialects.*`, so a later split into several distributions changes no import path. Unpublished workspace members: `test-kit`, later `bench`, `bowtie`. **`ecma-regex` is a separate, publishable workspace member** with no dependency on the engine (P1). No third-party runtime dependencies; optional extras only (`regex` for the alternative regex backend, `idna` for IDNA2008 in the formats package, M7). Publication shape (M8): the engine is `0.0.2` depending on `ecma-regex>=0.1,<0.2` (`ecma-regex` `0.1.0`); every portion (`core`, `compiler`, `formats`, `ecma_regex`) carries a `py.typed` marker, one per portion because a namespace package has no root to hold it; the engine sdist ships `src`, README, CHANGELOG, LICENSE, and pyproject only (its tests need the workspace-private test-kit and the suite submodule), ecma-regex's sdist keeps its self-contained tests; `scripts/install_smoke.py` proves an offline install from the built artifacts, with a strict pyright pass over a consumer file, in CI and before every publish. |
+| D16 | Packaging                      | amended | One repository as a uv workspace. **One published distribution `json-schema-engine`** laid out as a PEP 420 namespace package: `json_schema_engine.core`, `.compiler`, `.formats`, `.dialects.*`, so a later split into several distributions changes no import path. Unpublished workspace members: `test-kit`, later `bench`, `bowtie`. **`ecma-regex` is a separate, publishable workspace member** with no dependency on the engine (P1). No third-party runtime dependencies; optional extras only (`regex` for the alternative regex backend, `idna` for IDNA2008 in the formats package, M7). Publication shape (M8): the engine depends on a compatible `ecma-regex` range pinned in `pyproject.toml`; every portion (`core`, `compiler`, `formats`, `ecma_regex`) carries a `py.typed` marker, one per portion because a namespace package has no root to hold it; the engine sdist ships `src`, README, CHANGELOG, LICENSE, and pyproject only (its tests need the workspace-private test-kit and the suite submodule), ecma-regex's sdist keeps its self-contained tests; `scripts/install_smoke.py` proves an offline install from the built artifacts, with a strict pyright pass over a consumer file, in CI and before every publish. |
 | D17 | Source-position correlation    | carried | Loaders may return `get_range(document_root_pointer)`; the registry maps resource-rooted locations to document-rooted pointers; correlation only at unit escape (`positions=True` decorates units with `source`) or via `Engine.locate()`. Zero hot-path cost. Implemented in M3. Since M8 `core/positions.py` ships `parse_json_with_ranges` as public API: a stdlib-only RFC 8259 parser whose `ParsedDocument` is a `LoadedResource` with `get_range`, so a caller gets positions without writing a parser; syntax errors are the typed `JsonSyntaxError` (also a `ValueError`) with line/column/offset.                                                                                                                                                                                                                                                                          |
 | D18 | Per-dialect identifier syntax  | carried | Identifier extraction is dialect data (`IdentifierExtractor`), consumed by the registration walk and pointer navigation. `ref_ignores_siblings` for draft-07/06 is honored by the registration walk as well as the evaluator (owner ruling 2026-09-20: ignored is ignored — no identifier, subschema, or pattern beside a `$ref` is seen; pointer references into siblings still resolve).                                                                                                                                                                                                                                                                                                                                 |
 | D19 | Non-schema values              | carried | Fail loud in two layers: the registration walk raises `InvalidSchemaError` for a keyword-claimed schema position holding neither object nor boolean; `apply_schema` raises the same as a lazy backstop. Keyword-value validity stays the metaschema's job.                                                                                                                                                                                                                                       |
@@ -81,7 +81,7 @@ not the intent), **N/A** (JavaScript-only).
 | P2 | Number and equality model    | Numeric identity is mathematical. `bool` is never a number: every type test checks `bool` before `int`, and `json_equal`/`canonical_key` distinguish `True` from `1`. `type: "integer"` accepts `int` (not `bool`) and `float` with zero fractional part (`1.0` is an integer, per spec). Python ints are unbounded, so big literals stay exact (an improvement over JS). Non-finite floats are outside the JSON model: parse boundaries (loaders, the suite runner) reject `NaN`/`Infinity`; the hot path never checks. Plain `==` on JSON values is banned in core; `json_equal` is the only equality. **`multipleOf` uses decimal semantics (M2):** each operand becomes the exact rational of its shortest round-trip `repr` (`Fraction(Decimal(repr(x)))`), so `0.0075` is a multiple of `0.0001` as the author meant, and `1e308 / 0.123456789` is simply a non-integer rather than an overflow.                                                                                                                                                                                                              | `True == 1`, `hash(True) == hash(1)`, and `{"a": 1} == {"a": True}` are all true in Python; `json.loads` accepts `NaN` by default.                                                                                                                                                | Never for bool. A schema author who needs binary-float `multipleOf` semantics (none known).                            |
 | P3 | Recursion budget             | `EvalState` carries an explicit depth counter; `max_depth` (default 512) bounds both registration nesting and evaluation application nesting and raises `MaxDepthExceededError` **before** CPython's recursion limit can. `Engine.evaluate` and `SchemaRegistry.register` additionally translate a stray `RecursionError` into the same typed error. Library code never calls `sys.setrecursionlimit`.                                                                                                                                                                                                                                                                                                                                                                                                                | CPython's default limit is 1000 frames and each schema application costs several.                                                                                                                                                                                                  | Measured frames-per-application changes the safe default.                                                              |
 | P4 | Loaders are sync-first       | `Loader = Callable[[str], LoadedResource \| None]` where `LoadedResource` is a Protocol (`value`, `uri`), so a loader written with no dependency on the engine satisfies it structurally; `LoadedDocument` is the engine's own concrete form. A loaded resource may also offer `get_range(document_pointer)` (D17); the engine reads it with `getattr`, so resource types without it stay valid. `None` from a loader is a miss, never an error. `Engine.register_schema` is local-only; `Engine.load_schema` drains unresolved references through the loaders synchronously. An `AsyncEngine`/async-loader façade is a later milestone; it wraps the same registry.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Most Python callers are synchronous; forcing `await` on registration would be the tail wagging the dog.                                                                                                                                                                             | A consumer needs concurrent remote loading.                                                                            |
-| P5 | Packaging and import fences  | See D16. Enforced by import-linter contracts run in CI from M0: `json_schema_engine.core` never imports `json_schema_engine.compiler`, `ast`, `json_schema_engine.test_kit`, or `json_schema_engine.formats`; the compiler never imports `test_kit` or `formats` (a standalone module's predicate imports are checked by name through `importlib`); `formats` never imports the compiler or `test_kit`; `ecma_regex` never imports `json_schema_engine`; `json_schema_engine.test_kit` never imports `core`, `compiler`, or `formats` (M8), so the suite runner stays engine-independent. The builtin `compile` is not an import, so it is banned in core by a lint gate. The engine's next release must publish `ecma-regex` first (or wait), since core depends on it.                                                                                                                                                                                                                                                                                                                                                                                                       | The "core has no code generation in its dependency graph" invariant is the Python form of the TS ESLint fences.                                                                                                                                                                    | The compiler needs a helper that belongs in core: move it, never relax the contract.                                   |
+| P5 | Packaging and import fences  | See D16. Enforced by import-linter contracts run in CI from M0: `json_schema_engine.core` never imports `json_schema_engine.compiler`, `ast`, `json_schema_engine.test_kit`, or `json_schema_engine.formats`; the compiler never imports `test_kit` or `formats` (a standalone module's predicate imports are checked by name through `importlib`); `formats` never imports the compiler or `test_kit`; `ecma_regex` never imports `json_schema_engine`; `json_schema_engine.test_kit` never imports `core`, `compiler`, or `formats` (M8), so the suite runner stays engine-independent. The builtin `compile` is not an import, so it is banned in core by a lint gate. Core depends on `ecma-regex`, so an engine release whose pin needs an `ecma-regex` version PyPI lacks publishes `ecma-regex` first (CONTRIBUTING.md § Releasing).                                                                                                                                                                                                                                                                                                                                                                                                       | The "core has no code generation in its dependency graph" invariant is the Python form of the TS ESLint fences.                                                                                                                                                                    | The compiler needs a helper that belongs in core: move it, never relax the contract.                                   |
 | P6 | Records vs. units            | Engine records (`AnnotationRecord`, `DependencyRecord`, `ErrorRecord`, `PathNode`, `Frame`) are `@dataclass(eq=False, slots=True)` and never rendered directly. Output units are `TypedDict`s with the wire field names, so `json.dumps` takes them unchanged and optional keys are genuinely absent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Records need identity and lazy path materialization; units need to *be* the JSON.                                                                                                                                                                                                  | A renderer needs behaviour on units.                                                                                   |
 | P7 | Identity-keyed structures    | `Cursor`, `SchemaRef`, `PathNode`, and all record types use identity equality (`eq=False`), so sets and dict keys are identity-keyed. Channel rule 4 filters dependency records by **cursor identity**; the cycle guard is keyed by (schema location, cursor identity). A `frozen=True` dataclass with default equality would silently give value semantics and break cousin invisibility.                                                                                                                                                                                                                                                                                                                                                                                                                              | Rule 4 depends on it; `dict` values are unhashable anyway.                                                                                                                                                                                                                         | Never.                                                                                                                 |
 | P9 | Plain-data instance contract | Compiled artifacts test types with `type(x) is dict`/`list`/`str`/`bool`/`int`/`float` (and `x is None`): the instance is assumed to be `json.loads`-shaped data. Subclasses of the JSON types (an `OrderedDict`, an `IntEnum`, a `str` subclass) are not JSON values to the compiled tier; the interpreter, which uses `isinstance` and `is_object`, makes no such assumption and is the surface for hand-built objects. The differential fuzzer generates only plain data.                                                                                                                                                                                                                                                                                                                              | Measured 3–4× faster than the bool-guarded `isinstance` forms on the number tests, which dominate; `bool` is excluded for free because `type(True) is bool`.                                                                                                              | A caller needs subclass instances validated at compiled speed: add a normalizing copy, never `isinstance` in emitted code. |
@@ -631,10 +631,13 @@ since the emitted code is the same for every level.
 
 ## 7. Open items (owner decisions)
 
-1. **First functional releases** — the release commits are on `main` after
-   M8 (`ecma-regex` 0.1.0, engine 0.0.2). The owner tags
-   `ecma-regex-v0.1.0` first, waits for PyPI, then tags `v0.0.2`; both
-   jobs in `publish.yml` refuse a tag whose version differs from the tree.
+1. **Releases** — the owner decides when to release, and tags and merges;
+   nothing is pushed by automation. The procedure is CONTRIBUTING.md
+   § Releasing: bump the version, date the changelog entry, release
+   `ecma-regex` first when the engine's pin needs a version PyPI lacks, and
+   tag — `publish.yml` refuses a tag that does not match `pyproject.toml`.
+   This item names no version on purpose, so it needs no edit per release;
+   the record of what shipped is the changelogs and the tags.
 2. **Regex default for a future RFC dialect** — I-Regexp with search
    semantics is the expected answer; confirm when the RFC text settles.
 3. **Async façade timing** (P4) — after M3 unless a consumer needs it earlier.
@@ -660,6 +663,144 @@ since the emitted code is the same for every level.
    ruling on whether an embedded resource whose metaschema is unavailable is
    skipped, as the root case is today.
 
+8. **Pointer navigation reads identifiers in non-schema positions** —
+   `resolve_ref`'s pointer walk and `child` apply the dialect's identifier
+   extractor to every object they step onto, including one that is *data*.
+   A pointer into `enum`/`const` therefore rebases onto an `$id` written
+   there, minting a resource identity the registration walk correctly never
+   indexed (§5: schema positions only). Reachable from an ordinary schema,
+   and the error names a URI that was never an identifier:
+
+   ```python
+   {"$id": "https://r/", "$ref": "#/enum/0/properties/a",
+    "enum": [{"$id": "https://ghost/", "properties": {"a": {"type": "string"}}}]}
+   # evaluate -> UnresolvableReferenceError: unknown schema 'https://ghost/'
+   ```
+
+   It also makes `child` raise on the evaluation hot path. Not a quick fix:
+   navigation cannot tell a schema position from data without running each
+   keyword's `analyze()`, which is the walk. Options are to carry the walk's
+   knowledge (only rebase onto a base `_document_dialects` knows), or to
+   refuse a pointer that leaves schema positions at all. P14's
+   `_dialect_after` already takes the first approach for the *dialect*
+   lookup, so the shape exists; the base itself is what still drifts.
+
+9. **A stale range lookup survives a re-registration** — `_document_ranges`
+   is written only when `get_range` is supplied, so registering a document
+   with ranges and then registering it again without them leaves the first
+   lookup in place, and `Engine.locate` keeps reporting offsets from the
+   earlier text. P12 means the second document must be `json_equal` to the
+   first, but equal JSON can come from differently formatted text, so the
+   positions can point at the wrong characters. Minor, and the fix is
+   probably to drop the entry when a re-registration supplies no lookup —
+   the question is whether that is a surprise for a caller who registered
+   twice deliberately.
+
+
+10. **P12 has three gaps where an identifier still shadows silently** — all
+    found reviewing P12, none covered by its tests:
+
+    - An embedded `$id` equal to another document's *retrieval URI* is
+      claimed and then unreachable. `_claim_resource` checks `_documents`
+      only, while `_canonical` prefers `_aliases`, so
+      `{"$id": "https://a/", ...}` registered as `https://r/` followed by a
+      document embedding `{"$id": "https://r/", "type": "string"}` registers
+      cleanly and every lookup of `https://r/` answers the first document.
+      Measured: `$ref: "https://r/"` validates a number, not a string.
+    - Claiming a bundled metaschema's URI is order-dependent. On a fresh
+      engine `register_schema({"$id": DIALECT_2020_12, ...})` succeeds and
+      shadows the bundled document (`_canonical` sees it in `_documents` and
+      never lazily registers the real one); after any evaluation that
+      touched the metaschema, the same call raises `DuplicateResourceError`.
+      Either answer may be right — a caller overriding a metaschema is a
+      real use — but it must be the same answer both times.
+    - A retrieval-URI alias is still last-write-wins: registering a second
+      document with a *different* `$id` under a retrieval URI an earlier one
+      used silently repoints `_aliases[retrieval]`. Not a resource
+      collision, so P12 does not see it, but it is the same shadowing shape.
+
+11. **A root `$id` is not checked the way an embedded one is.** Under
+    2020-12 and 2019-09 an `$id` may end in an empty fragment (a bare `#`),
+    which it SHOULD NOT, and may not carry a non-empty one (the metaschemas'
+    `^[^#]*#?$`). That rule is the same at a document root and at an
+    embedded resource, but only the embedded position enforces the part
+    that is a MUST:
+
+    - **Non-empty fragment** — refused in an embedded `$id`
+      (`InvalidIdentifierError`), but at a document root `identify` resolves
+      the `$id` unchecked and `_resource_of` strips the fragment, so
+      `{"$id": "https://x.example/s#frag"}` registers as
+      `https://x.example/s` and the fragment silently vanishes; a root
+      `{"$id": "#foo"}` lands on the retrieval URI the same way. Fix: give
+      the root the same check as `_check_embedded_id`.
+    - **Empty fragment** — accepted at both positions and stripped, as the
+      spec allows. Correct today; no change.
+    - **`""` and `"#"`** — not a fragment question. At a root they mean the
+      retrieval URI, which is legal and correct. Embedded, they resolve to
+      the *enclosing* resource's own URI, so refusing them there is P12's
+      "two resources, one URI" rule rather than a syntax rule — which is why
+      it applies only below the root. An earlier wording of this item
+      counted root `""` as a problem; it is not.
+
+    **Owner decision (2026-09-23):** keep the 2020-12/2019-09 behavior as
+    the default, empty fragment allowed, and add an opt-in engine option that
+    forbids *any* fragment, empty included, in an `$id` that sets a base URI.
+    It is a forward-compatibility aid: IETF draft-03 makes that a MUST NOT,
+    but draft-03 cannot currently be selected through a metaschema. Opt-in
+    keeps it within D14. Scope it to `$id` as a base URI, so draft-07/06
+    `#name` anchors — an anchor, not a base — are untouched. The dialects
+    guide currently says a base URI "cannot carry a fragment"; it should say
+    *non-empty* fragment, and mention the option once it exists.
+
+12. **`compile_validator` drops the location chain.** Only
+    `compile_evaluator` wraps its entry in `attach_location_chain`; the
+    `validate` callable from `compile_validator` trampolines into the
+    interpreter and re-raises with `location_chain` still `None`. Measured
+    on the same unresolvable `$ref` under an embedded `$id`: interpreter and
+    `compile_evaluator` give a two-hop chain, `compile_validator` gives none.
+    The CHANGELOG's "in both the interpreter and the compiled tier" is
+    therefore half true; fix the wrapper (one `try` around `validate`, as in
+    `compile_evaluator`) and keep the claim, or narrow the claim.
+
+13. **One document-level location is still a bare URI.** `_index` passes
+    `base_uri` (no `#`) as the `where` for a root `DuplicateResourceError`,
+    while the CHANGELOG states every document-level `schema_location` is now
+    `uri#` (P10) and `SchemaValidationError`, `UnknownVocabularyError`, and
+    `FormatsRequiredError` were moved to that form. `Engine.locate` and
+    `location_chain` accept both spellings, so this is cosmetic — but the
+    stated invariant is what a caller will pattern-match on. Same fix as the
+    others: `schema_location(base_uri, "")`. While there: the `except` in
+    `Engine.register_schema` runs `attach_location_chain` after the journal
+    is closed, so a chain lookup there can lazily register a bundled
+    metaschema mid-error-path; harmless today, but a failure inside that
+    registration would replace the error being reported.
+
+14. **No way to replace a registered document.** P12 turns a modified
+    re-registration under the same URI into `DuplicateResourceError`, and
+    nothing unregisters. The edit-and-re-register loop (a REPL, a test that
+    mutates a fixture, an editor integration re-validating on save) now
+    needs a fresh engine per edit, which also discards every other
+    registration and any compiled artifact's snapshot lineage. P13's
+    revisit names `unregister`; this promotes it: decide the API
+    (`unregister(uri)`, or `register(..., replace=True)`), and what happens
+    to a resource an earlier registration also claims ("P12 has three gaps …" above), to
+    anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
+    contributions that nothing else re-derives.
+
+
+15. **`UnknownDialectError.dialect_uri` never reaches a caller.** P14 added
+    it so the registry could ask the engine for a dialect an embedded
+    resource declared, and the engine consumes it to assemble and retry.
+    When assembly then fails, `_register_assembling_dialects` raises
+    assembly's own error, carrying the location, chain and source across but
+    not the URI — so through `Engine` the attribute is always `None`, and a
+    caller who wants to supply the missing metaschema has to parse the
+    message. The fix is one line: carry `dialect_uri` over with the rest.
+    Worth deciding at the same time whether a document-root `$schema`
+    failure should set it too, so the attribute means "the dialect that
+    could not be found or assembled" wherever it is raised. Once it does,
+    the `dialect_uri` notes in `docs/reference.md` and the changelog, which
+    currently say it arrives `None`, need rewriting.
 
 ### Resolved (owner, 2026-09-22)
 

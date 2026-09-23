@@ -175,9 +175,10 @@ one handed to a subagent — restate it there. See [DESIGN.md](DESIGN.md)
 
 Versions live in `pyproject.toml` (the engine) and
 `packages/ecma-regex/pyproject.toml` (`ecma-regex`), bumped with
-`uv version --short [--package ecma-regex] <version>`. The engine pins
-`ecma-regex>=0.1,<0.2`; widen that range in the same commit that bumps
-the pin, and run `uv lock` afterward. Update both `CHANGELOG.md` and
+`uv version --short [--package ecma-regex] <version>`. The engine pins a
+compatible `ecma-regex` range in `pyproject.toml`; when an `ecma-regex`
+bump falls outside that range, widen it in the same commit and run
+`uv lock` afterward. Update both `CHANGELOG.md` and
 `packages/ecma-regex/CHANGELOG.md` for whichever package changed, and run
 the offline install smoke (`uv run python scripts/install_smoke.py`)
 before tagging.
