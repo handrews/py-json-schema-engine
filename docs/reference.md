@@ -222,8 +222,11 @@ draft-07/06 `$id: "#name"` form alike, including a name claimed by an
 otherwise leave `$ref` and `$dynamicRef` resolving the same fragment to
 different schemas. A single object carrying both under one name is fine.
 
-Registration is not atomic: a document that fails part-way through its walk
-stays partially indexed, so discard an engine whose registration raised.
+Registration is all-or-nothing (P13): a document whose registration raises
+leaves the registry exactly as it found it, so an engine stays usable after a
+caught registration error. Because the document is gone, `Engine.locate` cannot
+place such an error afterwards — the error carries its own `schema_source`,
+captured before the rollback.
 
 `ReadOnlyRegistryError`: registration was attempted on a compiled artifact's
 registry snapshot.
