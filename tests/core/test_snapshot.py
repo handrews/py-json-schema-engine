@@ -53,3 +53,29 @@ def test_dialect_snapshot_refuses_registration() -> None:
         dialects.register_vocabulary("urn:x", {})
     with pytest.raises(ReadOnlyRegistryError):
         dialects.register_dialect("urn:d", [])
+
+
+def test_a_snapshot_keeps_each_resource_dialect() -> None:
+    # A compiled artifact binds a snapshot, so a mixed-dialect document has
+    # to keep its per-resource dialects there too (P14).
+    engine = create_engine()
+    engine.register_schema(
+        {
+            "$id": "https://snap.test/o",
+            "$defs": {
+                "i": {
+                    "$id": "https://snap.test/l",
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "items": [{"type": "string"}],
+                }
+            },
+        },
+        "https://snap.test/o",
+    )
+    snap = engine.schemas.snapshot()
+    assert snap.dialect_uri_for("https://snap.test/l") == (
+        "http://json-schema.org/draft-07/schema"
+    )
+    assert snap.dialect_uri_for("https://snap.test/o") == (
+        "https://json-schema.org/draft/2020-12/schema"
+    )

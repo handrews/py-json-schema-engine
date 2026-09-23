@@ -141,7 +141,27 @@ class ReadOnlyRegistryError(JsonSchemaEngineError):
 
 
 class UnknownDialectError(JsonSchemaEngineError):
-    """A schema names a `$schema` dialect URI that no registered dialect claims."""
+    """A schema names a `$schema` dialect URI that no registered dialect claims.
+
+    `dialect_uri` is set only when the demand came from the root of an
+    *embedded* schema resource, mid-walk (P14). The registry holds no
+    loaders, but the engine can often assemble that dialect from a
+    metaschema and register the document again — and because registration
+    is all-or-nothing (P13), the second attempt starts from the state the
+    first one found rather than from a half-indexed registry.
+    """
+
+    dialect_uri: str | None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        schema_location: str | None = None,
+        dialect_uri: str | None = None,
+    ) -> None:
+        super().__init__(message, schema_location=schema_location)
+        self.dialect_uri = dialect_uri
 
 
 class UnknownKeywordError(JsonSchemaEngineError):

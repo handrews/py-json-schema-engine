@@ -666,3 +666,97 @@ def test_two_positions_claiming_one_uri_is_still_a_duplicate() -> None:
             },
             "https://x.example/r",
         )
+
+
+# --- per-resource dialects, at registry level (P14) --------------------
+
+LEGACY_DIALECT = "urn:test:legacy"
+
+
+def make_mixed_registry() -> SchemaRegistry:
+    """Two dialects: the default reads 2020-12 identifiers, the second
+    reads legacy ones and ignores `$ref` siblings."""
+    dialects = DialectRegistry()
+    dialects.register_vocabulary(VOCAB, KEYWORDS)
+    dialects.register_dialect(DIALECT, [VOCAB])
+    dialects.register_dialect(
+        LEGACY_DIALECT,
+        [VOCAB],
+        identifiers=identifiers_legacy,
+        ref_ignores_siblings=True,
+    )
+    return SchemaRegistry(dialects, DIALECT)
+
+
+def test_the_boundary_is_the_parents_call_and_the_contents_the_resources() -> None:
+    # The inner extractor would report NO_IDENTIFIERS for a node carrying
+    # `$ref`, but the parent's `$id` syntax already decided a resource
+    # starts here -- so the resource exists, and nothing is minted into it.
+    reg = make_mixed_registry()
+    reg.register(
+        {
+            "$id": "https://two.example/o",
+            "$defs": {
+                "i": {
+                    "$id": "https://two.example/l",
+                    "$schema": LEGACY_DIALECT,
+                    "$ref": "#/$defs/t",
+                    "$anchor": "ignored",
+                }
+            },
+        },
+        "https://two.example/o",
+    )
+    assert reg.has("https://two.example/l")
+    assert reg.dialect_uri_for("https://two.example/l") == LEGACY_DIALECT
+    # `ref_ignores_siblings` is the inner dialect's, so the `$anchor`
+    # beside `$ref` was never claimed.
+    with pytest.raises(UnresolvableReferenceError):
+        reg.resolve_ref("#ignored", "https://two.example/l")
+
+
+def test_an_inner_dialect_reads_the_anchors_minted_into_its_resource() -> None:
+    # Without the second read the parent's extractor would decide, and the
+    # legacy one reports `$id: "#tag"` as an anchor while 2020-12 does not.
+    reg = make_mixed_registry()
+    reg.register(
+        {
+            "$id": "https://two.example/o",
+            "$defs": {
+                "i": {
+                    "$id": "https://two.example/l",
+                    "$schema": LEGACY_DIALECT,
+                    "$defs": {"t": {"$id": "#tag"}},
+                }
+            },
+        },
+        "https://two.example/o",
+    )
+    assert reg.resolve_ref("#tag", "https://two.example/l").pointer == "/$defs/t"
+
+
+def test_a_recursive_anchor_belongs_to_the_resource_that_declares_it() -> None:
+    # `$recursiveAnchor` is a 2019-09 fact; under a dialect whose extractor
+    # never reports one, an embedded resource must not become a recursive
+    # root just because its parent's dialect would have read it.
+    dialects = DialectRegistry()
+    dialects.register_vocabulary(VOCAB, KEYWORDS)
+    dialects.register_dialect(DIALECT, [VOCAB], identifiers=identifiers_2019)
+    dialects.register_dialect("urn:test:modern", [VOCAB], identifiers=identifiers_2020)
+    reg = SchemaRegistry(dialects, DIALECT)
+    reg.register(
+        {
+            "$id": "https://rec.example/o",
+            "$recursiveAnchor": True,
+            "$defs": {
+                "i": {
+                    "$id": "https://rec.example/l",
+                    "$schema": "urn:test:modern",
+                    "$recursiveAnchor": True,
+                }
+            },
+        },
+        "https://rec.example/o",
+    )
+    assert reg.has_recursive_root("https://rec.example/o")
+    assert not reg.has_recursive_root("https://rec.example/l")

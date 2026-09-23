@@ -24,6 +24,7 @@ from json_schema_engine.core import (
     InvalidSchemaError,
     JsonValue,
     MaxDepthExceededError,
+    UnknownDialectError,
     UnsafeRegexError,
     UnsupportedPatternError,
     create_engine,
@@ -355,3 +356,36 @@ def test_the_error_keeps_its_location_chain() -> None:
         "https://x.example/doc",
     ]
     assert not engine.schemas.has("https://x.example/part/")
+
+
+# --- per-resource dialects (P14) -------------------------------------------
+
+
+def test_a_failure_after_a_dialect_switch_restores_document_dialects() -> None:
+    # The walk now writes `_document_dialects` per resource and can raise
+    # *after* a switch, so the rollback has to restore prior values for a
+    # key the failing document rebound rather than dropping it.
+    engine = create_engine()
+    reg = engine.schemas
+    engine.register_schema(
+        {"$id": "https://p.test/kept", "type": "string"}, "https://p.test/kept"
+    )
+    before = _fingerprint(reg)
+    with pytest.raises(UnknownDialectError):
+        engine.register_schema(
+            {
+                "$id": "https://p.test/doc",
+                "$defs": {
+                    # Switches successfully, writing a dialect entry...
+                    "ok": {
+                        "$id": "good",
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                    },
+                    # ...then a second resource demands one nobody can build.
+                    "bad": {"$id": "worse", "$schema": "https://nope.test/meta"},
+                },
+            },
+            "https://p.test/doc",
+        )
+    assert _fingerprint(reg) == before
+    assert not reg.has("https://p.test/good")
