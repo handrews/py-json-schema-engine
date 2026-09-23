@@ -138,6 +138,10 @@ minor versions may change public API.
   message. When a metaschema's own `$schema` is the one missing, it names
   that inner dialect. For a dialect an *embedded* resource declared (P14),
   `schema_location` names the resource that asked.
+- `create_engine(reject_id_fragments=True)`: an opt-in check that refuses
+  any fragment in an `$id` that sets a base URI, including the empty trailing
+  `#` that 2020-12 and 2019-09 allow and IETF draft-03 forbids. draft-07/06
+  `$id: "#name"` anchors and the bundled metaschemas are unaffected.
 - `json_schema_engine.core.uri.pointer_fragment`,
   `pointer_from_fragment`, and `schema_location`: the single pair of
   conversions between a plain-text JSON Pointer and its URI fragment form,

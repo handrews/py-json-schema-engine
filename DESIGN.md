@@ -719,17 +719,7 @@ since the emitted code is the same for every level.
       used silently repoints `_aliases[retrieval]`. Not a resource
       collision, so P12 does not see it, but it is the same shadowing shape.
 
-11. **Opt-in: no fragment at all in `$id`.** Under 2020-12 and 2019-09 an
-    `$id` may end in an empty fragment (a bare `#`), which it SHOULD NOT.
-    **Owner decision (2026-09-23):** keep that as the default, and add an
-    opt-in engine option that forbids *any* fragment, empty included, in an
-    `$id` that sets a base URI. It is a forward-compatibility aid: IETF
-    draft-03 makes that a MUST NOT, but draft-03 cannot currently be
-    selected through a metaschema. Opt-in keeps it within D14. Scope it to
-    `$id` as a base URI, so draft-07/06 `#name` anchors — an anchor, not a
-    base — are untouched.
-
-14. **No way to replace a registered document.** P12 turns a modified
+11. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
     nothing unregisters. The edit-and-re-register loop (a REPL, a test that
     mutates a fixture, an editor integration re-validating on save) now
@@ -767,7 +757,15 @@ since the emitted code is the same for every level.
   they mean the retrieval URI there, and refusing them below a root is P12's
   one-URI rule, not a syntax rule. The check runs in `_index`, not
   `identify`, so under `validate_schemas` the 2020-12/2019-09 metaschema's
-  own pattern reports it first. The opt-in stricter form is item 11.
+  own pattern reports it first.
+- "Opt-in: no fragment at all in `$id`": `create_engine(reject_id_fragments=
+  True)` refuses an empty fragment too, in any `$id` the dialect's extractor
+  returns as a base URI, at a root or below one. draft-07/06 `#name` is an
+  anchor and never reaches the check. That includes a draft-07/06 *base*
+  `$id` ending in `#` (the old `…/s.json#` convention), since the ruling's
+  scope is "an `$id` that sets a base URI". The bundled metaschemas are
+  exempt, as they are from the D20 regex screen, because the draft-06/07
+  ones spell their own `$id` that way.
 
 ### Resolved (owner, 2026-09-22)
 

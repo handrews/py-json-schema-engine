@@ -26,14 +26,18 @@ private submodules, is an implementation detail and may change without notice.
 
 `create_engine(*, default_dialect=DIALECT_2020_12, loaders=(),
 regex_dialect="ecma262", regex_backend="re", reject_unsafe_regex=False,
-max_depth=512, validate_schemas=False, formats=None, assert_formats=False) ->
-Engine`: builds an `Engine` with the built-in dialects (2020-12, 2019-09,
-draft-07, draft-06) registered. `formats` (e.g.
+max_depth=512, validate_schemas=False, formats=None, assert_formats=False,
+reject_id_fragments=False) -> Engine`: builds an `Engine` with the built-in
+dialects (2020-12, 2019-09, draft-07, draft-06) registered. `formats` (e.g.
 `json_schema_engine.formats.FORMATS_2020_12`) enables the 2020-12
 format-assertion vocabulary; `assert_formats=True` additionally makes `format`
 assert, best effort, in every standard dialect. Without either, `format` only
-annotates. This is the normal entry point; `Engine()` is equivalent but less
-discoverable.
+annotates. `reject_id_fragments=True` makes an empty trailing fragment in an
+`$id` that sets a base URI (`"https://x.example/s#"`) an
+`InvalidIdentifierError`: 2020-12 and 2019-09 allow it, IETF draft-03 does not,
+so this is a forward-compatibility check. draft-07/06 `$id: "#name"` is an
+anchor, not a base URI, and is unaffected, as are the bundled metaschemas. This
+is the normal entry point; `Engine()` is equivalent but less discoverable.
 
 `Engine`: a JSON Schema engine: dialect registry, schema registry, regex cache,
 and evaluation. Construct through `create_engine`; the constructor takes the

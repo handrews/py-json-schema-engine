@@ -118,6 +118,23 @@ else:
     raise AssertionError("expected InvalidIdentifierError")
 ```
 
+An empty trailing fragment (`"$id": "https://example.com/s#"`) is legal in
+2020-12 and 2019-09, though they say it SHOULD NOT be used; IETF draft-03
+forbids it. `create_engine(reject_id_fragments=True)` refuses it now, so
+schemas you write today are ready for that change:
+
+```python
+strict = create_engine(reject_id_fragments=True)
+try:
+    strict.register_schema(
+        {"$id": "https://example.com/trailing#"}, "https://example.com/trailing"
+    )
+except InvalidIdentifierError:
+    pass
+else:
+    raise AssertionError("expected InvalidIdentifierError")
+```
+
 ## `$ref` and its siblings
 
 draft-07 and draft-06 keep `definitions` (not `$defs`) and treat `$ref` as

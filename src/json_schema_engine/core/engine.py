@@ -98,6 +98,7 @@ class Engine:
         validate_schemas: bool = False,
         formats: FormatTable | None = None,
         assert_formats: bool = False,
+        reject_id_fragments: bool = False,
     ) -> None:
         if assert_formats and formats is None:
             raise FormatsRequiredError(
@@ -126,6 +127,7 @@ class Engine:
             default_dialect,
             max_depth=max_depth,
             bundled=bundled_metaschemas(),
+            reject_id_fragments=reject_id_fragments,
         )
         self._default_dialect = default_dialect
         self._loaders = tuple(loaders)
@@ -620,6 +622,7 @@ def create_engine(
     validate_schemas: bool = False,
     formats: FormatTable | None = None,
     assert_formats: bool = False,
+    reject_id_fragments: bool = False,
 ) -> Engine:
     """Create an engine with the built-in dialects registered.
 
@@ -627,6 +630,11 @@ def create_engine(
     enables the 2020-12 format-assertion vocabulary; `assert_formats=True`
     additionally makes `format` assert, best effort, in every standard
     dialect. Without either, `format` only annotates.
+
+    `reject_id_fragments=True` refuses any fragment in an `$id` that sets a
+    base URI, an empty trailing `#` included — which 2020-12 and 2019-09
+    allow but IETF draft-03 forbids. Opt-in strictness (D14), for authors
+    who want their schemas ready for that change.
     """
     return Engine(
         default_dialect=default_dialect,
@@ -638,4 +646,5 @@ def create_engine(
         validate_schemas=validate_schemas,
         formats=formats,
         assert_formats=assert_formats,
+        reject_id_fragments=reject_id_fragments,
     )

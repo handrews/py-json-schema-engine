@@ -725,6 +725,70 @@ def test_a_legacy_root_fragment_id_is_an_anchor() -> None:
     assert engine.schemas.resolve_ref("#foo", uri).pointer == ""
 
 
+# --- `reject_id_fragments` ---------------------------------------------
+#
+# Opt-in (D14): refuse even the empty fragment 2020-12 and 2019-09 allow,
+# as IETF draft-03 does. Base-URI `$id`s only, and never a bundled
+# metaschema's.
+
+TRAILING_HASH: list[tuple[JsonValue, str]] = [
+    ({"$id": "https://x.example/s#"}, "https://x.example/s#"),
+    ({"$id": "#"}, "https://x.example/r#"),
+    (
+        {"$id": "https://x.example/r", "$defs": {"a": {"$id": "sub#"}}},
+        "https://x.example/r#/$defs/a",
+    ),
+]
+
+
+@pytest.mark.parametrize(("schema", "where"), TRAILING_HASH)
+def test_an_empty_fragment_is_fine_by_default(schema: JsonValue, where: str) -> None:
+    create_engine().register_schema(schema, "https://x.example/r")
+
+
+@pytest.mark.parametrize(("schema", "where"), TRAILING_HASH)
+def test_reject_id_fragments_refuses_an_empty_fragment(
+    schema: JsonValue, where: str
+) -> None:
+    engine = create_engine(reject_id_fragments=True)
+    with pytest.raises(InvalidIdentifierError) as info:
+        engine.register_schema(schema, "https://x.example/r")
+    assert info.value.schema_location == where
+    assert "reject_id_fragments" in str(info.value)
+    assert list(engine.schemas.resources()) == []
+
+
+def test_reject_id_fragments_leaves_a_fragmentless_id_alone() -> None:
+    engine = create_engine(reject_id_fragments=True)
+    assert engine.register_schema({"$id": ""}, "https://x.example/r") == (
+        "https://x.example/r"
+    )
+
+
+def test_reject_id_fragments_leaves_a_legacy_anchor_alone() -> None:
+    # `#name` is an anchor in draft-07, not a base URI.
+    engine = create_engine(reject_id_fragments=True)
+    uri = engine.register_schema(
+        {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": {"a": {"$id": "#name"}},
+        },
+        "https://x.example/legacy",
+    )
+    assert engine.schemas.resolve_ref("#name", uri).pointer == "/definitions/a"
+
+
+def test_reject_id_fragments_exempts_the_bundled_metaschemas() -> None:
+    # draft-07's metaschema declares `http://json-schema.org/draft-07/schema#`
+    # as its own `$id`; evaluating against it registers it lazily.
+    engine = create_engine(reject_id_fragments=True, validate_schemas=True)
+    engine.register_schema(
+        {"$schema": "http://json-schema.org/draft-07/schema#", "type": "string"},
+        "https://x.example/checked",
+    )
+    assert engine.schemas.has("http://json-schema.org/draft-07/schema")
+
+
 def test_two_positions_claiming_one_uri_is_still_a_duplicate() -> None:
     reg = make_registry()
     with pytest.raises(DuplicateResourceError):

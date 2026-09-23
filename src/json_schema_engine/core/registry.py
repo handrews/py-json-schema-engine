@@ -221,6 +221,7 @@ class SchemaRegistry:
         *,
         max_depth: int = DEFAULT_MAX_DEPTH,
         bundled: Mapping[str, JsonValue] | None = None,
+        reject_id_fragments: bool = False,
     ) -> None:
         self._dialects = dialects
         self._default_dialect_uri = _resource_of(default_dialect_uri)
@@ -276,6 +277,10 @@ class SchemaRegistry:
         self.on_regex: RegexHook | None = None
         # A compiled artifact's snapshot refuses registration (M6).
         self._read_only = False
+        # Refuse even an empty fragment in a base-URI `$id` (IETF draft-03's
+        # rule; opt-in under D14). Caller schemas only, like `on_regex`:
+        # the bundled draft-06/07 metaschemas end their own `$id` in `#`.
+        self._reject_id_fragments = reject_id_fragments
 
     def snapshot(self) -> "SchemaRegistry":
         """A frozen copy of this registry for a compiled artifact to bind (M6).
@@ -291,6 +296,7 @@ class SchemaRegistry:
             self._default_dialect_uri,
             max_depth=self._max_depth,
             bundled=self._bundled,
+            reject_id_fragments=self._reject_id_fragments,
         )
         copy._documents = dict(self._documents)
         copy._anchors = dict(self._anchors)
@@ -448,8 +454,18 @@ class SchemaRegistry:
         below one. Without it at the root, `resolve` and `_resource_of`
         quietly strip the fragment and the document registers under a URI
         its author did not write.
+
+        Under `reject_id_fragments` an empty fragment is refused too.
         """
-        if split_fragment(base_id)[1]:
+        fragment = split_fragment(base_id)[1]
+        if fragment == "" and self._reject_id_fragments:
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} ends in an empty fragment; "
+                "reject_id_fragments forbids any fragment in an '$id', as "
+                "IETF draft-03 does",
+                schema_location=where,
+            )
+        if fragment:
             raise InvalidIdentifierError(
                 f"'$id': {base_id!r} has a non-empty fragment; under dialect "
                 f"'{dialect.uri}' an '$id' sets a base URI, and a base URI "
@@ -747,10 +763,12 @@ class SchemaRegistry:
         # The D20 screen is for caller schemas; a trusted resource's own
         # patterns are not its business, so the hook is off for the walk.
         hook, self.on_regex = self.on_regex, None
+        strict, self._reject_id_fragments = self._reject_id_fragments, False
         try:
             self._register(self._bundled[resource_uri], resource_uri, None, None)
         finally:
             self.on_regex = hook
+            self._reject_id_fragments = strict
 
     def is_bundled(self, resource_uri: str) -> bool:
         return resource_uri in self._bundled
