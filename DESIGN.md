@@ -660,6 +660,39 @@ since the emitted code is the same for every level.
    ruling on whether an embedded resource whose metaschema is unavailable is
    skipped, as the root case is today.
 
+8. **Pointer navigation reads identifiers in non-schema positions** —
+   `resolve_ref`'s pointer walk and `child` apply the dialect's identifier
+   extractor to every object they step onto, including one that is *data*.
+   A pointer into `enum`/`const` therefore rebases onto an `$id` written
+   there, minting a resource identity the registration walk correctly never
+   indexed (§5: schema positions only). Reachable from an ordinary schema,
+   and the error names a URI that was never an identifier:
+
+   ```python
+   {"$id": "https://r/", "$ref": "#/enum/0/properties/a",
+    "enum": [{"$id": "https://ghost/", "properties": {"a": {"type": "string"}}}]}
+   # evaluate -> UnresolvableReferenceError: unknown schema 'https://ghost/'
+   ```
+
+   It also makes `child` raise on the evaluation hot path. Not a quick fix:
+   navigation cannot tell a schema position from data without running each
+   keyword's `analyze()`, which is the walk. Options are to carry the walk's
+   knowledge (only rebase onto a base `_document_dialects` knows), or to
+   refuse a pointer that leaves schema positions at all. P14's
+   `_dialect_after` already takes the first approach for the *dialect*
+   lookup, so the shape exists; the base itself is what still drifts.
+
+9. **A stale range lookup survives a re-registration** — `_document_ranges`
+   is written only when `get_range` is supplied, so registering a document
+   with ranges and then registering it again without them leaves the first
+   lookup in place, and `Engine.locate` keeps reporting offsets from the
+   earlier text. P12 means the second document must be `json_equal` to the
+   first, but equal JSON can come from differently formatted text, so the
+   positions can point at the wrong characters. Minor, and the fix is
+   probably to drop the entry when a re-registration supplies no lookup —
+   the question is whether that is a surprise for a caller who registered
+   twice deliberately.
+
 
 ### Resolved (owner, 2026-09-22)
 
