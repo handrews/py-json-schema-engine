@@ -38,15 +38,12 @@ from json_schema_engine.compiler.runtime_compile import instantiate, instantiate
 from json_schema_engine.compiler.serialize import Flags, assemble, serialize_plan
 from json_schema_engine.compiler.standalone import emit_standalone
 from json_schema_engine.core.channel_ops import cut_annotations
-from json_schema_engine.core.engine import (
-    Engine,
-    assemble_evaluation,
-    attach_location_chain,
-)
+from json_schema_engine.core.engine import Engine, assemble_evaluation
 from json_schema_engine.core.errors import JsonSchemaEngineError
 from json_schema_engine.core.evaluator import EvalState
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.output import AnnotationsOption, make_record_predicate
+from json_schema_engine.core.registry import attach_location_chain
 from json_schema_engine.core.result import OutputFormat, Result, resolve_output_demand
 
 __all__ = [

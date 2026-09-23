@@ -752,16 +752,6 @@ since the emitted code is the same for every level.
     guide currently says a base URI "cannot carry a fragment"; it should say
     *non-empty* fragment, and mention the option once it exists.
 
-12. **`compile_validator` drops the location chain.** Only
-    `compile_evaluator` wraps its entry in `attach_location_chain`; the
-    `validate` callable from `compile_validator` trampolines into the
-    interpreter and re-raises with `location_chain` still `None`. Measured
-    on the same unresolvable `$ref` under an embedded `$id`: interpreter and
-    `compile_evaluator` give a two-hop chain, `compile_validator` gives none.
-    The CHANGELOG's "in both the interpreter and the compiled tier" is
-    therefore half true; fix the wrapper (one `try` around `validate`, as in
-    `compile_evaluator`) and keep the claim, or narrow the claim.
-
 13. **One document-level location is still a bare URI.** `_index` passes
     `base_uri` (no `#`) as the `where` for a root `DuplicateResourceError`,
     while the CHANGELOG states every document-level `schema_location` is now
@@ -801,6 +791,16 @@ since the emitted code is the same for every level.
     could not be found or assembled" wherever it is raised. Once it does,
     the `dialect_uri` notes in `docs/reference.md` and the changelog, which
     currently say it arrives `None`, need rewriting.
+
+### Resolved (owner, 2026-09-23)
+
+- "`compile_validator` drops the location chain": the flag artifact's
+  `validate` is the emitted function itself, so rather than wrap it — one
+  more frame on every call of the tier that exists to be fast — the chain is
+  attached in the two interpreter trampolines (`frag`, `frag_cov`), the only
+  exits from it that carry a location. `attach_location_chain` moved to
+  `registry` so the compiled runtime can reach it without importing the
+  engine.
 
 ### Resolved (owner, 2026-09-22)
 

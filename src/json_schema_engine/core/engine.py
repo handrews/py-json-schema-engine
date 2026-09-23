@@ -58,6 +58,7 @@ from json_schema_engine.core.regex import reject_unsafe_regex as _screen_unsafe
 from json_schema_engine.core.registry import (
     DEFAULT_MAX_DEPTH,
     SchemaRegistry,
+    attach_location_chain,
     effective_dialect_uri,
 )
 from json_schema_engine.core.result import (
@@ -75,31 +76,6 @@ from json_schema_engine.core.uri import (
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
     return False
-
-
-def attach_location_chain(
-    registry: SchemaRegistry, error: JsonSchemaEngineError
-) -> None:
-    """Fill in an error's `location_chain` as it leaves the engine (P11).
-
-    Only a registry can build a chain, and no raise site has one — the
-    evaluator, the regex screen and a keyword's `analyze()` all hold a
-    location and nothing else. Doing it here instead of threading a
-    registry into all of them also fixes the chain at the moment of
-    failure, rather than whenever someone later thinks to ask.
-
-    A no-op without a location, or when an inner frame already attached
-    one, so nesting these is harmless: `load_schema` and `_fetch` route
-    through `register_schema`, and `_maybe_validate` through `evaluate`.
-
-    A free function rather than a method because the compiled tier needs
-    the same behavior and already imports from this module.
-    """
-    if error.location_chain is not None or error.schema_location is None:
-        return
-    chain = registry.location_chain(error.schema_location)
-    if chain:
-        error.location_chain = chain
 
 
 class Engine:

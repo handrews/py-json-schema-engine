@@ -1086,6 +1086,33 @@ class SchemaRegistry:
         return SchemaRef(node, base_uri, pointer)
 
 
+def attach_location_chain(
+    registry: SchemaRegistry, error: JsonSchemaEngineError
+) -> None:
+    """Fill in an error's `location_chain` as it leaves the engine (P11).
+
+    Only a registry can build a chain, and no raise site has one — the
+    evaluator, the regex screen and a keyword's `analyze()` all hold a
+    location and nothing else. Doing it here instead of threading a
+    registry into all of them also fixes the chain at the moment of
+    failure, rather than whenever someone later thinks to ask.
+
+    A no-op without a location, or when an inner frame already attached
+    one, so nesting these is harmless: `load_schema` and `_fetch` route
+    through `register_schema`, and `_maybe_validate` through `evaluate`.
+
+    A free function beside the registry rather than in the engine because
+    the compiled tier needs it too — the evaluator artifact's entry and the
+    flag tier's interpreter trampolines — and that runtime depends on the
+    registry, not the engine.
+    """
+    if error.location_chain is not None or error.schema_location is None:
+        return
+    chain = registry.location_chain(error.schema_location)
+    if chain:
+        error.location_chain = chain
+
+
 def _step(node: JsonValue, segment: str | int) -> JsonValue:
     """One JSON Pointer step. Raises the container's natural error on a miss."""
     if isinstance(node, list):

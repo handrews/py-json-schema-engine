@@ -114,10 +114,8 @@ minor versions may change public API.
   `format_location_chain`.
 - An error that has a schema location carries its `location_chain` when it
   leaves `register_schema`, `load_schema`, `load`, `evaluate`, or a
-  `compile_evaluator` artifact. **Not yet** from a `compile_validator`
-  artifact, whose errors arrive with `location_chain` unset (DESIGN.md §7,
-  "`compile_validator` drops the location chain"). `str(error)` appends the
-  chain **only** past one hop, so a single-resource schema's message is
+  `compile_evaluator` or `compile_validator` artifact. `str(error)` appends
+  the chain **only** past one hop, so a single-resource schema's message is
   byte-identical to before.
 - `JsonSchemaEngineError.schema_source`: the failing position seen physically
   (D17) — the document, the document-rooted pointer, and the source range when
