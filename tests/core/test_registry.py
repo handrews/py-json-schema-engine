@@ -19,6 +19,7 @@ from json_schema_engine.core.dialect import (
 from json_schema_engine.core.errors import (
     DuplicateAnchorError,
     DuplicateResourceError,
+    InvalidIdentifierError,
     InvalidSchemaError,
     MaxDepthExceededError,
     UnknownDialectError,
@@ -610,3 +611,58 @@ def test_a_failed_registration_leaves_the_registry_untouched() -> None:
     assert list(reg.resources()) == []
     with pytest.raises(UnresolvableReferenceError):
         reg.resolve_ref("#n", "https://x.example/half")
+
+
+# --- embedded `$id` syntax --------------------------------------------
+
+
+@pytest.mark.parametrize("bad", ["#frag", "#", ""])
+def test_an_embedded_id_that_names_no_new_resource_is_rejected(bad: str) -> None:
+    # Each of these resolves back to the enclosing resource, so before the
+    # check they surfaced as a duplicate of an `$id` nobody wrote.
+    reg = make_registry()
+    with pytest.raises(InvalidIdentifierError) as info:
+        reg.register(
+            {"$id": "https://x.example/r", "$defs": {"a": {"$id": bad}}},
+            "https://x.example/r",
+        )
+    assert info.value.schema_location == "https://x.example/r#/$defs/a"
+    assert not isinstance(info.value, DuplicateResourceError)
+
+
+def test_an_empty_fragment_on_an_embedded_id_is_fine() -> None:
+    # 2020-12's metaschema allows a bare trailing `#`, and the bundled
+    # draft-06/07 metaschemas spell their own root `$id` that way.
+    reg = make_registry()
+    uri = reg.register(
+        {"$id": "https://x.example/r", "$defs": {"a": {"$id": "sub#"}}},
+        "https://x.example/r",
+    )
+    assert uri == "https://x.example/r"
+    assert reg.has("https://x.example/sub")
+
+
+def test_a_legacy_fragment_id_is_an_anchor_not_an_error() -> None:
+    # The same document, legal under draft-07/06: the extractor turns
+    # `#name` into an anchor, so the base-URI rule is never reached.
+    dialects = DialectRegistry()
+    dialects.register_vocabulary(VOCAB, KEYWORDS)
+    dialects.register_dialect(DIALECT, [VOCAB], identifiers=identifiers_legacy)
+    reg = SchemaRegistry(dialects, DIALECT)
+    uri = reg.register(
+        {"$id": "https://x.example/r", "$defs": {"a": {"$id": "#frag"}}},
+        "https://x.example/r",
+    )
+    assert reg.resolve_ref("#frag", uri).pointer == "/$defs/a"
+
+
+def test_two_positions_claiming_one_uri_is_still_a_duplicate() -> None:
+    reg = make_registry()
+    with pytest.raises(DuplicateResourceError):
+        reg.register(
+            {
+                "$id": "https://x.example/r",
+                "$defs": {"a": {"$id": "x"}, "b": {"$id": "x"}},
+            },
+            "https://x.example/r",
+        )

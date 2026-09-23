@@ -210,6 +210,14 @@ first offending character.
 nor a boolean (D19). Raised by the registration walk and, as a lazy backstop,
 by schema application.
 
+`InvalidIdentifierError`: an `$id` cannot identify the resource it claims to
+start — either it carries a non-empty fragment (under 2019-09/2020-12 an `$id`
+sets a base URI, and a base URI cannot carry one; the plain-name form is
+`$anchor`), or it is `""` or `"#"` and so resolves to the enclosing resource,
+identifying nothing new. Per dialect: draft-07/06 read `#name` as an anchor and
+never reach the first rule, so the same document is legal there. Distinct from
+`DuplicateResourceError`, which is about two positions claiming one URI.
+
 `DuplicateResourceError`: two different schemas claim one resource URI (P12) —
 either a single document minting the same `$id` twice, or a later registration
 that would rebind a URI an earlier one bound to a different schema.

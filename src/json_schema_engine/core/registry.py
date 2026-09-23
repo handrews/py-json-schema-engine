@@ -19,6 +19,7 @@ from json_schema_engine.core.dialect import Dialect, DialectRegistry, Identifier
 from json_schema_engine.core.errors import (
     DuplicateAnchorError,
     DuplicateResourceError,
+    InvalidIdentifierError,
     InvalidSchemaError,
     JsonSchemaEngineError,
     MaxDepthExceededError,
@@ -349,6 +350,33 @@ class SchemaRegistry:
                 self._journal.adds.append((index, member))
             index.add(member)
 
+    def _check_embedded_id(self, base_id: str, dialect: Dialect, where: str) -> None:
+        """Refuse an embedded `$id` that cannot name a new resource.
+
+        Reached only when the dialect's extractor handed this string back as
+        a *base URI*: `identifiers_legacy` turns `#name` into an anchor and
+        never arrives here, which is exactly the per-dialect distinction
+        that makes both of these errors, and neither of them draft-07's
+        problem.
+
+        Checked against the text the author wrote, before `resolve` — both
+        cases otherwise land back on the enclosing resource's own URI and
+        surface as a duplicate of an `$id` that does not exist.
+        """
+        if base_id in ("", "#"):
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} resolves to the enclosing resource and "
+                "identifies nothing new",
+                schema_location=where,
+            )
+        if split_fragment(base_id)[1]:
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} has a non-empty fragment; under dialect "
+                f"'{dialect.uri}' an '$id' sets a base URI, and a base URI "
+                "cannot carry one (the plain-name form is '$anchor' here)",
+                schema_location=where,
+            )
+
     def _claim_resource(self, base_uri: str, node: JsonValue, where: str) -> None:
         """Bind a resource URI to a schema, or refuse to shadow another (P12).
 
@@ -512,6 +540,7 @@ class SchemaRegistry:
         ids = dialect.identifiers(node)
         if pointer != "" and ids.base_id is not None:
             claimed_at = schema_location(base_uri, pointer)
+            self._check_embedded_id(ids.base_id, dialect, claimed_at)
             # The enclosing resource and the pointer to this one within it,
             # captured before the rebinding discards both (P11).
             parent_uri, parent_pointer = base_uri, pointer

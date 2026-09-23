@@ -9,6 +9,17 @@ minor versions may change public API.
 
 ### Changed
 
+- **An embedded `$id` that cannot name a new resource now raises
+  `InvalidIdentifierError`.** A non-empty fragment (`"$id": "#frag"`), or `""`
+  or `"#"`, used to resolve back to the enclosing resource and surface as
+  `DuplicateResourceError: resource '...' is claimed twice in one document` —
+  a true sentence about a URI the author never wrote, blaming a second `$id`
+  that does not exist. Per dialect: draft-07/06 read `#name` as an anchor and
+  are unaffected. An empty trailing fragment (`"sub#"`) stays legal, matching
+  2020-12's metaschema and the bundled draft-06/07 metaschemas' own root `$id`.
+
+### Changed
+
 - **Duplicate identifiers are now registration errors (DESIGN.md P12).**
   Two different schemas may no longer claim one resource URI
   (`DuplicateResourceError`), and two different schema objects may no longer
