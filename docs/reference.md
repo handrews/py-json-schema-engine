@@ -60,6 +60,18 @@ same keyword-only parameters. Registration is synchronous and local;
   registered or bundled metaschema; `$ref` targets are not followed (use
   `load_schema` for that). `get_range` is the D17 position capability for this
   document.
+- `Engine.unregister_schema(uri) -> None`: removes a registered document and
+  everything its registration claimed: embedded `$id` resources, anchors and
+  dynamic anchors, recursive roots, dialect and location entries, its range
+  lookup, and every retrieval alias for it (P15). `uri` is the document's
+  canonical or retrieval URI. A resource that an equal copy in a later document
+  has since taken over stays with that document. Unregister then
+  `register_schema` is how a document is replaced. Compiled artifacts keep what
+  they were compiled against, and a dialect assembled from an unregistered
+  metaschema stays registered. Raises `UnresolvableReferenceError` for a URI
+  that names no document root (including a resource embedded in another
+  document, which the message names), and `ReadOnlyRegistryError` for a
+  bundled metaschema.
 - `Engine.load_schema(schema, retrieval_uri, dialect_uri=None, get_range=None)
   -> str`: registers a document and loads every resource it references (P4).
 - `Engine.load(uri) -> str`: loads and registers a resource by URI through the
@@ -247,8 +259,10 @@ caught registration error. Because the document is gone, `Engine.locate` cannot
 place such an error afterwards — the error carries its own `schema_source`,
 captured before the rollback.
 
-`ReadOnlyRegistryError`: registration was attempted on a compiled artifact's
-registry snapshot.
+`ReadOnlyRegistryError`: a registry, or an entry in one, cannot be modified:
+registration or unregistration on a compiled artifact's registry snapshot,
+unregistering from caller code running inside a registration, or unregistering
+a bundled metaschema (P15).
 
 `UnknownDialectError`: a schema names a `$schema` dialect URI that no
 registered dialect claims, or that cannot be assembled. `dialect_uri: str |

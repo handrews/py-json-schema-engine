@@ -217,6 +217,36 @@ assert bundle_engine.evaluate(bundle_uri, {"city": "NYC"}).valid is True
 assert bundle_engine.evaluate(bundle_uri, {"city": 1}).valid is False
 ```
 
+## Replacing a registered schema
+
+A URI names one schema. Registering a *different* document under a URI that
+is already registered raises `DuplicateResourceError`, whether it arrives
+through `register_schema` or from a loader, so nothing is silently shadowed.
+Registering an equal document again is fine. To replace one, for example an
+editor re-validating on save, unregister it first. That removes the document
+and everything it declared, including embedded `$id` resources, anchors, and
+its retrieval-URI aliases:
+
+```python
+from json_schema_engine.core import DuplicateResourceError
+
+editing = create_engine()
+draft_uri = editing.register_schema({"type": "string"}, "https://example.com/draft")
+try:
+    editing.register_schema({"type": "integer"}, draft_uri)
+    replaced_silently = True
+except DuplicateResourceError:
+    replaced_silently = False
+assert replaced_silently is False
+
+editing.unregister_schema(draft_uri)
+editing.register_schema({"type": "integer"}, draft_uri)
+assert editing.evaluate(draft_uri, 1).valid is True
+```
+
+A compiled artifact keeps the schemas it was compiled against, so compile
+again after a replacement.
+
 ## Bundled metaschemas never go through loaders
 
 The standard metaschemas (2020-12, 2019-09, draft-07, draft-06, and the

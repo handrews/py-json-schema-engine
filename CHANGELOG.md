@@ -44,10 +44,8 @@ minor versions may change public API.
   still fine. No case in
   the official test suite, the bundled metaschemas, or this repo's fixtures is
   affected. **Breaking:** a document that registered before may now raise, and
-  a *modified* document can no longer be re-registered under its URI — there
-  is not yet a way to replace or unregister one, so an edit-and-re-register
-  loop needs a fresh engine (DESIGN.md §7, "No way to replace a registered
-  document"). Retrieval URIs and bundled metaschema URIs are claims too
+  a *modified* document can no longer be re-registered under its URI;
+  unregister it first with `Engine.unregister_schema`. Retrieval URIs and bundled metaschema URIs are claims too
   (DESIGN.md P15): an `$id` equal to another document's retrieval URI, a
   retrieval URI reused for a different document, and a bundled metaschema's
   URI claimed with different content are all `DuplicateResourceError`. The
@@ -108,6 +106,13 @@ minor versions may change public API.
 
 ### Added
 
+- **`Engine.unregister_schema(uri)` (DESIGN.md P15).** It removes a
+  registered document and everything its registration claimed: embedded `$id`
+  resources, anchors, recursive roots, dialect and location entries, its
+  source-range lookup, and its retrieval aliases. Unregister then register is
+  how a document is replaced. A resource that an equal copy in a later document
+  has taken over stays with that document. Compiled artifacts keep what they
+  were compiled against. The shape matches the TypeScript engine's.
 - **Location chains (DESIGN.md P11).** A canonical `base_uri#pointer` names a
   position exactly and still may not locate it: in a bundled document the base
   may be an embedded `$id` the reader never knew was there, and a relative

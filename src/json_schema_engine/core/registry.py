@@ -344,6 +344,80 @@ class SchemaRegistry:
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
 
+    def unregister(self, uri: str) -> None:
+        """Remove a registered document and everything it claimed (P15).
+
+        `uri` names a document root, directly or by its retrieval URI.
+        Removal drops the root, every embedded `$id` resource, their
+        anchors and dynamic anchors, recursive roots, dialect and location
+        entries, the range lookup, and every alias pointing at it — except
+        a resource an equal copy in a later document has since taken over,
+        which stays with its current owner. Unregister then `register` is
+        how a document is replaced: there is no `replace=`, so a duplicate
+        is always an error unless the caller acted first.
+
+        `_produced_ids`/`_consumed_ids` and the pending queue are left
+        alone: the unions only widen retention, nothing re-derives them,
+        and a queued reference is still an unmet reference. A `snapshot()`
+        taken earlier keeps everything, since its indexes are copies.
+
+        Raises `UnresolvableReferenceError` for a URI that names no
+        document root, including a resource embedded in another document;
+        `ReadOnlyRegistryError` on a snapshot, during a registration, or
+        for a bundled metaschema, whose URI is reserved.
+        """
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this schema registry is a compiled artifact's snapshot; "
+                "unregister on the engine"
+            )
+        if self._journal is not None:
+            # Caller code inside a walk: the enclosing registration's undo
+            # would resurrect whatever this removed.
+            raise ReadOnlyRegistryError(
+                "cannot unregister while a registration is in progress"
+            )
+        resource = _resource_of(uri)
+        # Before any lookup that goes through `_canonical`, which would
+        # lazily register the very metaschema being refused.
+        if resource in self._bundled:
+            raise ReadOnlyRegistryError(
+                f"'{resource}' is a bundled metaschema and cannot be unregistered"
+            )
+        doc = self._aliases.get(resource, resource)
+        location = self._resource_locations.get(doc)
+        if location is None:
+            raise UnresolvableReferenceError(f"unknown schema '{doc}'")
+        if location.document_uri != doc:
+            raise UnresolvableReferenceError(
+                f"'{doc}' is a resource embedded in document "
+                f"'{location.document_uri}'; unregister that document"
+            )
+        self._evict(doc)
+        self._reference_memo.clear()
+
+    def _evict(self, doc: str) -> None:
+        """Drop what `doc`'s registration claimed and still owns."""
+        removed: set[str] = set()
+        for resource in self._owned_resources.pop(doc, frozenset()):
+            location = self._resource_locations.get(resource)
+            if location is None or location.document_uri != doc:
+                continue
+            removed.add(resource)
+            del self._documents[resource]
+            del self._resource_locations[resource]
+            self._document_dialects.pop(resource, None)
+            self._recursive_roots.discard(resource)
+        # Anchors are keyed `resource#name` in one flat index, so this is a
+        # pass over all of them; unregistering is rare enough not to keep a
+        # per-resource index for it.
+        for index in (self._anchors, self._dynamic_anchors):
+            for key in [k for k in index if k.partition("#")[0] in removed]:
+                del index[key]
+        self._document_ranges.pop(doc, None)
+        for alias in [a for a, target in self._aliases.items() if target == doc]:
+            del self._aliases[alias]
+
     def _put[V](self, index: dict[str, V], key: str, value: V) -> None:
         """Write an index entry, journaled so it can be undone (§7).
 

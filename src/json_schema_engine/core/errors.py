@@ -137,7 +137,12 @@ class DuplicateAnchorError(JsonSchemaEngineError):
 
 
 class ReadOnlyRegistryError(JsonSchemaEngineError):
-    """Registration attempted on a compiled artifact's registry snapshot."""
+    """A registry, or an entry in one, cannot be modified.
+
+    Raised for registration or unregistration on a compiled artifact's
+    registry snapshot, for unregistering while a registration is in
+    progress, and for unregistering a bundled metaschema (P15).
+    """
 
 
 class UnknownDialectError(JsonSchemaEngineError):

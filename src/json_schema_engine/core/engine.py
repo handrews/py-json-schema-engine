@@ -256,6 +256,16 @@ class Engine:
                         failure.schema_source = error.schema_source
                     raise
 
+    def unregister_schema(self, uri: str) -> None:
+        """Remove a registered document and everything it claimed (P15).
+
+        `uri` is the document's canonical URI or its retrieval URI. Unregister
+        then `register_schema` is how a registered document is replaced. A
+        compiled artifact keeps the schemas it was compiled against, and a
+        dialect assembled from an unregistered metaschema stays registered.
+        """
+        self.schemas.unregister(uri)
+
     def load_schema(
         self,
         schema: JsonValue,
