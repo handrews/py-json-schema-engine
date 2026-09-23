@@ -752,19 +752,6 @@ since the emitted code is the same for every level.
     guide currently says a base URI "cannot carry a fragment"; it should say
     *non-empty* fragment, and mention the option once it exists.
 
-13. **One document-level location is still a bare URI.** `_index` passes
-    `base_uri` (no `#`) as the `where` for a root `DuplicateResourceError`,
-    while the CHANGELOG states every document-level `schema_location` is now
-    `uri#` (P10) and `SchemaValidationError`, `UnknownVocabularyError`, and
-    `FormatsRequiredError` were moved to that form. `Engine.locate` and
-    `location_chain` accept both spellings, so this is cosmetic — but the
-    stated invariant is what a caller will pattern-match on. Same fix as the
-    others: `schema_location(base_uri, "")`. While there: the `except` in
-    `Engine.register_schema` runs `attach_location_chain` after the journal
-    is closed, so a chain lookup there can lazily register a bundled
-    metaschema mid-error-path; harmless today, but a failure inside that
-    registration would replace the error being reported.
-
 14. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
     nothing unregisters. The edit-and-re-register loop (a REPL, a test that
@@ -801,6 +788,11 @@ since the emitted code is the same for every level.
   exits from it that carry a location. `attach_location_chain` moved to
   `registry` so the compiled runtime can reach it without importing the
   engine.
+- "One document-level location is still a bare URI": a root
+  `DuplicateResourceError` now names `uri#`. The error-path hazard filed
+  with it is closed too: `attach_location_chain` treats a failure while
+  building the chain as "no chain" rather than letting it replace the error
+  being reported, the same rule `_register` applies around `_describe`.
 
 ### Resolved (owner, 2026-09-22)
 

@@ -315,6 +315,29 @@ def test_a_registration_error_is_given_a_chain() -> None:
     ]
 
 
+def test_a_failure_describing_an_error_does_not_replace_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A chain lookup can lazily register a bundled metaschema, and on the
+    # engine's error paths nothing prevents that; if it raised, the caller
+    # would get the describer's error instead of their own.
+    from json_schema_engine.core import (
+        UnknownDialectError,
+        UnresolvableReferenceError,
+    )
+
+    engine = create_engine()
+    uri = engine.register_schema({"$ref": "#/$defs/absent"}, "https://x.example/s")
+
+    def broken(location: str) -> object:
+        raise UnknownDialectError("raised while describing")
+
+    monkeypatch.setattr(engine.schemas, "location_chain", broken)
+    with pytest.raises(UnresolvableReferenceError) as raised:
+        engine.evaluate(uri, 1)
+    assert raised.value.location_chain is None
+
+
 def test_str_is_unchanged_for_a_single_resource_error() -> None:
     from json_schema_engine.core import UnresolvableReferenceError
 

@@ -493,6 +493,8 @@ def test_reregistering_a_different_document_is_rejected() -> None:
     with pytest.raises(DuplicateResourceError) as info:
         reg.register({"$id": "https://x.example/s"}, "https://x.example/s")
     assert "already registered" in str(info.value)
+    # `uri#`, the P10 form of every document-level location, not a bare URI.
+    assert info.value.schema_location == "https://x.example/s#"
 
 
 def test_two_documents_cannot_share_an_embedded_id() -> None:

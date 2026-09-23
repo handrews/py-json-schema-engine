@@ -26,10 +26,8 @@ minor versions may change public API.
 - `SchemaValidationError`, `UnknownVocabularyError`, and
   `FormatsRequiredError` now report a document-level `schema_location` as
   `uri#` rather than a bare `uri`, so it is a `base#pointer` like every other
-  location. One exception remains: a `DuplicateResourceError` at a document
-  root still reports the bare URI (DESIGN.md §7, "One document-level location
-  is still a bare URI"). `Engine.locate` and `Engine.location_chain` accept
-  both spellings.
+  location; the new document-root `DuplicateResourceError` uses the same
+  form. `Engine.locate` and `Engine.location_chain` accept both spellings.
 - **Duplicate identifiers are now registration errors (DESIGN.md P12).** Two
   different schemas may no longer claim one resource URI
   (`DuplicateResourceError`), and two different schema objects may no longer

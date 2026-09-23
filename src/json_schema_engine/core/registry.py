@@ -446,7 +446,7 @@ class SchemaRegistry:
         """Bind a resource URI to a schema, or refuse to shadow another (P12).
 
         `where` is the location to blame: the `$id`-bearing position for an
-        embedded resource, the bare resource URI for a document root.
+        embedded resource, `uri#` for a document root.
 
         The claimed-here check comes first because two *identical*
         subschemas claiming one `$id` are still two resources; only a
@@ -564,9 +564,9 @@ class SchemaRegistry:
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.
             self._put(self._aliases, retrieval_resource, base_uri)
-        # A resource-level error names the bare resource URI, as the other
-        # document-scoped errors do (`SchemaValidationError`).
-        self._claim_resource(base_uri, schema, base_uri)
+        # A resource-level error names `uri#`, the same `base#pointer` form
+        # every other document-scoped error uses (P10).
+        self._claim_resource(base_uri, schema, schema_location(base_uri, ""))
         self._put(self._document_dialects, base_uri, effective_dialect)
         # A root is its own parent: the terminating case for a chain.
         self._put(
@@ -1105,10 +1105,19 @@ def attach_location_chain(
     the compiled tier needs it too — the evaluator artifact's entry and the
     flag tier's interpreter trampolines — and that runtime depends on the
     registry, not the engine.
+
+    Best effort: a failure while *describing* leaves the chain unset rather
+    than escaping, because it would replace the error being reported — the
+    rule `_register` applies around `_describe`. It can happen: a chain
+    lookup may lazily register a bundled metaschema, and on the engine's
+    error paths nothing stops it.
     """
     if error.location_chain is not None or error.schema_location is None:
         return
-    chain = registry.location_chain(error.schema_location)
+    try:
+        chain = registry.location_chain(error.schema_location)
+    except JsonSchemaEngineError:
+        return
     if chain:
         error.location_chain = chain
 
