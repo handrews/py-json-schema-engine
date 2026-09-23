@@ -750,6 +750,29 @@ since the emitted code is the same for every level.
     already names or aliases a different resource, is a
     `DuplicateResourceError`.
 
+12. **Staged registration as a behavior-neutral refactor of P13.** The
+    TypeScript engine's ADR 0005 chose a different shape for the same
+    guarantee: the walk writes into a per-registration staging object
+    (resources with their anchors, the union contributions, the pending
+    references) and one throw-free, non-recursive commit applies it. Same
+    cost — O(this document's writes) — and the same outcome on a throw, but
+    with no undo path at all: no `except BaseException` bookkeeping, no
+    `_journal` guard in `_canonical`, no "describe before undo" ordering,
+    and a re-entrant registration from caller code inside a walk needs no
+    save/restore because the stage is a local. Caller code (`analyze()`,
+    an identifier extractor, the regex screen) never sees a half-written
+    index while the walk runs. The one thing staging has to get right is
+    that anchors are committed *after* documents, so their `SchemaRef`s are
+    the ones lookups return. Not a language-idiom outcome; the journal was
+    chosen here before the alternative was weighed. The win is smaller in
+    this engine than there — its snapshots are copies, not copy-on-write
+    views that a journal must un-share before a walk that may fail — so
+    this is filed as an option to take when P13's journal next needs
+    touching (item 11's ownership tracking is a likely moment), not as
+    work owed on its own. P11's `_describe` and D17's `schema_source`
+    would read from the stage plus the committed indexes instead of from
+    the half-built ones.
+
 ### Resolved (owner, 2026-09-23)
 
 - "`compile_validator` drops the location chain": the flag artifact's
