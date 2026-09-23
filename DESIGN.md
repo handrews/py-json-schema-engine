@@ -759,10 +759,24 @@ since the emitted code is the same for every level.
     registration and any compiled artifact's snapshot lineage. P13's
     revisit names `unregister`; this promotes it: decide the API
     (`unregister(uri)`, or `register(..., replace=True)`), and what happens
-    to a resource an earlier registration also claims (10 above), to
+    to a resource an earlier registration also claims ("P12 has three gaps …" above), to
     anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
     contributions that nothing else re-derives.
 
+
+15. **`UnknownDialectError.dialect_uri` never reaches a caller.** P14 added
+    it so the registry could ask the engine for a dialect an embedded
+    resource declared, and the engine consumes it to assemble and retry.
+    When assembly then fails, `_register_assembling_dialects` raises
+    assembly's own error, carrying the location, chain and source across but
+    not the URI — so through `Engine` the attribute is always `None`, and a
+    caller who wants to supply the missing metaschema has to parse the
+    message. The fix is one line: carry `dialect_uri` over with the rest.
+    Worth deciding at the same time whether a document-root `$schema`
+    failure should set it too, so the attribute means "the dialect that
+    could not be found or assembled" wherever it is raised. Once it does,
+    the `dialect_uri` notes in `docs/reference.md` and the changelog, which
+    currently say it arrives `None`, need rewriting.
 
 ### Resolved (owner, 2026-09-22)
 

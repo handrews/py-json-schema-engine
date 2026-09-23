@@ -23,32 +23,34 @@ minor versions may change public API.
   returns a plain-text `pointer`. `evaluationPath`, `keywordLocation`,
   `inputLocation`, `instanceLocation`, and `SourceLocation.pointer` are
   unchanged: they are JSON Pointers, not URIs, and are never encoded.
-- `SchemaValidationError`, `UnknownVocabularyError`, and `FormatsRequiredError`
-  now report a document-level `schema_location` as `uri#` rather than a bare
-  `uri`, so it is a `base#pointer` like every other location. One exception
-  remains: a `DuplicateResourceError` at a document root still reports the
-  bare URI (DESIGN.md §7 item 13). `Engine.locate` and
-  `Engine.location_chain` accept both spellings.
-- **Duplicate identifiers are now registration errors (DESIGN.md P12).**
-  Two different schemas may no longer claim one resource URI
+- `SchemaValidationError`, `UnknownVocabularyError`, and
+  `FormatsRequiredError` now report a document-level `schema_location` as
+  `uri#` rather than a bare `uri`, so it is a `base#pointer` like every other
+  location. One exception remains: a `DuplicateResourceError` at a document
+  root still reports the bare URI (DESIGN.md §7, "One document-level location
+  is still a bare URI"). `Engine.locate` and `Engine.location_chain` accept
+  both spellings.
+- **Duplicate identifiers are now registration errors (DESIGN.md P12).** Two
+  different schemas may no longer claim one resource URI
   (`DuplicateResourceError`), and two different schema objects may no longer
   claim one anchor name within a resource (`DuplicateAnchorError`). Both were
   silent last-write-wins, so one schema shadowed the other and a reference
   resolved to whichever the walk reached last. The anchor case was worse than
-  shadowing: because a dynamic anchor is also a plain anchor, `$anchor: "n"` on
-  one object and `$dynamicAnchor: "n"` on another left `$ref` and `$dynamicRef`
-  resolving the same fragment to *different* schemas. Re-registering an
-  *equal* document is still a no-op, and one object carrying both `$anchor`
-  and `$dynamicAnchor` under one name is still fine. No case in the official
-  test suite, the bundled metaschemas, or this repo's fixtures is affected.
-  **Breaking:** a document that registered before may now raise, and a
-  *modified* document can no longer be re-registered under its URI — there is
-  not yet a way to replace or unregister one, so an edit-and-re-register loop
-  needs a fresh engine (DESIGN.md §7 item 14). **Known gaps:** three shapes
-  still shadow silently — an embedded `$id` equal to another document's
-  retrieval URI, a retrieval URI reused for a different document, and a
-  bundled metaschema's URI, which can be claimed only before that metaschema
-  is first used (DESIGN.md §7 item 10).
+  shadowing: because a dynamic anchor is also a plain anchor, `$anchor: "n"`
+  on one object and `$dynamicAnchor: "n"` on another left `$ref` and
+  `$dynamicRef` resolving the same fragment to *different* schemas.
+  Re-registering an *equal* document is still a no-op, and one object carrying
+  both `$anchor` and `$dynamicAnchor` under one name is still fine. No case in
+  the official test suite, the bundled metaschemas, or this repo's fixtures is
+  affected. **Breaking:** a document that registered before may now raise, and
+  a *modified* document can no longer be re-registered under its URI — there
+  is not yet a way to replace or unregister one, so an edit-and-re-register
+  loop needs a fresh engine (DESIGN.md §7, "No way to replace a registered
+  document"). **Known gaps:** three shapes still shadow silently — an embedded
+  `$id` equal to another document's retrieval URI, a retrieval URI reused for
+  a different document, and a bundled metaschema's URI, which can be claimed
+  only before that metaschema is first used (DESIGN.md §7, "P12 has three gaps
+  where an identifier still shadows silently").
 - **Registration is now all-or-nothing (DESIGN.md P13).** A document whose
   registration raises leaves the registry exactly as it found it, so an engine
   stays usable after a caught registration error. Previously the half-indexed
@@ -63,13 +65,14 @@ minor versions may change public API.
 - **`validate_schemas` now checks a document before registering it**, so one
   that fails its metaschema is no longer registered. Previously the check ran
   after the walk and nothing removed the document, leaving a caller who asked
-  for validation, caught the typed rejection, and carried on holding an invalid
-  schema that still evaluated. The option remains opt-in and off by default —
-  validating the OAS 3.1 schema costs 2.0 ms against 56.8 ms, a 28× difference
-  on registration. A document broken both ways at once now reports
+  for validation, caught the typed rejection, and carried on holding an
+  invalid schema that still evaluated. The option remains opt-in and off by
+  default — validating the OAS 3.1 schema costs 2.0 ms against 56.8 ms, a 28×
+  difference on registration. A document broken both ways at once now reports
   `SchemaValidationError` rather than `InvalidSchemaError`. The check uses the
   *root* dialect's metaschema only: an embedded resource declaring a different
-  `$schema` is not yet checked against its own (DESIGN.md §7 item 7).
+  `$schema` is not yet checked against its own (DESIGN.md §7, "Per-resource
+  metaschema validation").
 - **`$schema` now governs the schema resource it roots, not the document
   (DESIGN.md P14).** An embedded `$id` resource declaring its own `$schema` is
   walked, indexed and evaluated under it; one without a `$schema` inherits the
@@ -92,9 +95,9 @@ minor versions may change public API.
   a true sentence about a URI the author never wrote, blaming a second `$id`
   that does not exist. Per dialect: draft-07/06 read `#name` as an anchor and
   are unaffected. An empty trailing fragment (`"sub#"`) stays legal, matching
-  2020-12's metaschema and the bundled draft-06/07 metaschemas' own root `$id`.
-  A document-root `$id` is not yet checked the same way (DESIGN.md §7
-  item 11).
+  2020-12's metaschema and the bundled draft-06/07 metaschemas' own root
+  `$id`. A document-root `$id` is not yet checked the same way (DESIGN.md §7,
+  "A root `$id` is not checked the way an embedded one is").
 
 ### Added
 
@@ -112,9 +115,10 @@ minor versions may change public API.
 - An error that has a schema location carries its `location_chain` when it
   leaves `register_schema`, `load_schema`, `load`, `evaluate`, or a
   `compile_evaluator` artifact. **Not yet** from a `compile_validator`
-  artifact, whose errors arrive with `location_chain` unset (DESIGN.md §7
-  item 12). `str(error)` appends the chain **only** past one hop, so a
-  single-resource schema's message is byte-identical to before.
+  artifact, whose errors arrive with `location_chain` unset (DESIGN.md §7,
+  "`compile_validator` drops the location chain"). `str(error)` appends the
+  chain **only** past one hop, so a single-resource schema's message is
+  byte-identical to before.
 - `JsonSchemaEngineError.schema_source`: the failing position seen physically
   (D17) — the document, the document-rooted pointer, and the source range when
   a loader reported one. Captured as the error leaves the engine, so it
@@ -132,7 +136,8 @@ minor versions may change public API.
   *embedded* resource declared (P14). `Engine.register_schema` consumes it to
   assemble the dialect and register again, so an error reaching a caller
   through the engine carries `None` there — the unavailable dialect is named
-  in the message instead, and `schema_location` names the resource that asked.
+  in the message instead, and `schema_location` names the resource that asked
+  (DESIGN.md §7, "`UnknownDialectError.dialect_uri` never reaches a caller").
 - `json_schema_engine.core.uri.pointer_fragment`,
   `pointer_from_fragment`, and `schema_location`: the single pair of
   conversions between a plain-text JSON Pointer and its URI fragment form,
