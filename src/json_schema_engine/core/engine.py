@@ -189,22 +189,21 @@ class Engine:
             # registered to check it — the metaschema sees the document as
             # plain data — and skipping the walk makes the failure cheaper.
             self._maybe_validate(schema, retrieval_uri, dialect_uri)
-            uri = self._register_assembling_dialects(
-                schema, retrieval_uri, dialect_uri, get_range
+            uri = self._assembling_dialects(
+                lambda: self.schemas.register(
+                    schema, retrieval_uri, dialect_uri, get_range
+                )
             )
         except JsonSchemaEngineError as error:
             attach_location_chain(self.schemas, error)
             raise
         return uri
 
-    def _register_assembling_dialects(
-        self,
-        schema: JsonValue,
-        retrieval_uri: str,
-        dialect_uri: str | None,
-        get_range: RangeLookup | None,
-    ) -> str:
-        """Register, assembling any dialect an embedded resource demands (P14).
+    def _assembling_dialects[T](self, attempt: Callable[[], T]) -> T:
+        """Walk, assembling any dialect an embedded resource demands (P14).
+
+        `attempt` is a registration or a survey (P17); both walk the same
+        way and ask for dialects the same way.
 
         Only the walk knows which dialects a document actually needs: a
         `$schema` at an embedded resource root, with its base resolved and
@@ -222,9 +221,7 @@ class Engine:
         attempted: set[str] = set()
         while True:
             try:
-                return self.schemas.register(
-                    schema, retrieval_uri, dialect_uri, get_range
-                )
+                return attempt()
             except RecursionError:
                 raise MaxDepthExceededError(
                     "schema nesting exceeded the interpreter's stack "

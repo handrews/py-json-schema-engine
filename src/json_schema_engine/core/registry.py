@@ -13,7 +13,7 @@
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any, Final
+from typing import Any, Final, overload
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry, IdentifierFacts
 from json_schema_engine.core.errors import (
@@ -143,6 +143,25 @@ class RootIdentity:
     dialect: Dialect
     root_ids: IdentifierFacts
     retrieval_resource: str
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyedResource:
+    """One schema resource a registration would create (`survey`, P17).
+
+    `parent_uri` is the resource lexically enclosing this one, `None` for
+    the document root. The chain and source are captured while the
+    surveyed indexes still exist, since the survey rolls them back: an
+    error about this resource later gets the same diagnostics a
+    registration error would.
+    """
+
+    base_uri: str
+    dialect_uri: str
+    document_pointer: str
+    parent_uri: str | None
+    location_chain: LocationChain
+    schema_source: SourceLocation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,6 +362,49 @@ class SchemaRegistry:
                 "register on the engine before compiling"
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
+
+    def survey(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
+    ) -> tuple[SurveyedResource, ...]:
+        """The resources registering this document would create, registering
+        nothing (P17).
+
+        A dry run of the real walk, rolled back unconditionally through the
+        P13 journal: only the walk knows which positions are schemas, which
+        `$id`s start resources, and which dialect each resource is under.
+        Raises exactly what `register` would. Ordered by document pointer,
+        so the root comes first and every resource precedes those nested in
+        it.
+        """
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this schema registry is a compiled artifact's snapshot; "
+                "survey on the engine"
+            )
+        return self._register(
+            schema, retrieval_uri, dialect_uri, get_range, finish=self._surveyed
+        )
+
+    def _surveyed(self, root: str) -> tuple[SurveyedResource, ...]:
+        found: list[SurveyedResource] = []
+        for uri in self._claimed_resources:
+            entry = self._resource_locations[uri]
+            here = schema_location(uri, "")
+            found.append(
+                SurveyedResource(
+                    uri,
+                    self._document_dialects[uri],
+                    entry.pointer,
+                    None if uri == root else entry.parent_uri,
+                    self.location_chain(here),
+                    self.source_of(here),
+                )
+            )
+        return tuple(sorted(found, key=lambda r: r.document_pointer))
 
     def unregister(self, uri: str) -> None:
         """Remove a registered document and everything it claimed (P15).
@@ -650,14 +712,40 @@ class SchemaRegistry:
         self._claimed_anchors.add(key)
         self._put(self._anchors, key, here)
 
+    @overload
     def _register(
         self,
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None,
         get_range: RangeLookup | None,
-    ) -> str:
-        """Index a document, all of it or none of it (§7, `_Registration`)."""
+    ) -> str: ...
+
+    @overload
+    def _register[T](
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+        *,
+        finish: Callable[[str], T],
+    ) -> T: ...
+
+    def _register(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+        *,
+        finish: Callable[[str], object] | None = None,
+    ) -> object:
+        """Index a document, all of it or none of it (§7, `_Registration`).
+
+        With `finish`, a dry run (`survey`): `finish` reads the completed
+        indexes, then everything is rolled back as if the walk had failed.
+        """
         # Saving the caller's journal and claim sets rather than asserting
         # they are empty is the re-entrancy guard. A walk never calls back
         # in here, but a custom `KeywordBehavior.analyze` or a custom
@@ -669,7 +757,12 @@ class SchemaRegistry:
         self._claimed_resources = set()
         self._claimed_anchors = set()
         try:
-            return self._index(schema, retrieval_uri, dialect_uri, get_range)
+            base_uri = self._index(schema, retrieval_uri, dialect_uri, get_range)
+            if finish is None:
+                return base_uri
+            result = finish(base_uri)
+            journal.undo()
+            return result
         except BaseException as error:
             # `BaseException`, because a walk can raise far more than a
             # typed engine error: `_step` raises bare `KeyError`/`TypeError`,
