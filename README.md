@@ -12,21 +12,32 @@ relevance model.
 
 Produced by Henry Andrews via Claude Code.
 
-**Status: `0.0.x` line is functionally complete but experimental.**
+**`[json-schema-engine](https://pypi.org/project/json-schema-engine/)` and
+`[ecma-regex](https://pypi.org/project/ecma-regex/)` are published on PyPI.
+
+**Status: The `0.0.x` line is functionally complete but experimental.**
 
 See [CHANGELOG.md](CHANGELOG.md) for the current release's contents.
 [DESIGN.md](DESIGN.md) is the design contract and carries the milestone
 status.
 
-All features are expected to work, however during the `0.0.x` release
-line, the exact shape of the function or method calls and any exceptions
+All features are expected to work, but have not been tested beyond
+what the CI tests, including Bowtie, cover.  Additional testing
+and CI enhancements are in progress.
+
+Aside from the functionality, during the `0.0.x` release line,
+the exact shape of the function or method calls and any exceptions
 they raise may change to improve developer experience.  This release
 line also has AI-written documentation.  Promotion to `0.1.0` will
 occur when the interface is believed to have solid developer UX and
 the documentation has been human-audited.
 
+Promotion to `1.0.0` will occur when real-world usage indicates
+production-readiness.
+
 The regular-expression translator lives in its own package,
-[`ecma-regex`](packages/ecma-regex/README.md) (`0.1.0`): ECMA-262 patterns
+[`ecma-regex`](https://pypi.org/project/ecma-regex/) (`0.1.0`):
+ECMA-262 patterns
 for Python, with JavaScript semantics, no dependency on this engine.
 
 ## Install
