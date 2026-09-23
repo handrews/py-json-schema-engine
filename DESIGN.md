@@ -694,6 +694,73 @@ since the emitted code is the same for every level.
    twice deliberately.
 
 
+10. **P12 has three gaps where an identifier still shadows silently** — all
+    found reviewing P12, none covered by its tests:
+
+    - An embedded `$id` equal to another document's *retrieval URI* is
+      claimed and then unreachable. `_claim_resource` checks `_documents`
+      only, while `_canonical` prefers `_aliases`, so
+      `{"$id": "https://a/", ...}` registered as `https://r/` followed by a
+      document embedding `{"$id": "https://r/", "type": "string"}` registers
+      cleanly and every lookup of `https://r/` answers the first document.
+      Measured: `$ref: "https://r/"` validates a number, not a string.
+    - Claiming a bundled metaschema's URI is order-dependent. On a fresh
+      engine `register_schema({"$id": DIALECT_2020_12, ...})` succeeds and
+      shadows the bundled document (`_canonical` sees it in `_documents` and
+      never lazily registers the real one); after any evaluation that
+      touched the metaschema, the same call raises `DuplicateResourceError`.
+      Either answer may be right — a caller overriding a metaschema is a
+      real use — but it must be the same answer both times.
+    - A retrieval-URI alias is still last-write-wins: registering a second
+      document with a *different* `$id` under a retrieval URI an earlier one
+      used silently repoints `_aliases[retrieval]`. Not a resource
+      collision, so P12 does not see it, but it is the same shadowing shape.
+
+11. **A root `$id` is not checked the way an embedded one is.** Under
+    2020-12/2019-09, `{"$id": "#foo"}` or `{"$id": ""}` at a document root
+    registers silently as the retrieval URI (the `$id` text is discarded),
+    while the same string one level down raises `InvalidIdentifierError`
+    (`_check_embedded_id` runs only for `pointer != ""`; `identify` resolves
+    the root's `base_id` unchecked). Refuse at the root too for consistency,
+    or document the asymmetry — the guide currently says a fragment `$id`
+    is refused under these dialects without qualifying where.
+
+12. **`compile_validator` drops the location chain.** Only
+    `compile_evaluator` wraps its entry in `attach_location_chain`; the
+    `validate` callable from `compile_validator` trampolines into the
+    interpreter and re-raises with `location_chain` still `None`. Measured
+    on the same unresolvable `$ref` under an embedded `$id`: interpreter and
+    `compile_evaluator` give a two-hop chain, `compile_validator` gives none.
+    The CHANGELOG's "in both the interpreter and the compiled tier" is
+    therefore half true; fix the wrapper (one `try` around `validate`, as in
+    `compile_evaluator`) and keep the claim, or narrow the claim.
+
+13. **One document-level location is still a bare URI.** `_index` passes
+    `base_uri` (no `#`) as the `where` for a root `DuplicateResourceError`,
+    while the CHANGELOG states every document-level `schema_location` is now
+    `uri#` (P10) and `SchemaValidationError`, `UnknownVocabularyError`, and
+    `FormatsRequiredError` were moved to that form. `Engine.locate` and
+    `location_chain` accept both spellings, so this is cosmetic — but the
+    stated invariant is what a caller will pattern-match on. Same fix as the
+    others: `schema_location(base_uri, "")`. While there: the `except` in
+    `Engine.register_schema` runs `attach_location_chain` after the journal
+    is closed, so a chain lookup there can lazily register a bundled
+    metaschema mid-error-path; harmless today, but a failure inside that
+    registration would replace the error being reported.
+
+14. **No way to replace a registered document.** P12 turns a modified
+    re-registration under the same URI into `DuplicateResourceError`, and
+    nothing unregisters. The edit-and-re-register loop (a REPL, a test that
+    mutates a fixture, an editor integration re-validating on save) now
+    needs a fresh engine per edit, which also discards every other
+    registration and any compiled artifact's snapshot lineage. P13's
+    revisit names `unregister`; this promotes it: decide the API
+    (`unregister(uri)`, or `register(..., replace=True)`), and what happens
+    to a resource an earlier registration also claims (10 above), to
+    anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
+    contributions that nothing else re-derives.
+
+
 ### Resolved (owner, 2026-09-22)
 
 - `$schema` governs the resource it roots, not the document (P14).
