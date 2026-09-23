@@ -34,6 +34,7 @@ from json_schema_engine.core import (
     Engine,
     JsonSchemaEngineError,
     JsonValue,
+    MaxDepthExceededError,
     create_engine,
 )
 from json_schema_engine.formats import FORMATS_2020_12, format_table_for
@@ -269,9 +270,21 @@ def _cases_for(dialect_dir: str) -> st.SearchStrategy[tuple[CorpusGroup, JsonVal
     )
 
 
+# Depth parity is by exception class, never by exact depth (DESIGN.md §5,
+# P3): the interpreter spends several frames per application and can
+# exhaust CPython's stack well inside `max_depth`, and a flag artifact's
+# inlined units reach the budget later still. When the reference raises
+# the depth error there is no reference verdict to compare against, so the
+# case says nothing either way. The converse stays a divergence: a compiled
+# tier must never raise it where the interpreter produced a result.
+DEPTH_OUTCOME = ("raise", MaxDepthExceededError.__name__)
+
+
 def _check_case(case: tuple[CorpusGroup, JsonValue]) -> None:
     group, instance = case
     expected = outcome(lambda: group.engine.evaluate(group.uri, instance).valid)
+    if expected == DEPTH_OUTCOME:
+        return
     fast, conservative = _artifacts(group)
     assert outcome(lambda: fast.validate(instance)) == expected, (group.key, instance)
     assert outcome(lambda: conservative.validate(instance)) == expected, (
@@ -357,6 +370,8 @@ def _check_evaluator_case(
                 group.uri, instance, output=output, annotations=True, **extra
             )
         )
+        if expected == DEPTH_OUTCOME:
+            continue
         got = _result_outcome(
             lambda output=output, extra=extra: run(instance, output=output, **extra)
         )
