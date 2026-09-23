@@ -99,6 +99,10 @@ class _Registration:
 
     `adds` holds `(index, member)` for the set indexes, recorded only when
     the member was new — a union cannot say who added what.
+
+    A removal (`_pop`) records the same `(index, key, prior)` triple as a
+    write, so undo puts the entry back. Nothing removes from `_documents`
+    during a registration, so its order is never disturbed by one.
     """
 
     writes: list[tuple[dict[str, Any], str, Any]] = field(
@@ -242,6 +246,11 @@ class SchemaRegistry:
         self._consumed_ids: set[str] = set()
         self._document_dialects: dict[str, str] = {}
         self._resource_locations: dict[str, DocumentLocation] = {}
+        # Document root -> every resource its last registration claimed
+        # (P15), which is what `unregister` removes. `_resource_locations`
+        # stays the truth for who owns a resource *now*: an equal copy in a
+        # later document takes a resource over without editing this.
+        self._owned_resources: dict[str, frozenset[str]] = {}
         # Position lookups by document URI (D17): only the outermost
         # registration installs one; embedded resources map back to their
         # document through `_resource_locations`.
@@ -306,6 +315,7 @@ class SchemaRegistry:
         copy._consumed_ids = set(self._consumed_ids)
         copy._document_dialects = dict(self._document_dialects)
         copy._resource_locations = dict(self._resource_locations)
+        copy._owned_resources = dict(self._owned_resources)
         copy._document_ranges = dict(self._document_ranges)
         copy._aliases = dict(self._aliases)
         copy._read_only = True
@@ -344,6 +354,13 @@ class SchemaRegistry:
         if self._journal is not None:
             self._journal.writes.append((index, key, index.get(key, _MISSING)))
         index[key] = value
+
+    def _pop[V](self, index: dict[str, V], key: str) -> None:
+        """Remove an index entry, journaled so it can be undone (§7)."""
+        if key in index:
+            if self._journal is not None:
+                self._journal.writes.append((index, key, index[key]))
+            del index[key]
 
     def _add(self, index: set[str], member: str) -> None:
         """Add a set member, journaled when it is genuinely new.
@@ -657,7 +674,13 @@ class SchemaRegistry:
         )
         if get_range is not None:
             self._put(self._document_ranges, base_uri, get_range)
+        else:
+            # A re-registration is "this is the document now": one without
+            # positions has said there are none, and the earlier lookup may
+            # describe differently formatted text.
+            self._pop(self._document_ranges, base_uri)
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
+        self._put(self._owned_resources, base_uri, frozenset(self._claimed_resources))
         return base_uri
 
     def _walk(
@@ -704,6 +727,12 @@ class SchemaRegistry:
             # again — the inner extractor's own `base_id` is never used.
             ids = replace(dialect.identifiers(node), base_id=ids.base_id)
             self._claim_resource(base_uri, node, claimed_at)
+            prior = self._resource_locations.get(base_uri)
+            if prior is not None and prior.document_uri == base_uri:
+                # An equal copy embedded here takes over a resource that was
+                # a document of its own, which therefore stops being one.
+                self._pop(self._owned_resources, base_uri)
+                self._pop(self._document_ranges, base_uri)
             self._put(self._document_dialects, base_uri, dialect.uri)
             self._put(
                 self._resource_locations,

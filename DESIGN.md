@@ -686,18 +686,6 @@ since the emitted code is the same for every level.
    `_dialect_after` already takes the first approach for the *dialect*
    lookup, so the shape exists; the base itself is what still drifts.
 
-9. **A stale range lookup survives a re-registration** — `_document_ranges`
-   is written only when `get_range` is supplied, so registering a document
-   with ranges and then registering it again without them leaves the first
-   lookup in place, and `Engine.locate` keeps reporting offsets from the
-   earlier text. P12 means the second document must be `json_equal` to the
-   first, but equal JSON can come from differently formatted text, so the
-   positions can point at the wrong characters. Minor, and the fix is
-   probably to drop the entry when a re-registration supplies no lookup —
-   the question is whether that is a surprise for a caller who registered
-   twice deliberately.
-
-
 11. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
     nothing unregisters. The edit-and-re-register loop (a REPL, a test that
@@ -789,6 +777,12 @@ since the emitted code is the same for every level.
   retrieval alias and a retrieval URI reused for a different document follow
   the TypeScript engine's ADR 0005. A bundled metaschema's URI is reserved
   for equal content, the owner's ruling on the order-dependence question.
+- "A stale range lookup survives a re-registration": a re-registration
+  that supplies no lookup drops the old one, as the TypeScript engine's
+  does. Equal JSON can come from differently formatted text, and a caller
+  who re-registers without positions has said there are none. A document
+  whose resource an equal embedded copy takes over stops being a document,
+  and loses its lookup and ownership record the same way.
 
 ### Resolved (owner, 2026-09-22)
 

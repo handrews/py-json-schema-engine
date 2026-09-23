@@ -37,8 +37,11 @@ minor versions may change public API.
   shadowing: because a dynamic anchor is also a plain anchor, `$anchor: "n"`
   on one object and `$dynamicAnchor: "n"` on another left `$ref` and
   `$dynamicRef` resolving the same fragment to *different* schemas.
-  Re-registering an *equal* document is still a no-op, and one object carrying
-  both `$anchor` and `$dynamicAnchor` under one name is still fine. No case in
+  Re-registering an *equal* document is still allowed; it is walked again, and
+  its source-range lookup is replaced — dropped, when the re-registration
+  supplies none, since equal JSON can come from differently formatted text.
+  One object carrying both `$anchor` and `$dynamicAnchor` under one name is
+  still fine. No case in
   the official test suite, the bundled metaschemas, or this repo's fixtures is
   affected. **Breaking:** a document that registered before may now raise, and
   a *modified* document can no longer be re-registered under its URI — there
