@@ -227,7 +227,12 @@ about two positions claiming one URI.
 `DuplicateResourceError`: two different schemas claim one resource URI (P12) —
 either a single document minting the same `$id` twice, or a later registration
 that would rebind a URI an earlier one bound to a different schema.
-Re-registering an *equal* document is a no-op, not a duplicate.
+Re-registering an *equal* document is not a duplicate. A retrieval URI is a
+claim too (P15): an `$id` equal to another document's retrieval URI, and a
+retrieval URI that already names a resource or aliases a different one, are
+refused, since one of the two would be unreachable. A bundled metaschema's URI
+is reserved for content equal to the bundled document, whether or not that
+metaschema has been used yet; a custom metaschema goes under a URI of its own.
 
 `DuplicateAnchorError`: two different schema objects claim one anchor name
 within a resource (P12). Covers `$anchor`, `$dynamicAnchor`, and the

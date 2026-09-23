@@ -44,11 +44,12 @@ minor versions may change public API.
   a *modified* document can no longer be re-registered under its URI — there
   is not yet a way to replace or unregister one, so an edit-and-re-register
   loop needs a fresh engine (DESIGN.md §7, "No way to replace a registered
-  document"). **Known gaps:** three shapes still shadow silently — an embedded
-  `$id` equal to another document's retrieval URI, a retrieval URI reused for
-  a different document, and a bundled metaschema's URI, which can be claimed
-  only before that metaschema is first used (DESIGN.md §7, "P12 has three gaps
-  where an identifier still shadows silently").
+  document"). Retrieval URIs and bundled metaschema URIs are claims too
+  (DESIGN.md P15): an `$id` equal to another document's retrieval URI, a
+  retrieval URI reused for a different document, and a bundled metaschema's
+  URI claimed with different content are all `DuplicateResourceError`. The
+  last used to succeed on a fresh engine and fail once the metaschema had been
+  used.
 - **Registration is now all-or-nothing (DESIGN.md P13).** A document whose
   registration raises leaves the registry exactly as it found it, so an engine
   stays usable after a caught registration error. Previously the half-indexed

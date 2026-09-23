@@ -483,20 +483,58 @@ class SchemaRegistry:
         subschemas claiming one `$id` are still two resources; only a
         re-registration of the same document may rebind, and then only to an
         equal schema.
+
+        A retrieval alias and a bundled metaschema's URI are claims too
+        (P15). Lookups prefer the alias, so a resource under an aliased URI
+        could never be reached; and a bundled URI is reserved for content
+        equal to the bundled document, whether or not it has been lazily
+        registered yet — otherwise the same call succeeds on a fresh engine
+        and fails once the metaschema has been used.
         """
         if base_uri in self._claimed_resources:
             raise DuplicateResourceError(
                 f"resource '{base_uri}' is claimed twice in one document",
                 schema_location=where,
             )
+        bound = self._aliases.get(base_uri)
+        if bound is not None:
+            raise DuplicateResourceError(
+                f"'{base_uri}' is the retrieval URI of resource '{bound}'",
+                schema_location=where,
+            )
         existing = self._documents.get(base_uri)
-        if existing is not None and not json_equal(existing, node):
+        if existing is None:
+            existing = self._bundled.get(base_uri)
+            if existing is not None and not json_equal(existing, node):
+                raise DuplicateResourceError(
+                    f"'{base_uri}' is a bundled metaschema's URI; register a "
+                    "custom metaschema under a URI of its own",
+                    schema_location=where,
+                )
+        elif not json_equal(existing, node):
             raise DuplicateResourceError(
                 f"resource '{base_uri}' is already registered as a different schema",
                 schema_location=where,
             )
         self._claimed_resources.add(base_uri)
         self._put(self._documents, base_uri, node)
+
+    def _check_alias(self, retrieval: str, base_uri: str) -> None:
+        """Refuse a retrieval URI that cannot alias `base_uri` (P15)."""
+        where = schema_location(base_uri, "")
+        if retrieval in self._documents or retrieval in self._bundled:
+            raise DuplicateResourceError(
+                f"retrieval URI '{retrieval}' already names a registered "
+                f"resource; the document declares '{base_uri}'",
+                schema_location=where,
+            )
+        bound = self._aliases.get(retrieval)
+        if bound is not None and bound != base_uri:
+            raise DuplicateResourceError(
+                f"retrieval URI '{retrieval}' is already bound to resource "
+                f"'{bound}'; the document declares '{base_uri}'",
+                schema_location=where,
+            )
 
     def _claim_anchor(self, key: str, here: SchemaRef) -> None:
         """Bind an anchor key, or refuse to shadow another object's (P12).
@@ -599,6 +637,11 @@ class SchemaRegistry:
                 root_ids.base_id, dialect, schema_location(base_uri, "")
             )
         if base_uri != retrieval_resource:
+            # The retrieval URI becomes an alias of the declared base, so it
+            # must not already name a resource of its own, alias a different
+            # one, or be reserved for a bundled metaschema (P15): any of those
+            # would leave one of the two unreachable.
+            self._check_alias(retrieval_resource, base_uri)
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.
             self._put(self._aliases, retrieval_resource, base_uri)

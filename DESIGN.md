@@ -91,6 +91,7 @@ not the intent), **N/A** (JavaScript-only).
 | P12 | Duplicate identifiers are errors | Two different schemas may not claim one resource URI, and two different schema objects may not claim one anchor name within a resource. `DuplicateResourceError` covers a single document minting an `$id` twice and a later registration rebinding a URI an earlier one bound to a *different* schema (`json_equal`, so re-registering an equal document stays a no-op). `DuplicateAnchorError` covers `$anchor`, `$dynamicAnchor`, and the draft-07/06 `$id: "#name"` form alike, keyed on the `_anchors` entry that all three write; one object carrying both anchor kinds under one name claims the same key with the same target and is allowed. Claims are scoped to one registration walk, so a re-registered resource rewrites its own anchors without a false positive, and a `$ref` sibling under draft-07/06 claims nothing because it suppresses identifiers (D18). | Both were silent last-write-wins, so one schema shadowed the other and a reference resolved to whichever the walk reached last. The anchor case was worse than shadowing: because a dynamic anchor is also a plain anchor (D8), `$anchor: "n"` on one object and `$dynamicAnchor: "n"` on another left `$ref` and `$dynamicRef` resolving the same fragment to *different* schemas. The spec is silent on duplicate `$id` and deems a duplicate anchor undefined behavior an implementation MAY reject; the owner deems rejection correct for both. Duplicate `$id` is also what made the P11 parent relation cyclic. | A schema in the wild proves a duplicate is load-bearing somewhere (none known; the vendored suite, the bundled metaschemas, and every repo fixture are clean). |
 | P13 | Registration is all-or-nothing | `SchemaRegistry.register` journals every index write and undoes them if anything escapes, so a document that fails leaves the registry exactly as it found it. A `_Registration` holds `(index, key, prior)` for the seven dict indexes and `(index, member)` for the four set ones, recording only genuinely new members because `_produced_ids`/`_consumed_ids` are unions. The undo restores prior values rather than deleting keys: a walk legitimately rebinds entries an earlier registration owns, and `_documents` order is what `resources()` promises. `except BaseException`, since `_step` raises bare `KeyError`/`TypeError`, `RecursionError` can fire anywhere, and caller code runs inside the walk. Not journaled: `_reference_memo` (a derived cache, cleared on both paths), the P12 claim sets (per-walk scratch), and the regex cache (keyed by pattern, a function of a fixed dialect and backend). On the way out the registry fills the error's `location_chain` (P11) and `schema_source` (D17) *before* the undo — the only moment the indexes they derive from still exist — and `_canonical` refuses to start a lazy bundled registration while a journal is live. | The half-indexed document left behind was still evaluable, and its partial `produces`/`consumes` fed D5's elision predicate, so the failure surfaced as a wrong answer rather than a loud one. P12 added two more ways to fail mid-walk. Journaling rather than snapshotting keeps the cost O(this document's writes) with no term in registry size, which matters because every lookup may lazily register a bundled metaschema; measured, registration is unchanged (1.27 ms either way on the OAS 3.1 corpus). | A caller needs a *successful* registration undone: that wants `unregister`, and an answer for resources an earlier registration also claims. |
 | P14 | Per-resource dialects | `$schema` governs the schema resource it roots, not the document (2020-12 core §8.1.1). `_walk` rebinds its `dialect` local wherever it rebinds `base_uri`, so the inner dialect supplies the keyword table, `ref_ignores_siblings`, and the identifiers minted into that resource, and `_document_dialects` records it. **The boundary is decided from the outside, the contents from the inside:** `base_id` comes from the *parent* extractor — its `$id` syntax is what decides a resource starts here at all, and a relative `$schema` has no base to resolve against until it has — while `anchors`, `dynamic_anchor` and `recursive_anchor` are re-read with the inner one. Honored under every dialect; draft-07/06 are silent on the placement rather than prohibitive. A `$schema` where no resource starts is **ignored**, not refused: the spec forbids the placement, but refusing it is strict-mode hygiene, which D14 keeps opt-in, and `{"$schema": X, "not": {"$schema": X}}` is how Bowtie spells "allows nothing" for every dialect it tests. Only the walk can discover an embedded `$schema`, and the registry holds no loaders, so it raises `UnknownDialectError` carrying `dialect_uri` and the engine assembles that dialect and registers again; P13 rollback is what makes the retry start from the state the first attempt found. Pointer navigation in `resolve_ref`/`child` refreshes its extractor at each base change through a non-raising lookup, so a base the walk never indexed falls back to the dialect in force rather than failing. | The walk threaded the document root's dialect through the whole recursion, so the bug cut both ways: a valid draft-07 resource embedded in a 2020-12 document was rejected for array-form `items`, and a 2020-12 resource embedded in a draft-07 document had `$id: "#foo"` accepted as an anchor. It also mislabeled any node reached by a pointer that crossed an `$id` under the wrong extractor as its resource's root. Evaluation and the compiler already keyed every dialect lookup on the unit's own base URI, so the walk was the only tier disagreeing — with them and with itself. | A dialect needs to *forbid* an embedded `$schema`: that wants a `Dialect` field beside `identifiers` and `ref_ignores_siblings`. A lint layer under D14 wants to flag a misplaced `$schema`, which this deliberately does not. |
+| P15 | Aliases and bundled URIs are claims | P12's one-resource-one-schema rule extends to the two other ways a URI can be bound. A **retrieval alias** is consulted before the resource index, so an `$id` equal to an existing alias, or a retrieval URI that already names a resource or aliases a different one, would leave one of them unreachable; each is a `DuplicateResourceError` (`_claim_resource`, `_check_alias`). A **bundled metaschema's URI** is reserved (owner, 2026-09-23): it may be claimed only with content `json_equal` to the bundled document, checked against `_bundled` when it has not been lazily registered yet, so the answer no longer depends on whether the metaschema has been used. A custom metaschema goes under its own URI, as custom dialects already do. Matches the TypeScript engine's ADR 0005, which registers its metaschemas eagerly and so reaches the same answer without the `_bundled` check. |
 
 ## 2. System shape
 
@@ -697,28 +698,6 @@ since the emitted code is the same for every level.
    twice deliberately.
 
 
-10. **P12 has three gaps where an identifier still shadows silently** — all
-    found reviewing P12, none covered by its tests:
-
-    - An embedded `$id` equal to another document's *retrieval URI* is
-      claimed and then unreachable. `_claim_resource` checks `_documents`
-      only, while `_canonical` prefers `_aliases`, so
-      `{"$id": "https://a/", ...}` registered as `https://r/` followed by a
-      document embedding `{"$id": "https://r/", "type": "string"}` registers
-      cleanly and every lookup of `https://r/` answers the first document.
-      Measured: `$ref: "https://r/"` validates a number, not a string.
-    - Claiming a bundled metaschema's URI is order-dependent. On a fresh
-      engine `register_schema({"$id": DIALECT_2020_12, ...})` succeeds and
-      shadows the bundled document (`_canonical` sees it in `_documents` and
-      never lazily registers the real one); after any evaluation that
-      touched the metaschema, the same call raises `DuplicateResourceError`.
-      Either answer may be right — a caller overriding a metaschema is a
-      real use — but it must be the same answer both times.
-    - A retrieval-URI alias is still last-write-wins: registering a second
-      document with a *different* `$id` under a retrieval URI an earlier one
-      used silently repoints `_aliases[retrieval]`. Not a resource
-      collision, so P12 does not see it, but it is the same shadowing shape.
-
 11. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
     nothing unregisters. The edit-and-re-register loop (a REPL, a test that
@@ -744,11 +723,8 @@ since the emitted code is the same for every level.
     document. Doing this needs per-document ownership tracking (the
     TypeScript engine keeps `documentUri → resources claimed`, with
     `resourceLocations` as the truth for who owns what now), which the
-    registry does not have yet, and it is the natural moment to close the
-    alias gaps in "P12 has three gaps …" above the way ADR 0005 does: an
-    `$id` equal to an existing retrieval alias, or a retrieval URI that
-    already names or aliases a different resource, is a
-    `DuplicateResourceError`.
+    registry does not have yet. The alias gaps ADR 0005 closed alongside
+    it are closed here too (P15).
 
 12. **Staged registration as a behavior-neutral refactor of P13.** The
     TypeScript engine's ADR 0005 chose a different shape for the same
@@ -808,6 +784,11 @@ since the emitted code is the same for every level.
   scope is "an `$id` that sets a base URI". The bundled metaschemas are
   exempt, as they are from the D20 regex screen, because the draft-06/07
   ones spell their own `$id` that way.
+- "P12 has three gaps where an identifier still shadows silently": all
+  three are `DuplicateResourceError` now (P15). An `$id` equal to a
+  retrieval alias and a retrieval URI reused for a different document follow
+  the TypeScript engine's ADR 0005. A bundled metaschema's URI is reserved
+  for equal content, the owner's ruling on the order-dependence question.
 
 ### Resolved (owner, 2026-09-22)
 
