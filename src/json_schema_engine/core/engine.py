@@ -532,11 +532,21 @@ def assemble_evaluation(
             annotations=records.annotations,
             dropped_annotations=dropped_records,
         )
-    root = None
-    if demand.tracing:
-        assert state.trace_root is not None
-        root = to_render_node(state.trace_root, records)
-    result = assemble_result(demand, valid, units, root, root_location, trace)
+    # The P3 backstop again, for assembly: the located tree, the hierarchical
+    # document, and the rendered trace all recurse once per application, and
+    # a compiled evaluator spends so few frames per application that it can
+    # finish a run whose tree the stack then cannot hold.
+    try:
+        root = None
+        if demand.tracing:
+            assert state.trace_root is not None
+            root = to_render_node(state.trace_root, records)
+        result = assemble_result(demand, valid, units, root, root_location, trace)
+    except RecursionError:
+        raise MaxDepthExceededError(
+            "assembling the output exceeded the interpreter's stack "
+            f"(max_depth={state.max_depth}); reduce nesting or lower max_depth"
+        ) from None
     if locate is not None:
         for unit_list in (
             result.errors,

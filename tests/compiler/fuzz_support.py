@@ -201,7 +201,8 @@ def object_mutate(draw: st.DrawFn, value: JsonValue) -> JsonValue:
 
 def nesting_wrap(draw: st.DrawFn, value: JsonValue) -> JsonValue:
     """Wrap 40-60 levels deep, in single-key objects or doubled arrays, to
-    probe the depth budget (both tiers must agree on where it bites)."""
+    probe the depth budget (the tiers must agree up to where the reference
+    stops; depth parity is by class, never by exact depth)."""
     depth = draw(st.integers(min_value=40, max_value=60))
     acc: JsonValue = _clone(value)
     if draw(st.booleans()):
