@@ -227,9 +227,56 @@ def test_an_unavailable_embedded_dialect_names_where_it_was_demanded() -> None:
     # What is missing, and where it was asked for -- the second half is
     # carried over from the walk's own error when assembly fails.
     assert "https://v.test/meta" in str(raised.value)
+    assert raised.value.dialect_uri == "https://v.test/meta"
     assert raised.value.schema_location == "https://d.test/o#/$defs/i"
     assert not engine.schemas.has("https://d.test/o")
     assert not engine.schemas.has("https://d.test/inner")
+
+
+# --- `dialect_uri` names what to supply ---------------------------------------
+#
+# Wherever an `UnknownDialectError` reaches a caller, `dialect_uri` is the
+# dialect that could not be found or assembled: the URI to hand a loader.
+
+
+def test_an_unknown_root_dialect_is_named() -> None:
+    with pytest.raises(UnknownDialectError) as raised:
+        create_engine().register_schema(
+            {"$schema": "https://v.test/meta"}, "https://d.test/root"
+        )
+    assert raised.value.dialect_uri == "https://v.test/meta"
+
+
+def test_a_metaschema_cycle_is_named() -> None:
+    selfish: JsonValue = {
+        "$id": "https://v.test/self",
+        "$schema": "https://v.test/self",
+    }
+    loader, _ = _counting_loader(selfish)
+    engine = create_engine(loaders=[loader])  # type: ignore[arg-type]
+    with pytest.raises(UnknownDialectError) as raised:
+        engine.register_schema(
+            {"$schema": "https://v.test/self"}, "https://d.test/cyclic"
+        )
+    assert "metaschema cycle" in str(raised.value)
+    assert raised.value.dialect_uri == "https://v.test/self"
+
+
+def test_a_metaschemas_own_missing_dialect_is_the_one_named() -> None:
+    # The document asks for `meta`, which the loader has; `meta` asks for
+    # `deeper`, which nobody has. `deeper` is what the caller must supply.
+    meta: JsonValue = {"$id": "https://v.test/meta", "$schema": "https://v.test/deeper"}
+    loader, _ = _counting_loader(meta)
+    engine = create_engine(loaders=[loader])  # type: ignore[arg-type]
+    with pytest.raises(UnknownDialectError) as raised:
+        engine.register_schema(
+            {
+                "$id": "https://d.test/o",
+                "$defs": {"i": {"$id": "inner", "$schema": "https://v.test/meta"}},
+            },
+            "https://d.test/o",
+        )
+    assert raised.value.dialect_uri == "https://v.test/deeper"
 
 
 # --- pointer navigation across a boundary ----------------------------------

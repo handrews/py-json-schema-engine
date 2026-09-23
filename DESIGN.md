@@ -719,63 +719,7 @@ since the emitted code is the same for every level.
       used silently repoints `_aliases[retrieval]`. Not a resource
       collision, so P12 does not see it, but it is the same shadowing shape.
 
-11. **A root `$id` is not checked the way an embedded one is.** Under
-    2020-12 and 2019-09 an `$id` may end in an empty fragment (a bare `#`),
-    which it SHOULD NOT, and may not carry a non-empty one (the metaschemas'
-    `^[^#]*#?$`). That rule is the same at a document root and at an
-    embedded resource, but only the embedded position enforces the part
-    that is a MUST:
-
-    - **Non-empty fragment** — refused in an embedded `$id`
-      (`InvalidIdentifierError`), but at a document root `identify` resolves
-      the `$id` unchecked and `_resource_of` strips the fragment, so
-      `{"$id": "https://x.example/s#frag"}` registers as
-      `https://x.example/s` and the fragment silently vanishes; a root
-      `{"$id": "#foo"}` lands on the retrieval URI the same way. Fix: give
-      the root the same check as `_check_embedded_id`.
-    - **Empty fragment** — accepted at both positions and stripped, as the
-      spec allows. Correct today; no change.
-    - **`""` and `"#"`** — not a fragment question. At a root they mean the
-      retrieval URI, which is legal and correct. Embedded, they resolve to
-      the *enclosing* resource's own URI, so refusing them there is P12's
-      "two resources, one URI" rule rather than a syntax rule — which is why
-      it applies only below the root. An earlier wording of this item
-      counted root `""` as a problem; it is not.
-
-    **Owner decision (2026-09-23):** keep the 2020-12/2019-09 behavior as
-    the default, empty fragment allowed, and add an opt-in engine option that
-    forbids *any* fragment, empty included, in an `$id` that sets a base URI.
-    It is a forward-compatibility aid: IETF draft-03 makes that a MUST NOT,
-    but draft-03 cannot currently be selected through a metaschema. Opt-in
-    keeps it within D14. Scope it to `$id` as a base URI, so draft-07/06
-    `#name` anchors — an anchor, not a base — are untouched. The dialects
-    guide currently says a base URI "cannot carry a fragment"; it should say
-    *non-empty* fragment, and mention the option once it exists.
-
-12. **`compile_validator` drops the location chain.** Only
-    `compile_evaluator` wraps its entry in `attach_location_chain`; the
-    `validate` callable from `compile_validator` trampolines into the
-    interpreter and re-raises with `location_chain` still `None`. Measured
-    on the same unresolvable `$ref` under an embedded `$id`: interpreter and
-    `compile_evaluator` give a two-hop chain, `compile_validator` gives none.
-    The CHANGELOG's "in both the interpreter and the compiled tier" is
-    therefore half true; fix the wrapper (one `try` around `validate`, as in
-    `compile_evaluator`) and keep the claim, or narrow the claim.
-
-13. **One document-level location is still a bare URI.** `_index` passes
-    `base_uri` (no `#`) as the `where` for a root `DuplicateResourceError`,
-    while the CHANGELOG states every document-level `schema_location` is now
-    `uri#` (P10) and `SchemaValidationError`, `UnknownVocabularyError`, and
-    `FormatsRequiredError` were moved to that form. `Engine.locate` and
-    `location_chain` accept both spellings, so this is cosmetic — but the
-    stated invariant is what a caller will pattern-match on. Same fix as the
-    others: `schema_location(base_uri, "")`. While there: the `except` in
-    `Engine.register_schema` runs `attach_location_chain` after the journal
-    is closed, so a chain lookup there can lazily register a bundled
-    metaschema mid-error-path; harmless today, but a failure inside that
-    registration would replace the error being reported.
-
-14. **No way to replace a registered document.** P12 turns a modified
+11. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
     nothing unregisters. The edit-and-re-register loop (a REPL, a test that
     mutates a fixture, an editor integration re-validating on save) now
@@ -787,20 +731,41 @@ since the emitted code is the same for every level.
     anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
     contributions that nothing else re-derives.
 
+### Resolved (owner, 2026-09-23)
 
-15. **`UnknownDialectError.dialect_uri` never reaches a caller.** P14 added
-    it so the registry could ask the engine for a dialect an embedded
-    resource declared, and the engine consumes it to assemble and retry.
-    When assembly then fails, `_register_assembling_dialects` raises
-    assembly's own error, carrying the location, chain and source across but
-    not the URI — so through `Engine` the attribute is always `None`, and a
-    caller who wants to supply the missing metaschema has to parse the
-    message. The fix is one line: carry `dialect_uri` over with the rest.
-    Worth deciding at the same time whether a document-root `$schema`
-    failure should set it too, so the attribute means "the dialect that
-    could not be found or assembled" wherever it is raised. Once it does,
-    the `dialect_uri` notes in `docs/reference.md` and the changelog, which
-    currently say it arrives `None`, need rewriting.
+- "`compile_validator` drops the location chain": the flag artifact's
+  `validate` is the emitted function itself, so rather than wrap it — one
+  more frame on every call of the tier that exists to be fast — the chain is
+  attached in the two interpreter trampolines (`frag`, `frag_cov`), the only
+  exits from it that carry a location. `attach_location_chain` moved to
+  `registry` so the compiled runtime can reach it without importing the
+  engine.
+- "One document-level location is still a bare URI": a root
+  `DuplicateResourceError` now names `uri#`. The error-path hazard filed
+  with it is closed too: `attach_location_chain` treats a failure while
+  building the chain as "no chain" rather than letting it replace the error
+  being reported, the same rule `_register` applies around `_describe`.
+- "`UnknownDialectError.dialect_uri` never reaches a caller": it now means
+  "the dialect that could not be found or assembled" at every raise site —
+  a root `$schema`, an embedded one, a metaschema cycle, a dialect needing
+  an unregistered vocabulary. `_ensure_dialect_uri` sets it, which covers
+  the root path and the embedded retry alike. A metaschema whose own
+  `$schema` is missing names that inner URI, the one a caller must supply.
+- "A root `$id` is not checked the way an embedded one is": a non-empty
+  fragment in a root `$id` is now `InvalidIdentifierError`, as it is below a
+  root, instead of being stripped. `""` and `"#"` stay legal at a root —
+  they mean the retrieval URI there, and refusing them below a root is P12's
+  one-URI rule, not a syntax rule. The check runs in `_index`, not
+  `identify`, so under `validate_schemas` the 2020-12/2019-09 metaschema's
+  own pattern reports it first.
+- "Opt-in: no fragment at all in `$id`": `create_engine(reject_id_fragments=
+  True)` refuses an empty fragment too, in any `$id` the dialect's extractor
+  returns as a base URI, at a root or below one. draft-07/06 `#name` is an
+  anchor and never reaches the check. That includes a draft-07/06 *base*
+  `$id` ending in `#` (the old `…/s.json#` convention), since the ruling's
+  scope is "an `$id` that sets a base URI". The bundled metaschemas are
+  exempt, as they are from the D20 regex screen, because the draft-06/07
+  ones spell their own `$id` that way.
 
 ### Resolved (owner, 2026-09-22)
 

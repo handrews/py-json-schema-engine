@@ -58,6 +58,7 @@ from json_schema_engine.core.regex import reject_unsafe_regex as _screen_unsafe
 from json_schema_engine.core.registry import (
     DEFAULT_MAX_DEPTH,
     SchemaRegistry,
+    attach_location_chain,
     effective_dialect_uri,
 )
 from json_schema_engine.core.result import (
@@ -75,31 +76,6 @@ from json_schema_engine.core.uri import (
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
     return False
-
-
-def attach_location_chain(
-    registry: SchemaRegistry, error: JsonSchemaEngineError
-) -> None:
-    """Fill in an error's `location_chain` as it leaves the engine (P11).
-
-    Only a registry can build a chain, and no raise site has one — the
-    evaluator, the regex screen and a keyword's `analyze()` all hold a
-    location and nothing else. Doing it here instead of threading a
-    registry into all of them also fixes the chain at the moment of
-    failure, rather than whenever someone later thinks to ask.
-
-    A no-op without a location, or when an inner frame already attached
-    one, so nesting these is harmless: `load_schema` and `_fetch` route
-    through `register_schema`, and `_maybe_validate` through `evaluate`.
-
-    A free function rather than a method because the compiled tier needs
-    the same behavior and already imports from this module.
-    """
-    if error.location_chain is not None or error.schema_location is None:
-        return
-    chain = registry.location_chain(error.schema_location)
-    if chain:
-        error.location_chain = chain
 
 
 class Engine:
@@ -122,6 +98,7 @@ class Engine:
         validate_schemas: bool = False,
         formats: FormatTable | None = None,
         assert_formats: bool = False,
+        reject_id_fragments: bool = False,
     ) -> None:
         if assert_formats and formats is None:
             raise FormatsRequiredError(
@@ -150,6 +127,7 @@ class Engine:
             default_dialect,
             max_depth=max_depth,
             bundled=bundled_metaschemas(),
+            reject_id_fragments=reject_id_fragments,
         )
         self._default_dialect = default_dialect
         self._loaders = tuple(loaders)
@@ -255,10 +233,10 @@ class Engine:
             except UnknownDialectError as error:
                 missing = error.dialect_uri
                 if missing is None or missing in attempted:
-                    # `None`: the root's dialect, or a registry driven
-                    # without an engine. Already attempted: assembly
-                    # returned without registering the URI it was asked
-                    # for, which would otherwise spin.
+                    # `None`: a caller's own code raised one without a URI.
+                    # Already attempted: assembly returned without
+                    # registering the URI it was asked for, which would
+                    # otherwise spin.
                     raise
                 attempted.add(missing)
                 # Outside any walk, so the journal guard that stops
@@ -394,7 +372,9 @@ class Engine:
         if self.dialects.has_dialect(effective):
             return
         if effective in self._assembling:
-            raise UnknownDialectError(f"metaschema cycle at '{effective}'")
+            raise UnknownDialectError(
+                f"metaschema cycle at '{effective}'", dialect_uri=effective
+            )
         self._assembling.add(effective)
         try:
             if not self.schemas.has(effective):
@@ -403,7 +383,8 @@ class Engine:
             if meta is None:
                 raise UnknownDialectError(
                     f"dialect '{effective}' is not registered and no loader "
-                    "provides its metaschema"
+                    "provides its metaschema",
+                    dialect_uri=effective,
                 )
             self._assemble_dialect(effective, meta)
         finally:
@@ -641,6 +622,7 @@ def create_engine(
     validate_schemas: bool = False,
     formats: FormatTable | None = None,
     assert_formats: bool = False,
+    reject_id_fragments: bool = False,
 ) -> Engine:
     """Create an engine with the built-in dialects registered.
 
@@ -648,6 +630,11 @@ def create_engine(
     enables the 2020-12 format-assertion vocabulary; `assert_formats=True`
     additionally makes `format` assert, best effort, in every standard
     dialect. Without either, `format` only annotates.
+
+    `reject_id_fragments=True` refuses any fragment in an `$id` that sets a
+    base URI, an empty trailing `#` included — which 2020-12 and 2019-09
+    allow but IETF draft-03 forbids. Opt-in strictness (D14), for authors
+    who want their schemas ready for that change.
     """
     return Engine(
         default_dialect=default_dialect,
@@ -659,4 +646,5 @@ def create_engine(
         validate_schemas=validate_schemas,
         formats=formats,
         assert_formats=assert_formats,
+        reject_id_fragments=reject_id_fragments,
     )

@@ -221,6 +221,7 @@ class SchemaRegistry:
         *,
         max_depth: int = DEFAULT_MAX_DEPTH,
         bundled: Mapping[str, JsonValue] | None = None,
+        reject_id_fragments: bool = False,
     ) -> None:
         self._dialects = dialects
         self._default_dialect_uri = _resource_of(default_dialect_uri)
@@ -276,6 +277,10 @@ class SchemaRegistry:
         self.on_regex: RegexHook | None = None
         # A compiled artifact's snapshot refuses registration (M6).
         self._read_only = False
+        # Refuse even an empty fragment in a base-URI `$id` (IETF draft-03's
+        # rule; opt-in under D14). Caller schemas only, like `on_regex`:
+        # the bundled draft-06/07 metaschemas end their own `$id` in `#`.
+        self._reject_id_fragments = reject_id_fragments
 
     def snapshot(self) -> "SchemaRegistry":
         """A frozen copy of this registry for a compiled artifact to bind (M6).
@@ -291,6 +296,7 @@ class SchemaRegistry:
             self._default_dialect_uri,
             max_depth=self._max_depth,
             bundled=self._bundled,
+            reject_id_fragments=self._reject_id_fragments,
         )
         copy._documents = dict(self._documents)
         copy._anchors = dict(self._anchors)
@@ -427,6 +433,11 @@ class SchemaRegistry:
         Checked against the text the author wrote, before `resolve` — both
         cases otherwise land back on the enclosing resource's own URI and
         surface as a duplicate of an `$id` that does not exist.
+
+        `""` and `"#"` are refused only here, below a root: they name the
+        *enclosing* resource, so this is P12's one-resource-one-URI rule
+        rather than a syntax rule. At a document root there is nothing
+        enclosing, and they mean the retrieval URI.
         """
         if base_id in ("", "#"):
             raise InvalidIdentifierError(
@@ -434,7 +445,27 @@ class SchemaRegistry:
                 "identifies nothing new",
                 schema_location=where,
             )
-        if split_fragment(base_id)[1]:
+        self._check_id_fragment(base_id, dialect, where)
+
+    def _check_id_fragment(self, base_id: str, dialect: Dialect, where: str) -> None:
+        """Refuse a base-URI `$id` with a non-empty fragment, at any position.
+
+        The one `$id` syntax rule that is the same at a document root and
+        below one. Without it at the root, `resolve` and `_resource_of`
+        quietly strip the fragment and the document registers under a URI
+        its author did not write.
+
+        Under `reject_id_fragments` an empty fragment is refused too.
+        """
+        fragment = split_fragment(base_id)[1]
+        if fragment == "" and self._reject_id_fragments:
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} ends in an empty fragment; "
+                "reject_id_fragments forbids any fragment in an '$id', as "
+                "IETF draft-03 does",
+                schema_location=where,
+            )
+        if fragment:
             raise InvalidIdentifierError(
                 f"'$id': {base_id!r} has a non-empty fragment; under dialect "
                 f"'{dialect.uri}' an '$id' sets a base URI, and a base URI "
@@ -446,7 +477,7 @@ class SchemaRegistry:
         """Bind a resource URI to a schema, or refuse to shadow another (P12).
 
         `where` is the location to blame: the `$id`-bearing position for an
-        embedded resource, the bare resource URI for a document root.
+        embedded resource, `uri#` for a document root.
 
         The claimed-here check comes first because two *identical*
         subschemas claiming one `$id` are still two resources; only a
@@ -560,13 +591,20 @@ class SchemaRegistry:
         root_ids = identity.root_ids
         retrieval_resource = identity.retrieval_resource
         base_uri = identity.base_uri
+        if root_ids.base_id is not None:
+            # Here rather than in `identify`, which `validate_schemas` runs
+            # before registering: the 2020-12 and 2019-09 metaschemas reject
+            # this themselves, and their error should be the one it reports.
+            self._check_id_fragment(
+                root_ids.base_id, dialect, schema_location(base_uri, "")
+            )
         if base_uri != retrieval_resource:
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.
             self._put(self._aliases, retrieval_resource, base_uri)
-        # A resource-level error names the bare resource URI, as the other
-        # document-scoped errors do (`SchemaValidationError`).
-        self._claim_resource(base_uri, schema, base_uri)
+        # A resource-level error names `uri#`, the same `base#pointer` form
+        # every other document-scoped error uses (P10).
+        self._claim_resource(base_uri, schema, schema_location(base_uri, ""))
         self._put(self._document_dialects, base_uri, effective_dialect)
         # A root is its own parent: the terminating case for a chain.
         self._put(
@@ -725,10 +763,12 @@ class SchemaRegistry:
         # The D20 screen is for caller schemas; a trusted resource's own
         # patterns are not its business, so the hook is off for the walk.
         hook, self.on_regex = self.on_regex, None
+        strict, self._reject_id_fragments = self._reject_id_fragments, False
         try:
             self._register(self._bundled[resource_uri], resource_uri, None, None)
         finally:
             self.on_regex = hook
+            self._reject_id_fragments = strict
 
     def is_bundled(self, resource_uri: str) -> bool:
         return resource_uri in self._bundled
@@ -1084,6 +1124,42 @@ class SchemaRegistry:
                     dialect = self._dialect_after(base_uri, dialect)
                     identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
+
+
+def attach_location_chain(
+    registry: SchemaRegistry, error: JsonSchemaEngineError
+) -> None:
+    """Fill in an error's `location_chain` as it leaves the engine (P11).
+
+    Only a registry can build a chain, and no raise site has one — the
+    evaluator, the regex screen and a keyword's `analyze()` all hold a
+    location and nothing else. Doing it here instead of threading a
+    registry into all of them also fixes the chain at the moment of
+    failure, rather than whenever someone later thinks to ask.
+
+    A no-op without a location, or when an inner frame already attached
+    one, so nesting these is harmless: `load_schema` and `_fetch` route
+    through `register_schema`, and `_maybe_validate` through `evaluate`.
+
+    A free function beside the registry rather than in the engine because
+    the compiled tier needs it too — the evaluator artifact's entry and the
+    flag tier's interpreter trampolines — and that runtime depends on the
+    registry, not the engine.
+
+    Best effort: a failure while *describing* leaves the chain unset rather
+    than escaping, because it would replace the error being reported — the
+    rule `_register` applies around `_describe`. It can happen: a chain
+    lookup may lazily register a bundled metaschema, and on the engine's
+    error paths nothing stops it.
+    """
+    if error.location_chain is not None or error.schema_location is None:
+        return
+    try:
+        chain = registry.location_chain(error.schema_location)
+    except JsonSchemaEngineError:
+        return
+    if chain:
+        error.location_chain = chain
 
 
 def _step(node: JsonValue, segment: str | int) -> JsonValue:

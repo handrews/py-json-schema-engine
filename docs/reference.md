@@ -26,14 +26,18 @@ private submodules, is an implementation detail and may change without notice.
 
 `create_engine(*, default_dialect=DIALECT_2020_12, loaders=(),
 regex_dialect="ecma262", regex_backend="re", reject_unsafe_regex=False,
-max_depth=512, validate_schemas=False, formats=None, assert_formats=False) ->
-Engine`: builds an `Engine` with the built-in dialects (2020-12, 2019-09,
-draft-07, draft-06) registered. `formats` (e.g.
+max_depth=512, validate_schemas=False, formats=None, assert_formats=False,
+reject_id_fragments=False) -> Engine`: builds an `Engine` with the built-in
+dialects (2020-12, 2019-09, draft-07, draft-06) registered. `formats` (e.g.
 `json_schema_engine.formats.FORMATS_2020_12`) enables the 2020-12
 format-assertion vocabulary; `assert_formats=True` additionally makes `format`
 assert, best effort, in every standard dialect. Without either, `format` only
-annotates. This is the normal entry point; `Engine()` is equivalent but less
-discoverable.
+annotates. `reject_id_fragments=True` makes an empty trailing fragment in an
+`$id` that sets a base URI (`"https://x.example/s#"`) an
+`InvalidIdentifierError`: 2020-12 and 2019-09 allow it, IETF draft-03 does not,
+so this is a forward-compatibility check. draft-07/06 `$id: "#name"` is an
+anchor, not a base URI, and is unaffected, as are the bundled metaschemas. This
+is the normal entry point; `Engine()` is equivalent but less discoverable.
 
 `Engine`: a JSON Schema engine: dialect registry, schema registry, regex cache,
 and evaluation. Construct through `create_engine`; the constructor takes the
@@ -213,10 +217,12 @@ by schema application.
 `InvalidIdentifierError`: an `$id` cannot identify the resource it claims to
 start — either it carries a non-empty fragment (under 2019-09/2020-12 an `$id`
 sets a base URI, and a base URI cannot carry one; the plain-name form is
-`$anchor`), or it is `""` or `"#"` and so resolves to the enclosing resource,
-identifying nothing new. Per dialect: draft-07/06 read `#name` as an anchor and
-never reach the first rule, so the same document is legal there. Distinct from
-`DuplicateResourceError`, which is about two positions claiming one URI.
+`$anchor`), at a document root or below one; or it is an embedded `""` or
+`"#"` and so resolves to the enclosing resource, identifying nothing new. At a
+document root `""` and `"#"` are legal and mean the retrieval URI. Per dialect:
+draft-07/06 read `#name` as an anchor and never reach the first rule, so the
+same document is legal there. Distinct from `DuplicateResourceError`, which is
+about two positions claiming one URI.
 
 `DuplicateResourceError`: two different schemas claim one resource URI (P12) —
 either a single document minting the same `$id` twice, or a later registration
@@ -240,15 +246,14 @@ captured before the rollback.
 registry snapshot.
 
 `UnknownDialectError`: a schema names a `$schema` dialect URI that no
-registered dialect claims. `dialect_uri: str | None` is how the registry asks
-for a dialect that an *embedded* resource declared (P14): the walk sets it, and
-`Engine.register_schema` consumes it, assembling that dialect from a metaschema
-and registering again. An `UnknownDialectError` that reaches a caller through
-the engine therefore carries `None` there — assembly failed, the unavailable
-dialect is named in the message, and for an embedded demand `schema_location`
-names the resource that asked for it. Only an error raised by the registry
-itself carries the URI; carrying it through the engine is an open item
-(DESIGN.md §7, "`UnknownDialectError.dialect_uri` never reaches a caller").
+registered dialect claims, or that cannot be assembled. `dialect_uri: str |
+None` is the dialect that could not be found or assembled — the URI a loader
+would have to provide a metaschema for. When a metaschema's own `$schema` is
+the missing one, it names that inner dialect, since that is what is actually
+needed. For an *embedded* resource's `$schema` (P14), `schema_location` names
+the resource that asked for it. `Engine.register_schema` assembles an
+embedded dialect from a metaschema and registers again before giving up, so
+an error reaching you means that assembly failed too.
 
 `UnknownKeywordError`: a schema uses a keyword its dialect does not define and
 does not permit unknown keywords for. Only dialects built with

@@ -101,8 +101,8 @@ assert (
 
 The identifier syntax travels with the dialect too. `$id: "#name"` mints an
 anchor under draft-07 and draft-06; under 2019-09 and 2020-12 an `$id` sets
-a base URI, and a base URI cannot carry a fragment — so the same spelling
-is an `InvalidIdentifierError` there, pointing you at `$anchor`:
+a base URI, and a base URI cannot carry a non-empty fragment — so the same
+spelling is an `InvalidIdentifierError` there, pointing you at `$anchor`:
 
 ```python
 from json_schema_engine.core import InvalidIdentifierError
@@ -114,6 +114,23 @@ try:
     )
 except InvalidIdentifierError as error:
     assert "$anchor" in str(error)
+else:
+    raise AssertionError("expected InvalidIdentifierError")
+```
+
+An empty trailing fragment (`"$id": "https://example.com/s#"`) is legal in
+2020-12 and 2019-09, though they say it SHOULD NOT be used; IETF draft-03
+forbids it. `create_engine(reject_id_fragments=True)` refuses it now, so
+schemas you write today are ready for that change:
+
+```python
+strict = create_engine(reject_id_fragments=True)
+try:
+    strict.register_schema(
+        {"$id": "https://example.com/trailing#"}, "https://example.com/trailing"
+    )
+except InvalidIdentifierError:
+    pass
 else:
     raise AssertionError("expected InvalidIdentifierError")
 ```

@@ -143,11 +143,17 @@ class ReadOnlyRegistryError(JsonSchemaEngineError):
 class UnknownDialectError(JsonSchemaEngineError):
     """A schema names a `$schema` dialect URI that no registered dialect claims.
 
-    `dialect_uri` is set only when the demand came from the root of an
-    *embedded* schema resource, mid-walk (P14). The registry holds no
-    loaders, but the engine can often assemble that dialect from a
-    metaschema and register the document again — and because registration
-    is all-or-nothing (P13), the second attempt starts from the state the
+    `dialect_uri` is the dialect that could not be found or assembled —
+    the URI to hand a loader, or to register a dialect under. Set wherever
+    one is raised, including when a metaschema's own `$schema` is the one
+    missing, in which case it names that inner dialect rather than the one
+    the document asked for.
+
+    It is also how the registry asks for a dialect an *embedded* schema
+    resource declared, mid-walk (P14). The registry holds no loaders, but
+    the engine can often assemble that dialect from a metaschema and
+    register the document again — and because registration is
+    all-or-nothing (P13), the second attempt starts from the state the
     first one found rather than from a half-indexed registry.
     """
 

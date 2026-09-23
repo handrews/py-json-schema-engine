@@ -17,7 +17,7 @@ from json_schema_engine.core import channel_ops
 from json_schema_engine.core.channel import PathNode
 from json_schema_engine.core.coverage import fold_index_coverage, fold_name_coverage
 from json_schema_engine.core.cursor import Cursor, child_cursor, root_cursor
-from json_schema_engine.core.errors import MaxDepthExceededError
+from json_schema_engine.core.errors import JsonSchemaEngineError, MaxDepthExceededError
 from json_schema_engine.core.evaluator import (
     EvalState,
     apply_fragment,
@@ -34,7 +34,7 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.regex import RegexCache
-from json_schema_engine.core.registry import SchemaRegistry
+from json_schema_engine.core.registry import SchemaRegistry, attach_location_chain
 
 
 class Searchable(Protocol):
@@ -112,16 +112,24 @@ def make_runtime(
     ) -> bool:
         # Verdict only: the flag tier records nothing, and the interpreter
         # still sees consumed dependency data inside the fragment.
-        return evaluate_fragment(
-            registry,
-            target,
-            root_cursor(value),
-            compile_regex=compile_regex,
-            dynamic_scope=scope,
-            depth=depth,
-            max_depth=max_depth,
-            should_record=_record_nothing,
-        ).valid
+        try:
+            return evaluate_fragment(
+                registry,
+                target,
+                root_cursor(value),
+                compile_regex=compile_regex,
+                dynamic_scope=scope,
+                depth=depth,
+                max_depth=max_depth,
+                should_record=_record_nothing,
+            ).valid
+        except JsonSchemaEngineError as error:
+            # The flag artifact's `validate` is the emitted function itself,
+            # unwrapped, so its errors get their chain here (P11): these two
+            # trampolines are the only way out of it that carries a
+            # location, and a `try` costs nothing until something raises.
+            attach_location_chain(registry, error)
+            raise
 
     def frag_cov(
         target: SchemaRef,
@@ -136,16 +144,20 @@ def make_runtime(
         # interpreter keeps producer records only when some registered
         # consumer reads them, and the plan narrows that further.
         cursor = root_cursor(value)
-        result = evaluate_fragment(
-            registry,
-            target,
-            cursor,
-            compile_regex=compile_regex,
-            dynamic_scope=scope,
-            depth=depth,
-            max_depth=max_depth,
-            should_record=_record_nothing,
-        )
+        try:
+            result = evaluate_fragment(
+                registry,
+                target,
+                cursor,
+                compile_regex=compile_regex,
+                dynamic_scope=scope,
+                depth=depth,
+                max_depth=max_depth,
+                should_record=_record_nothing,
+            )
+        except JsonSchemaEngineError as error:
+            attach_location_chain(registry, error)
+            raise
         if result.valid:
             channel.extend(
                 (record.behavior_id, record.data)

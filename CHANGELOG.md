@@ -26,10 +26,8 @@ minor versions may change public API.
 - `SchemaValidationError`, `UnknownVocabularyError`, and
   `FormatsRequiredError` now report a document-level `schema_location` as
   `uri#` rather than a bare `uri`, so it is a `base#pointer` like every other
-  location. One exception remains: a `DuplicateResourceError` at a document
-  root still reports the bare URI (DESIGN.md §7, "One document-level location
-  is still a bare URI"). `Engine.locate` and `Engine.location_chain` accept
-  both spellings.
+  location; the new document-root `DuplicateResourceError` uses the same
+  form. `Engine.locate` and `Engine.location_chain` accept both spellings.
 - **Duplicate identifiers are now registration errors (DESIGN.md P12).** Two
   different schemas may no longer claim one resource URI
   (`DuplicateResourceError`), and two different schema objects may no longer
@@ -96,8 +94,13 @@ minor versions may change public API.
   that does not exist. Per dialect: draft-07/06 read `#name` as an anchor and
   are unaffected. An empty trailing fragment (`"sub#"`) stays legal, matching
   2020-12's metaschema and the bundled draft-06/07 metaschemas' own root
-  `$id`. A document-root `$id` is not yet checked the same way (DESIGN.md §7,
-  "A root `$id` is not checked the way an embedded one is").
+  `$id`.
+- **A document-root `$id` with a non-empty fragment now raises
+  `InvalidIdentifierError` too.** It used to be stripped silently, so
+  `{"$id": "https://x.example/s#frag"}` registered as `https://x.example/s`
+  and a root `"$id": "#foo"` landed on the retrieval URI. `""` and `"#"` stay
+  legal at a root, where they mean the retrieval URI; only below a root do
+  they collide with the enclosing resource.
 
 ### Added
 
@@ -114,10 +117,8 @@ minor versions may change public API.
   `format_location_chain`.
 - An error that has a schema location carries its `location_chain` when it
   leaves `register_schema`, `load_schema`, `load`, `evaluate`, or a
-  `compile_evaluator` artifact. **Not yet** from a `compile_validator`
-  artifact, whose errors arrive with `location_chain` unset (DESIGN.md §7,
-  "`compile_validator` drops the location chain"). `str(error)` appends the
-  chain **only** past one hop, so a single-resource schema's message is
+  `compile_evaluator` or `compile_validator` artifact. `str(error)` appends
+  the chain **only** past one hop, so a single-resource schema's message is
   byte-identical to before.
 - `JsonSchemaEngineError.schema_source`: the failing position seen physically
   (D17) — the document, the document-rooted pointer, and the source range when
@@ -132,12 +133,15 @@ minor versions may change public API.
   only the URI that came out. A pointer miss also names the failing segment and
   the prefix that matched, so `#/a/b/c/d` failing at `b` no longer reads exactly
   like the same pointer failing at `d`.
-- `UnknownDialectError.dialect_uri`: how the registry asks for a dialect an
-  *embedded* resource declared (P14). `Engine.register_schema` consumes it to
-  assemble the dialect and register again, so an error reaching a caller
-  through the engine carries `None` there — the unavailable dialect is named
-  in the message instead, and `schema_location` names the resource that asked
-  (DESIGN.md §7, "`UnknownDialectError.dialect_uri` never reaches a caller").
+- `UnknownDialectError.dialect_uri`: the dialect that could not be found or
+  assembled, so a caller can supply its metaschema without parsing the
+  message. When a metaschema's own `$schema` is the one missing, it names
+  that inner dialect. For a dialect an *embedded* resource declared (P14),
+  `schema_location` names the resource that asked.
+- `create_engine(reject_id_fragments=True)`: an opt-in check that refuses
+  any fragment in an `$id` that sets a base URI, including the empty trailing
+  `#` that 2020-12 and 2019-09 allow and IETF draft-03 forbids. draft-07/06
+  `$id: "#name"` anchors and the bundled metaschemas are unaffected.
 - `json_schema_engine.core.uri.pointer_fragment`,
   `pointer_from_fragment`, and `schema_location`: the single pair of
   conversions between a plain-text JSON Pointer and its URI fragment form,
