@@ -105,7 +105,8 @@ assert result.output_document == {
 ```
 
 `create_engine(validate_schemas=True)` checks every registered document
-against its metaschema and raises `SchemaValidationError` with the errors.
+against its metaschema, each embedded dialect against its own, and raises
+`SchemaValidationError` with the errors.
 A loader that reports source positions (see `parse_json_with_ranges`,
 exported from `json_schema_engine.core`) lets `evaluate(..., positions=True)`
 attach a `source` location to every error and annotation, and

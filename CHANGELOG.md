@@ -69,10 +69,17 @@ minor versions may change public API.
   invalid schema that still evaluated. The option remains opt-in and off by
   default — validating the OAS 3.1 schema costs 2.0 ms against 56.8 ms, a 28×
   difference on registration. A document broken both ways at once now reports
-  `SchemaValidationError` rather than `InvalidSchemaError`. The check uses the
-  *root* dialect's metaschema only: an embedded resource declaring a different
-  `$schema` is not yet checked against its own (DESIGN.md §7, "Per-resource
-  metaschema validation").
+  `SchemaValidationError` rather than `InvalidSchemaError`.
+- **`validate_schemas` checks each dialect against its own metaschema
+  (DESIGN.md P17).** The root dialect's metaschema used to judge the whole
+  document, which cut both ways. A valid draft-07 resource embedded in a
+  2020-12 document was rejected for its array-form `items`, and an invalid
+  2020-12 resource embedded in a draft-07 document registered, because
+  draft-07's metaschema knows none of its keywords. The root and every
+  embedded resource whose `$schema` differs from its parent's are now checked
+  separately, as 2020-12 core §9.3.3 recommends, and a failure names that
+  resource. A region whose metaschema is unavailable is skipped, as the root
+  always was. A validated registration now walks the document twice.
 - **`$schema` now governs the schema resource it roots, not the document
   (DESIGN.md P14).** An embedded `$id` resource declaring its own `$schema` is
   walked, indexed and evaluated under it; one without a `$schema` inherits the

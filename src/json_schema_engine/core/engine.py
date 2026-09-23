@@ -24,7 +24,7 @@ from json_schema_engine.core.errors import (
 )
 from json_schema_engine.core.evaluator import EvalState, run_evaluation
 from json_schema_engine.core.formats import FormatTable
-from json_schema_engine.core.json_model import JsonValue, is_object
+from json_schema_engine.core.json_model import JsonValue, is_object, unescape_segment
 from json_schema_engine.core.keywords._ids import (
     DIALECT_2020_12,
     VOCAB_CORE_2019,
@@ -76,6 +76,45 @@ from json_schema_engine.core.uri import (
 
 def _record_nothing(keyword_name: str, vocabulary_uri: str | None) -> bool:
     return False
+
+
+def _node_at(document: JsonValue, pointer: str) -> JsonValue:
+    """The value at a JSON Pointer the registration walk produced."""
+    node = document
+    for raw in pointer.split("/")[1:]:
+        segment = unescape_segment(raw)
+        if isinstance(node, list):
+            node = node[int(segment)]
+        else:
+            assert is_object(node)
+            node = node[segment]
+    return node
+
+
+def _masked(node: JsonValue, pointers: Sequence[str]) -> JsonValue:
+    """`node` with the subtree at each relative pointer replaced by `{}`.
+
+    Copies only the containers on the path to a masked subtree; the rest is
+    shared. A pointer inside another masked one is subsumed by it.
+    """
+    if not pointers:
+        return node
+    if "" in pointers:
+        return {}
+    groups: dict[str, list[str]] = {}
+    for pointer in pointers:
+        head, _, rest = pointer[1:].partition("/")
+        groups.setdefault(unescape_segment(head), []).append("/" + rest if rest else "")
+    if isinstance(node, list):
+        items = list(node)
+        for segment, rests in groups.items():
+            items[int(segment)] = _masked(items[int(segment)], rests)
+        return items
+    assert is_object(node)
+    members = dict(node)
+    for segment, rests in groups.items():
+        members[segment] = _masked(members[segment], rests)
+    return members
 
 
 class Engine:
@@ -188,7 +227,7 @@ class Engine:
             # metaschema must not be registered at all. Nothing needs to be
             # registered to check it — the metaschema sees the document as
             # plain data — and skipping the walk makes the failure cheaper.
-            self._maybe_validate(schema, retrieval_uri, dialect_uri)
+            self._maybe_validate(schema, retrieval_uri, dialect_uri, get_range)
             uri = self._assembling_dialects(
                 lambda: self.schemas.register(
                     schema, retrieval_uri, dialect_uri, get_range
@@ -441,33 +480,93 @@ class Engine:
         )
 
     def _maybe_validate(
-        self, schema: JsonValue, retrieval_uri: str, dialect_uri: str | None
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
     ) -> None:
-        """The `validate_schemas` policy: a document must satisfy its dialect.
+        """The `validate_schemas` policy: each resource satisfies its dialect.
 
         Runs *before* registration, so a document that fails is never
         registered — which is what the option has always been documented to
-        mean. `identify` names the resource and dialect the registration
-        would have used, so the message and location are the same either
-        way.
+        mean.
 
-        Skipped when the metaschema is unavailable ("cannot check", not
-        failure). Bundled resources never reach this path, since the
-        registry registers them itself.
+        Per dialect region (P17): 2020-12 core §9.3.3 says a compound
+        document SHOULD NOT be validated by applying one metaschema to the
+        whole of it, and each resource SHOULD be validated against its own.
+        A survey (a registration dry run) finds the resources and their
+        dialects; the root, and every resource whose dialect differs from
+        its parent's, is a region, checked against its own metaschema with
+        each nested region masked to `{}`. A same-dialect embedded resource
+        stays in its parent's region, where the same metaschema reaches it.
+
+        A region whose metaschema is unavailable is skipped ("cannot
+        check", not failure), at the root and below it alike. Bundled
+        resources never reach this path, since the registry registers them
+        itself.
         """
         if not self._validate_schemas:
             return
-        identity = self.schemas.identify(schema, retrieval_uri, dialect_uri)
-        if not self.schemas.has(identity.dialect_uri):
-            return
-        result = self.evaluate(identity.dialect_uri, schema, output="basic")
-        if not result.valid:
-            raise SchemaValidationError(
-                f"schema '{identity.base_uri}' fails its metaschema "
-                f"'{identity.dialect_uri}'",
-                list(result.errors or []),
-                schema_location=schema_location(identity.base_uri, ""),
+        try:
+            surveyed = self._assembling_dialects(
+                lambda: self.schemas.survey(
+                    schema, retrieval_uri, dialect_uri, get_range
+                )
             )
+        except JsonSchemaEngineError:
+            # The walk refuses the document. If its root's metaschema does
+            # too, that is the report to give: it lists every violation,
+            # where the walk stopped at the first.
+            identity = self.schemas.identify(schema, retrieval_uri, dialect_uri)
+            self._check_region(
+                schema, identity.base_uri, identity.dialect_uri, None, None
+            )
+            raise
+        dialect_of = {r.base_uri: r.dialect_uri for r in surveyed}
+        regions = [
+            r
+            for r in surveyed
+            if r.parent_uri is None or dialect_of.get(r.parent_uri) != r.dialect_uri
+        ]
+        for region in regions:
+            inside = region.document_pointer + "/"
+            nested = [
+                r.document_pointer[len(region.document_pointer) :]
+                for r in regions
+                if r.document_pointer.startswith(inside)
+            ]
+            instance = _masked(_node_at(schema, region.document_pointer), nested)
+            self._check_region(
+                instance,
+                region.base_uri,
+                region.dialect_uri,
+                region.location_chain,
+                region.schema_source,
+            )
+
+    def _check_region(
+        self,
+        instance: JsonValue,
+        base_uri: str,
+        dialect_uri: str,
+        chain: LocationChain | None,
+        source: SourceLocation | None,
+    ) -> None:
+        if not self.schemas.has(dialect_uri):
+            return
+        result = self.evaluate(dialect_uri, instance, output="basic")
+        if not result.valid:
+            error = SchemaValidationError(
+                f"schema '{base_uri}' fails its metaschema '{dialect_uri}'",
+                list(result.errors or []),
+                schema_location=schema_location(base_uri, ""),
+            )
+            # Captured by the survey, before its rollback: the document is
+            # not registered, so nothing could look these up now.
+            error.location_chain = chain or None
+            error.schema_source = source
+            raise error
 
     # --- evaluation ------------------------------------------------------
 
