@@ -55,7 +55,10 @@ def _fingerprint(reg: SchemaRegistry) -> dict[str, object]:
         "dynamic_anchors": [(k, id(v)) for k, v in reg._dynamic_anchors.items()],
         "document_dialects": list(reg._document_dialects.items()),
         "resource_locations": list(reg._resource_locations.items()),
-        "document_ranges": [(k, id(v)) for k, v in reg._document_ranges.items()],
+        # Sorted: a journaled removal is undone by reinsertion at the end,
+        # and only `_documents` promises an order.
+        "owned_resources": sorted(reg._owned_resources.items()),
+        "document_ranges": sorted((k, id(v)) for k, v in reg._document_ranges.items()),
         "aliases": list(reg._aliases.items()),
         "recursive_roots": sorted(reg._recursive_roots),
         "produced_ids": sorted(reg._produced_ids),
@@ -77,7 +80,9 @@ def _populated(**kwargs: object) -> SchemaRegistry:
     """A registry with something to lose: several documents, an embedded
     `$id`, anchors, a dynamic anchor, an alias, and a pending reference."""
     reg = make_registry(**kwargs)  # type: ignore[arg-type]
-    reg.register(dict(SHARED), "urn:shared")
+    # With a range lookup, so a failing document that absorbs `SHARED` as an
+    # equal embedded copy has a range and an ownership record to restore.
+    reg.register(dict(SHARED), "urn:shared", get_range=lambda pointer: None)
     reg.register(
         {
             "$id": "https://x.example/outer",
@@ -286,7 +291,7 @@ def test_pending_references_are_rolled_back() -> None:
 
 
 def test_index_census() -> None:
-    # A twelfth index fails here until `snapshot()` and `_fingerprint` both
+    # A thirteenth index fails here until `snapshot()` and `_fingerprint` both
     # learn about it.
     reg = SchemaRegistry(DialectRegistry(), DIALECT)
     found = {
@@ -304,6 +309,7 @@ def test_index_census() -> None:
         "_consumed_ids",
         "_document_dialects",
         "_resource_locations",
+        "_owned_resources",
         "_document_ranges",
         "_aliases",
         "_pending_resources",

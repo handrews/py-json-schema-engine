@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from json_schema_engine.core import create_engine
+from json_schema_engine.core import DIALECT_2020_12, Engine, create_engine
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.dialect import (
     DialectRegistry,
@@ -27,6 +27,7 @@ from json_schema_engine.core.errors import (
     UnresolvableReferenceError,
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
+from json_schema_engine.core.metaschemas import bundled_metaschemas
 from json_schema_engine.core.registry import SchemaRegistry
 
 # A miniature dialect: enough applicators to exercise the walk without any
@@ -787,6 +788,90 @@ def test_reject_id_fragments_exempts_the_bundled_metaschemas() -> None:
         "https://x.example/checked",
     )
     assert engine.schemas.has("http://json-schema.org/draft-07/schema")
+
+
+# --- aliases and bundled URIs are claims (P15) --------------------------
+#
+# A retrieval alias is consulted before the resource index, so a resource
+# under an aliased URI would be unreachable; and a bundled metaschema's URI
+# answers the same way whether or not it has been lazily registered yet.
+
+ALIASED: JsonValue = {"$id": "https://x.example/alias-target"}
+ALIAS = "https://x.example/alias-key"
+
+
+def _aliased_engine() -> Engine:
+    engine = create_engine()
+    engine.register_schema(ALIASED, ALIAS)
+    return engine
+
+
+def test_an_embedded_id_equal_to_a_retrieval_alias_is_refused() -> None:
+    engine = _aliased_engine()
+    with pytest.raises(DuplicateResourceError) as info:
+        engine.register_schema(
+            {"$defs": {"a": {"$id": ALIAS, "type": "string"}}},
+            "https://x.example/claimer",
+        )
+    assert "https://x.example/alias-target" in str(info.value)
+    assert info.value.schema_location == "https://x.example/claimer#/$defs/a"
+    assert not engine.schemas.has("https://x.example/claimer")
+
+
+def test_a_document_under_an_aliased_uri_is_refused() -> None:
+    engine = _aliased_engine()
+    with pytest.raises(DuplicateResourceError):
+        engine.register_schema({"type": "string"}, ALIAS)
+    assert engine.schemas.root_ref(ALIAS).base_uri == "https://x.example/alias-target"
+
+
+def test_a_retrieval_uri_naming_a_resource_is_refused() -> None:
+    engine = create_engine()
+    engine.register_schema({"type": "string"}, "https://x.example/taken")
+    with pytest.raises(DuplicateResourceError) as info:
+        engine.register_schema(
+            {"$id": "https://x.example/other"}, "https://x.example/taken"
+        )
+    assert "already names a registered resource" in str(info.value)
+    assert not engine.schemas.has("https://x.example/other")
+
+
+def test_a_retrieval_uri_aliasing_another_resource_is_refused() -> None:
+    engine = _aliased_engine()
+    with pytest.raises(DuplicateResourceError) as info:
+        engine.register_schema({"$id": "https://x.example/elsewhere"}, ALIAS)
+    assert "already bound" in str(info.value)
+    assert not engine.schemas.has("https://x.example/elsewhere")
+
+
+def test_an_equal_re_registration_under_its_alias_is_fine() -> None:
+    engine = _aliased_engine()
+    assert engine.register_schema(ALIASED, ALIAS) == "https://x.example/alias-target"
+
+
+@pytest.mark.parametrize("used", [False, True], ids=["fresh", "after-use"])
+def test_a_bundled_uri_is_reserved(used: bool) -> None:
+    engine = create_engine()
+    if used:
+        engine.evaluate(DIALECT_2020_12, {})
+    with pytest.raises(DuplicateResourceError):
+        engine.register_schema(
+            {"$id": DIALECT_2020_12, "type": "string"}, "urn:x:override"
+        )
+    with pytest.raises(DuplicateResourceError):
+        engine.register_schema({"$id": "urn:x:elsewhere"}, DIALECT_2020_12)
+    assert not engine.schemas.has("urn:x:elsewhere")
+    # Either way, the metaschema that answers is the bundled one.
+    assert engine.evaluate(DIALECT_2020_12, {"type": 1}).valid is False
+
+
+@pytest.mark.parametrize("used", [False, True], ids=["fresh", "after-use"])
+def test_an_equal_copy_of_a_bundled_metaschema_is_fine(used: bool) -> None:
+    engine = create_engine()
+    if used:
+        engine.evaluate(DIALECT_2020_12, {})
+    copy = bundled_metaschemas()[DIALECT_2020_12]
+    assert engine.register_schema(copy, DIALECT_2020_12) == DIALECT_2020_12
 
 
 def test_two_positions_claiming_one_uri_is_still_a_duplicate() -> None:

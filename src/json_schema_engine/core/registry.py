@@ -99,6 +99,10 @@ class _Registration:
 
     `adds` holds `(index, member)` for the set indexes, recorded only when
     the member was new — a union cannot say who added what.
+
+    A removal (`_pop`) records the same `(index, key, prior)` triple as a
+    write, so undo puts the entry back. Nothing removes from `_documents`
+    during a registration, so its order is never disturbed by one.
     """
 
     writes: list[tuple[dict[str, Any], str, Any]] = field(
@@ -242,6 +246,11 @@ class SchemaRegistry:
         self._consumed_ids: set[str] = set()
         self._document_dialects: dict[str, str] = {}
         self._resource_locations: dict[str, DocumentLocation] = {}
+        # Document root -> every resource its last registration claimed
+        # (P15), which is what `unregister` removes. `_resource_locations`
+        # stays the truth for who owns a resource *now*: an equal copy in a
+        # later document takes a resource over without editing this.
+        self._owned_resources: dict[str, frozenset[str]] = {}
         # Position lookups by document URI (D17): only the outermost
         # registration installs one; embedded resources map back to their
         # document through `_resource_locations`.
@@ -306,6 +315,7 @@ class SchemaRegistry:
         copy._consumed_ids = set(self._consumed_ids)
         copy._document_dialects = dict(self._document_dialects)
         copy._resource_locations = dict(self._resource_locations)
+        copy._owned_resources = dict(self._owned_resources)
         copy._document_ranges = dict(self._document_ranges)
         copy._aliases = dict(self._aliases)
         copy._read_only = True
@@ -334,6 +344,80 @@ class SchemaRegistry:
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
 
+    def unregister(self, uri: str) -> None:
+        """Remove a registered document and everything it claimed (P15).
+
+        `uri` names a document root, directly or by its retrieval URI.
+        Removal drops the root, every embedded `$id` resource, their
+        anchors and dynamic anchors, recursive roots, dialect and location
+        entries, the range lookup, and every alias pointing at it — except
+        a resource an equal copy in a later document has since taken over,
+        which stays with its current owner. Unregister then `register` is
+        how a document is replaced: there is no `replace=`, so a duplicate
+        is always an error unless the caller acted first.
+
+        `_produced_ids`/`_consumed_ids` and the pending queue are left
+        alone: the unions only widen retention, nothing re-derives them,
+        and a queued reference is still an unmet reference. A `snapshot()`
+        taken earlier keeps everything, since its indexes are copies.
+
+        Raises `UnresolvableReferenceError` for a URI that names no
+        document root, including a resource embedded in another document;
+        `ReadOnlyRegistryError` on a snapshot, during a registration, or
+        for a bundled metaschema, whose URI is reserved.
+        """
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this schema registry is a compiled artifact's snapshot; "
+                "unregister on the engine"
+            )
+        if self._journal is not None:
+            # Caller code inside a walk: the enclosing registration's undo
+            # would resurrect whatever this removed.
+            raise ReadOnlyRegistryError(
+                "cannot unregister while a registration is in progress"
+            )
+        resource = _resource_of(uri)
+        # Before any lookup that goes through `_canonical`, which would
+        # lazily register the very metaschema being refused.
+        if resource in self._bundled:
+            raise ReadOnlyRegistryError(
+                f"'{resource}' is a bundled metaschema and cannot be unregistered"
+            )
+        doc = self._aliases.get(resource, resource)
+        location = self._resource_locations.get(doc)
+        if location is None:
+            raise UnresolvableReferenceError(f"unknown schema '{doc}'")
+        if location.document_uri != doc:
+            raise UnresolvableReferenceError(
+                f"'{doc}' is a resource embedded in document "
+                f"'{location.document_uri}'; unregister that document"
+            )
+        self._evict(doc)
+        self._reference_memo.clear()
+
+    def _evict(self, doc: str) -> None:
+        """Drop what `doc`'s registration claimed and still owns."""
+        removed: set[str] = set()
+        for resource in self._owned_resources.pop(doc, frozenset()):
+            location = self._resource_locations.get(resource)
+            if location is None or location.document_uri != doc:
+                continue
+            removed.add(resource)
+            del self._documents[resource]
+            del self._resource_locations[resource]
+            self._document_dialects.pop(resource, None)
+            self._recursive_roots.discard(resource)
+        # Anchors are keyed `resource#name` in one flat index, so this is a
+        # pass over all of them; unregistering is rare enough not to keep a
+        # per-resource index for it.
+        for index in (self._anchors, self._dynamic_anchors):
+            for key in [k for k in index if k.partition("#")[0] in removed]:
+                del index[key]
+        self._document_ranges.pop(doc, None)
+        for alias in [a for a, target in self._aliases.items() if target == doc]:
+            del self._aliases[alias]
+
     def _put[V](self, index: dict[str, V], key: str, value: V) -> None:
         """Write an index entry, journaled so it can be undone (§7).
 
@@ -344,6 +428,13 @@ class SchemaRegistry:
         if self._journal is not None:
             self._journal.writes.append((index, key, index.get(key, _MISSING)))
         index[key] = value
+
+    def _pop[V](self, index: dict[str, V], key: str) -> None:
+        """Remove an index entry, journaled so it can be undone (§7)."""
+        if key in index:
+            if self._journal is not None:
+                self._journal.writes.append((index, key, index[key]))
+            del index[key]
 
     def _add(self, index: set[str], member: str) -> None:
         """Add a set member, journaled when it is genuinely new.
@@ -483,20 +574,58 @@ class SchemaRegistry:
         subschemas claiming one `$id` are still two resources; only a
         re-registration of the same document may rebind, and then only to an
         equal schema.
+
+        A retrieval alias and a bundled metaschema's URI are claims too
+        (P15). Lookups prefer the alias, so a resource under an aliased URI
+        could never be reached; and a bundled URI is reserved for content
+        equal to the bundled document, whether or not it has been lazily
+        registered yet — otherwise the same call succeeds on a fresh engine
+        and fails once the metaschema has been used.
         """
         if base_uri in self._claimed_resources:
             raise DuplicateResourceError(
                 f"resource '{base_uri}' is claimed twice in one document",
                 schema_location=where,
             )
+        bound = self._aliases.get(base_uri)
+        if bound is not None:
+            raise DuplicateResourceError(
+                f"'{base_uri}' is the retrieval URI of resource '{bound}'",
+                schema_location=where,
+            )
         existing = self._documents.get(base_uri)
-        if existing is not None and not json_equal(existing, node):
+        if existing is None:
+            existing = self._bundled.get(base_uri)
+            if existing is not None and not json_equal(existing, node):
+                raise DuplicateResourceError(
+                    f"'{base_uri}' is a bundled metaschema's URI; register a "
+                    "custom metaschema under a URI of its own",
+                    schema_location=where,
+                )
+        elif not json_equal(existing, node):
             raise DuplicateResourceError(
                 f"resource '{base_uri}' is already registered as a different schema",
                 schema_location=where,
             )
         self._claimed_resources.add(base_uri)
         self._put(self._documents, base_uri, node)
+
+    def _check_alias(self, retrieval: str, base_uri: str) -> None:
+        """Refuse a retrieval URI that cannot alias `base_uri` (P15)."""
+        where = schema_location(base_uri, "")
+        if retrieval in self._documents or retrieval in self._bundled:
+            raise DuplicateResourceError(
+                f"retrieval URI '{retrieval}' already names a registered "
+                f"resource; the document declares '{base_uri}'",
+                schema_location=where,
+            )
+        bound = self._aliases.get(retrieval)
+        if bound is not None and bound != base_uri:
+            raise DuplicateResourceError(
+                f"retrieval URI '{retrieval}' is already bound to resource "
+                f"'{bound}'; the document declares '{base_uri}'",
+                schema_location=where,
+            )
 
     def _claim_anchor(self, key: str, here: SchemaRef) -> None:
         """Bind an anchor key, or refuse to shadow another object's (P12).
@@ -599,6 +728,11 @@ class SchemaRegistry:
                 root_ids.base_id, dialect, schema_location(base_uri, "")
             )
         if base_uri != retrieval_resource:
+            # The retrieval URI becomes an alias of the declared base, so it
+            # must not already name a resource of its own, alias a different
+            # one, or be reserved for a bundled metaschema (P15): any of those
+            # would leave one of the two unreachable.
+            self._check_alias(retrieval_resource, base_uri)
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.
             self._put(self._aliases, retrieval_resource, base_uri)
@@ -614,7 +748,13 @@ class SchemaRegistry:
         )
         if get_range is not None:
             self._put(self._document_ranges, base_uri, get_range)
+        else:
+            # A re-registration is "this is the document now": one without
+            # positions has said there are none, and the earlier lookup may
+            # describe differently formatted text.
+            self._pop(self._document_ranges, base_uri)
         self._walk(schema, base_uri, "", base_uri, "", dialect, 0)
+        self._put(self._owned_resources, base_uri, frozenset(self._claimed_resources))
         return base_uri
 
     def _walk(
@@ -661,6 +801,12 @@ class SchemaRegistry:
             # again — the inner extractor's own `base_id` is never used.
             ids = replace(dialect.identifiers(node), base_id=ids.base_id)
             self._claim_resource(base_uri, node, claimed_at)
+            prior = self._resource_locations.get(base_uri)
+            if prior is not None and prior.document_uri == base_uri:
+                # An equal copy embedded here takes over a resource that was
+                # a document of its own, which therefore stops being one.
+                self._pop(self._owned_resources, base_uri)
+                self._pop(self._document_ranges, base_uri)
             self._put(self._document_dialects, base_uri, dialect.uri)
             self._put(
                 self._resource_locations,

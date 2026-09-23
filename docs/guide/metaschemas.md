@@ -195,6 +195,26 @@ assert no_loader_engine.evaluate(meta_uri, {"type": "integer"}).valid is True
 assert no_loader_engine.evaluate(meta_uri, {"type": 1}).valid is False
 ```
 
+A bundled URI is reserved for its bundled content. You can register an
+equal copy, but a different document under one of these URIs is a
+`DuplicateResourceError`, whether or not the metaschema has been used yet. A
+bundled metaschema cannot be unregistered either. A customized metaschema
+goes under a URI of its own, as the `$vocabulary` section above does.
+
+```python
+from json_schema_engine.core import DuplicateResourceError
+
+try:
+    create_engine().register_schema(
+        {"$id": "https://json-schema.org/draft/2020-12/schema", "type": "object"},
+        "https://ex.example/my-meta",
+    )
+    overridden = True
+except DuplicateResourceError:
+    overridden = False
+assert overridden is False
+```
+
 See [Loaders](loaders.md) for how a `$ref` to a *non*-bundled resource
 gets resolved instead.
 

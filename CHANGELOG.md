@@ -37,18 +37,20 @@ minor versions may change public API.
   shadowing: because a dynamic anchor is also a plain anchor, `$anchor: "n"`
   on one object and `$dynamicAnchor: "n"` on another left `$ref` and
   `$dynamicRef` resolving the same fragment to *different* schemas.
-  Re-registering an *equal* document is still a no-op, and one object carrying
-  both `$anchor` and `$dynamicAnchor` under one name is still fine. No case in
+  Re-registering an *equal* document is still allowed; it is walked again, and
+  its source-range lookup is replaced — dropped, when the re-registration
+  supplies none, since equal JSON can come from differently formatted text.
+  One object carrying both `$anchor` and `$dynamicAnchor` under one name is
+  still fine. No case in
   the official test suite, the bundled metaschemas, or this repo's fixtures is
   affected. **Breaking:** a document that registered before may now raise, and
-  a *modified* document can no longer be re-registered under its URI — there
-  is not yet a way to replace or unregister one, so an edit-and-re-register
-  loop needs a fresh engine (DESIGN.md §7, "No way to replace a registered
-  document"). **Known gaps:** three shapes still shadow silently — an embedded
-  `$id` equal to another document's retrieval URI, a retrieval URI reused for
-  a different document, and a bundled metaschema's URI, which can be claimed
-  only before that metaschema is first used (DESIGN.md §7, "P12 has three gaps
-  where an identifier still shadows silently").
+  a *modified* document can no longer be re-registered under its URI;
+  unregister it first with `Engine.unregister_schema`. Retrieval URIs and bundled metaschema URIs are claims too
+  (DESIGN.md P15): an `$id` equal to another document's retrieval URI, a
+  retrieval URI reused for a different document, and a bundled metaschema's
+  URI claimed with different content are all `DuplicateResourceError`. The
+  last used to succeed on a fresh engine and fail once the metaschema had been
+  used.
 - **Registration is now all-or-nothing (DESIGN.md P13).** A document whose
   registration raises leaves the registry exactly as it found it, so an engine
   stays usable after a caught registration error. Previously the half-indexed
@@ -104,6 +106,13 @@ minor versions may change public API.
 
 ### Added
 
+- **`Engine.unregister_schema(uri)` (DESIGN.md P15).** It removes a
+  registered document and everything its registration claimed: embedded `$id`
+  resources, anchors, recursive roots, dialect and location entries, its
+  source-range lookup, and its retrieval aliases. Unregister then register is
+  how a document is replaced. A resource that an equal copy in a later document
+  has taken over stays with that document. Compiled artifacts keep what they
+  were compiled against. The shape matches the TypeScript engine's.
 - **Location chains (DESIGN.md P11).** A canonical `base_uri#pointer` names a
   position exactly and still may not locate it: in a bundled document the base
   may be an embedded `$id` the reader never knew was there, and a relative

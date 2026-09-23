@@ -141,3 +141,34 @@ def test_locate_returns_none_for_an_unknown_anchor() -> None:
         {"$id": "https://anchor.example/bare"}, "https://anchor.example/bare"
     )
     assert engine.locate("https://anchor.example/bare#nosuch") is None
+
+
+def test_a_re_registration_without_ranges_drops_the_old_lookup() -> None:
+    # Equal JSON can come from differently formatted text, so the earlier
+    # lookup's offsets could point at the wrong characters: a
+    # re-registration that brings no lookup has said there is none.
+    loaded = parse_json_with_ranges(TEXT, "https://pos.example/root")
+    engine = create_engine()
+    uri = engine.register_schema(loaded.value, loaded.uri, get_range=loaded.get_range)
+    ranged = engine.locate(f"{uri}#/$ref")
+    assert ranged is not None and "range" in ranged
+    engine.register_schema(loaded.value, loaded.uri)
+    assert engine.locate(f"{uri}#/$ref") == {
+        "documentUri": "https://pos.example/root",
+        "pointer": "/$ref",
+    }
+
+
+def test_an_absorbed_document_drops_its_lookup() -> None:
+    # An equal embedded copy takes a document's resource over, so that
+    # document is no longer one and its range lookup goes with it.
+    solo = "https://pos.example/solo"
+    loaded = parse_json_with_ranges(f'{{"$id": "{solo}", "type": "string"}}', solo)
+    engine = create_engine()
+    engine.register_schema(loaded.value, solo, get_range=loaded.get_range)
+    assert engine.schemas.range(solo, "") is not None
+    engine.register_schema(
+        {"$defs": {"s": {"$id": solo, "type": "string"}}},
+        "https://pos.example/holder",
+    )
+    assert engine.schemas.range(solo, "") is None
