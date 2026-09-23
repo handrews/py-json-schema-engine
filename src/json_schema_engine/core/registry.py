@@ -427,6 +427,11 @@ class SchemaRegistry:
         Checked against the text the author wrote, before `resolve` — both
         cases otherwise land back on the enclosing resource's own URI and
         surface as a duplicate of an `$id` that does not exist.
+
+        `""` and `"#"` are refused only here, below a root: they name the
+        *enclosing* resource, so this is P12's one-resource-one-URI rule
+        rather than a syntax rule. At a document root there is nothing
+        enclosing, and they mean the retrieval URI.
         """
         if base_id in ("", "#"):
             raise InvalidIdentifierError(
@@ -434,6 +439,16 @@ class SchemaRegistry:
                 "identifies nothing new",
                 schema_location=where,
             )
+        self._check_id_fragment(base_id, dialect, where)
+
+    def _check_id_fragment(self, base_id: str, dialect: Dialect, where: str) -> None:
+        """Refuse a base-URI `$id` with a non-empty fragment, at any position.
+
+        The one `$id` syntax rule that is the same at a document root and
+        below one. Without it at the root, `resolve` and `_resource_of`
+        quietly strip the fragment and the document registers under a URI
+        its author did not write.
+        """
         if split_fragment(base_id)[1]:
             raise InvalidIdentifierError(
                 f"'$id': {base_id!r} has a non-empty fragment; under dialect "
@@ -560,6 +575,13 @@ class SchemaRegistry:
         root_ids = identity.root_ids
         retrieval_resource = identity.retrieval_resource
         base_uri = identity.base_uri
+        if root_ids.base_id is not None:
+            # Here rather than in `identify`, which `validate_schemas` runs
+            # before registering: the 2020-12 and 2019-09 metaschemas reject
+            # this themselves, and their error should be the one it reports.
+            self._check_id_fragment(
+                root_ids.base_id, dialect, schema_location(base_uri, "")
+            )
         if base_uri != retrieval_resource:
             # Journaled like the rest: this runs *before* the claim below,
             # so a duplicate root used to leave an alias behind.

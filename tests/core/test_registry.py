@@ -5,6 +5,7 @@ from collections.abc import Mapping
 
 import pytest
 
+from json_schema_engine.core import create_engine
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.dialect import (
     DialectRegistry,
@@ -656,6 +657,72 @@ def test_a_legacy_fragment_id_is_an_anchor_not_an_error() -> None:
         "https://x.example/r",
     )
     assert reg.resolve_ref("#frag", uri).pointer == "/$defs/a"
+
+
+# --- root `$id` syntax -------------------------------------------------
+#
+# A non-empty fragment is refused at a root exactly as below one; it used
+# to be stripped, so the document registered under a URI nobody wrote.
+# `""` and `"#"` stay legal at a root: nothing encloses it, so they mean
+# the retrieval URI rather than colliding with anything.
+
+
+@pytest.mark.parametrize(
+    ("bad", "where"),
+    [
+        ("https://x.example/s#frag", "https://x.example/s#"),
+        ("#foo", "https://x.example/r#"),
+    ],
+)
+def test_a_root_id_with_a_fragment_is_rejected(bad: str, where: str) -> None:
+    reg = make_registry()
+    with pytest.raises(InvalidIdentifierError) as info:
+        reg.register({"$id": bad}, "https://x.example/r")
+    assert info.value.schema_location == where
+    assert "$anchor" in str(info.value)
+    assert list(reg.resources()) == []
+
+
+@pytest.mark.parametrize(
+    ("root_id", "registers_as"),
+    [
+        ("https://x.example/s#", "https://x.example/s"),
+        ("#", "https://x.example/r"),
+        ("", "https://x.example/r"),
+    ],
+)
+def test_a_root_id_without_a_fragment_body_is_fine(
+    root_id: str, registers_as: str
+) -> None:
+    reg = make_registry()
+    assert reg.register({"$id": root_id}, "https://x.example/r") == registers_as
+
+
+@pytest.mark.parametrize(
+    "dialect",
+    [
+        "https://json-schema.org/draft/2020-12/schema",
+        "https://json-schema.org/draft/2019-09/schema",
+    ],
+)
+def test_each_modern_dialect_rejects_a_root_fragment(dialect: str) -> None:
+    engine = create_engine()
+    with pytest.raises(InvalidIdentifierError):
+        engine.register_schema(
+            {"$schema": dialect, "$id": "https://x.example/s#frag"},
+            "https://x.example/s",
+        )
+    assert not engine.schemas.has("https://x.example/s")
+
+
+def test_a_legacy_root_fragment_id_is_an_anchor() -> None:
+    engine = create_engine()
+    uri = engine.register_schema(
+        {"$schema": "http://json-schema.org/draft-07/schema#", "$id": "#foo"},
+        "https://x.example/legacy",
+    )
+    assert uri == "https://x.example/legacy"
+    assert engine.schemas.resolve_ref("#foo", uri).pointer == ""
 
 
 def test_two_positions_claiming_one_uri_is_still_a_duplicate() -> None:

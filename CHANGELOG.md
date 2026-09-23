@@ -94,8 +94,13 @@ minor versions may change public API.
   that does not exist. Per dialect: draft-07/06 read `#name` as an anchor and
   are unaffected. An empty trailing fragment (`"sub#"`) stays legal, matching
   2020-12's metaschema and the bundled draft-06/07 metaschemas' own root
-  `$id`. A document-root `$id` is not yet checked the same way (DESIGN.md §7,
-  "A root `$id` is not checked the way an embedded one is").
+  `$id`.
+- **A document-root `$id` with a non-empty fragment now raises
+  `InvalidIdentifierError` too.** It used to be stripped silently, so
+  `{"$id": "https://x.example/s#frag"}` registered as `https://x.example/s`
+  and a root `"$id": "#foo"` landed on the retrieval URI. `""` and `"#"` stay
+  legal at a root, where they mean the retrieval URI; only below a root do
+  they collide with the enclosing resource.
 
 ### Added
 

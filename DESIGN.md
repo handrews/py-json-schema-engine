@@ -719,38 +719,15 @@ since the emitted code is the same for every level.
       used silently repoints `_aliases[retrieval]`. Not a resource
       collision, so P12 does not see it, but it is the same shadowing shape.
 
-11. **A root `$id` is not checked the way an embedded one is.** Under
-    2020-12 and 2019-09 an `$id` may end in an empty fragment (a bare `#`),
-    which it SHOULD NOT, and may not carry a non-empty one (the metaschemas'
-    `^[^#]*#?$`). That rule is the same at a document root and at an
-    embedded resource, but only the embedded position enforces the part
-    that is a MUST:
-
-    - **Non-empty fragment** — refused in an embedded `$id`
-      (`InvalidIdentifierError`), but at a document root `identify` resolves
-      the `$id` unchecked and `_resource_of` strips the fragment, so
-      `{"$id": "https://x.example/s#frag"}` registers as
-      `https://x.example/s` and the fragment silently vanishes; a root
-      `{"$id": "#foo"}` lands on the retrieval URI the same way. Fix: give
-      the root the same check as `_check_embedded_id`.
-    - **Empty fragment** — accepted at both positions and stripped, as the
-      spec allows. Correct today; no change.
-    - **`""` and `"#"`** — not a fragment question. At a root they mean the
-      retrieval URI, which is legal and correct. Embedded, they resolve to
-      the *enclosing* resource's own URI, so refusing them there is P12's
-      "two resources, one URI" rule rather than a syntax rule — which is why
-      it applies only below the root. An earlier wording of this item
-      counted root `""` as a problem; it is not.
-
-    **Owner decision (2026-09-23):** keep the 2020-12/2019-09 behavior as
-    the default, empty fragment allowed, and add an opt-in engine option that
-    forbids *any* fragment, empty included, in an `$id` that sets a base URI.
-    It is a forward-compatibility aid: IETF draft-03 makes that a MUST NOT,
-    but draft-03 cannot currently be selected through a metaschema. Opt-in
-    keeps it within D14. Scope it to `$id` as a base URI, so draft-07/06
-    `#name` anchors — an anchor, not a base — are untouched. The dialects
-    guide currently says a base URI "cannot carry a fragment"; it should say
-    *non-empty* fragment, and mention the option once it exists.
+11. **Opt-in: no fragment at all in `$id`.** Under 2020-12 and 2019-09 an
+    `$id` may end in an empty fragment (a bare `#`), which it SHOULD NOT.
+    **Owner decision (2026-09-23):** keep that as the default, and add an
+    opt-in engine option that forbids *any* fragment, empty included, in an
+    `$id` that sets a base URI. It is a forward-compatibility aid: IETF
+    draft-03 makes that a MUST NOT, but draft-03 cannot currently be
+    selected through a metaschema. Opt-in keeps it within D14. Scope it to
+    `$id` as a base URI, so draft-07/06 `#name` anchors — an anchor, not a
+    base — are untouched.
 
 14. **No way to replace a registered document.** P12 turns a modified
     re-registration under the same URI into `DuplicateResourceError`, and
@@ -784,6 +761,13 @@ since the emitted code is the same for every level.
   an unregistered vocabulary. `_ensure_dialect_uri` sets it, which covers
   the root path and the embedded retry alike. A metaschema whose own
   `$schema` is missing names that inner URI, the one a caller must supply.
+- "A root `$id` is not checked the way an embedded one is": a non-empty
+  fragment in a root `$id` is now `InvalidIdentifierError`, as it is below a
+  root, instead of being stripped. `""` and `"#"` stay legal at a root —
+  they mean the retrieval URI there, and refusing them below a root is P12's
+  one-URI rule, not a syntax rule. The check runs in `_index`, not
+  `identify`, so under `validate_schemas` the 2020-12/2019-09 metaschema's
+  own pattern reports it first. The opt-in stricter form is item 11.
 
 ### Resolved (owner, 2026-09-22)
 

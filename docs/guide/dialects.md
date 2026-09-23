@@ -101,8 +101,8 @@ assert (
 
 The identifier syntax travels with the dialect too. `$id: "#name"` mints an
 anchor under draft-07 and draft-06; under 2019-09 and 2020-12 an `$id` sets
-a base URI, and a base URI cannot carry a fragment — so the same spelling
-is an `InvalidIdentifierError` there, pointing you at `$anchor`:
+a base URI, and a base URI cannot carry a non-empty fragment — so the same
+spelling is an `InvalidIdentifierError` there, pointing you at `$anchor`:
 
 ```python
 from json_schema_engine.core import InvalidIdentifierError
