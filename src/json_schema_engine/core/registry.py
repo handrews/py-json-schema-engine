@@ -491,26 +491,32 @@ class SchemaRegistry:
             )
         return self._dialects.get_dialect(uri)
 
-    def _dialect_after(self, base_uri: str, current: Dialect) -> Dialect:
-        """The dialect of a base that navigation has just entered (P14).
+    def _entered(
+        self, node: JsonValue, base_uri: str, base_id: str, current: Dialect
+    ) -> tuple[str, Dialect] | None:
+        """The resource navigation enters at `node`, if it enters one (P16).
 
-        Falls back to the dialect already in force when registration never
-        indexed that base. Pointer navigation deliberately ignores
-        `ref_ignores_siblings` (D18), so it can reach a lexical base the
-        walk never minted; the enclosing dialect is the one that base
-        *would* have been walked under, so the fallback is both right and
-        non-raising.
+        An `$id` identifies only in a schema position (§5), and navigation
+        cannot tell a schema position from data without re-running every
+        keyword's `analyze()` — which is the walk. So it asks what the walk
+        concluded: rebase only when the registry holds a resource at that
+        URI *and* `node` is that resource. Identity is the common case,
+        since `_claim_resource` stores the walked node itself; `json_equal`
+        covers a resource an equal copy in another document has taken over
+        (P15), whose node here is a different object with the same content.
 
-        A plain dict read rather than `dialect_for`, on purpose: that would
-        raise for an unindexed base — this exists so a mixed-dialect fix
-        cannot start raising where nothing raised before — and its
-        `_canonical` would try to register a bundled metaschema in the
-        middle of a navigation. Aliases cannot apply: a base minted
-        lexically from `$id` is already the canonical form the walk keyed
-        `_document_dialects` by.
+        Anything else — an `$id` inside `enum`, `const`, `examples` or an
+        unknown keyword — is data, and the pointer carries on through it
+        under the enclosing resource. That is also why this cannot raise:
+        a held resource always has its dialect recorded, and the `.get`
+        keeps a navigation from ever starting a lookup that could fail.
         """
-        uri = self._document_dialects.get(base_uri)
-        return current if uri is None else self._dialects.get_dialect(uri)
+        candidate = _resource_of(resolve(base_uri, base_id))
+        held = self._documents.get(candidate)
+        if held is None or (held is not node and not json_equal(held, node)):
+            return None
+        uri = self._document_dialects.get(candidate)
+        return candidate, current if uri is None else self._dialects.get_dialect(uri)
 
     def _check_embedded_id(self, base_id: str, dialect: Dialect, where: str) -> None:
         """Refuse an embedded `$id` that cannot name a new resource.
@@ -1238,13 +1244,15 @@ class SchemaRegistry:
             walked += "/" + escape_segment(segment)
             if is_object(node):
                 # The enclosing dialect's syntax decides whether this `$id`
-                # starts a resource, exactly as in the walk; the resource it
+                # could start a resource, exactly as in the walk; the
+                # registry decides whether it did (P16), and the resource it
                 # starts governs every step after it (P14).
                 base_id = identifiers(node).base_id
-                if base_id is not None:
-                    base_uri = _resource_of(resolve(base_uri, base_id))
+                if base_id is not None and (
+                    entered := self._entered(node, base_uri, base_id, dialect)
+                ):
+                    base_uri, dialect = entered
                     pointer = ""
-                    dialect = self._dialect_after(base_uri, dialect)
                     identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 
@@ -1264,10 +1272,11 @@ class SchemaRegistry:
             pointer += "/" + escape_segment(str(segment))
             if is_object(node):
                 base_id = identifiers(node).base_id
-                if base_id is not None:
-                    base_uri = _resource_of(resolve(base_uri, base_id))
+                if base_id is not None and (
+                    entered := self._entered(node, base_uri, base_id, dialect)
+                ):
+                    base_uri, dialect = entered
                     pointer = ""
-                    dialect = self._dialect_after(base_uri, dialect)
                     identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 

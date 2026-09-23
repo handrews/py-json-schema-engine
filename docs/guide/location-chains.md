@@ -153,9 +153,10 @@ outlive the parse tree the ranges came from, and asking is one call.
 
 ## When a chain is empty
 
-`location_chain` returns `()` for a resource the engine never saw — including
-a lexical base that pointer navigation produced but registration never indexed,
-which a draft-07 `$ref` sibling can do:
+`location_chain` returns `()` for a resource the engine never saw. An `$id`
+that registration did not index, such as one inside `enum` data or beside a
+draft-07 `$ref`, never produces such a location: a pointer through it stays in
+the enclosing resource and chains from there.
 
 ```python
 assert plain.location_chain("https://never.example/seen#/x") == ()

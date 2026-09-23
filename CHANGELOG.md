@@ -179,6 +179,15 @@ minor versions may change public API.
   evaluation time reached the caller with `schema_location` still `None` —
   naming neither the reference nor the schema that followed it. It now names
   the keyword's own position, encoded per P10 and accepted by `Engine.locate`.
+- **A `$ref` into non-schema data no longer invents an identity (DESIGN.md
+  P16).** Pointer navigation applied the identifier extractor to every object
+  it stepped onto, so `"$ref": "#/enum/0/properties/a"` with an `$id` written
+  inside that `enum` data rebased onto it, and evaluation raised
+  `UnresolvableReferenceError: unknown schema` for a URI that was never an
+  identifier. The same happened under `examples` or an unknown keyword, where
+  it also resolved relative `$ref`s against the wrong base. Navigation now
+  rebases only where registration created a resource, so such a `$ref`
+  resolves within the enclosing resource.
 - A failed drain keeps the rest of its queue. `Engine.load`/`load_schema` take
   the pending references in one batch and clear them before fetching, so a
   registration that raised part-way through discarded every URI the loop had

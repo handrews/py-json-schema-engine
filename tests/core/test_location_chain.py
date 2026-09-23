@@ -179,10 +179,12 @@ def test_an_unregistered_resource_has_no_chain() -> None:
     assert make_registry().location_chain("https://never.example/x#/a") == ()
 
 
-def test_a_base_registration_never_minted_has_no_chain() -> None:
-    # Under draft-07 a `$ref` sibling suppresses identifiers, so pointer
-    # navigation can produce a lexical base the walk never indexed. An empty
-    # chain is the honest answer: a one-hop chain would claim it is a root.
+def test_a_base_registration_never_minted_is_not_a_base() -> None:
+    # Under draft-07 a `$ref` makes its siblings absent, so the `$id` inside
+    # `$defs` here was never an identifier and the walk never indexed it.
+    # Navigation follows registration (P16): the pointer stays in the
+    # enclosing resource, so the chain is that resource's, one hop — rather
+    # than a base nothing registered, which could only have an empty chain.
     dialects = DialectRegistry()
     dialects.register_vocabulary(VOCAB, KEYWORDS)
     dialects.register_dialect(
@@ -200,9 +202,11 @@ def test_a_base_registration_never_minted_has_no_chain() -> None:
         "urn:d7",
     )
     reached = reg.resolve_ref("#/$defs/y/properties/a", "urn:d7")
-    assert reached.base_uri == "https://z.example/"
+    assert (reached.base_uri, reached.pointer) == ("urn:d7", "/$defs/y/properties/a")
     assert list(reg.resources()) == ["urn:d7"]
-    assert reg.location_chain(reached.location) == ()
+    assert [hop.resource_uri for hop in reg.location_chain(reached.location)] == [
+        "urn:d7"
+    ]
 
 
 # --- urn: bases ------------------------------------------------------------
