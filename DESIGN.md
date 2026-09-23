@@ -725,11 +725,30 @@ since the emitted code is the same for every level.
     mutates a fixture, an editor integration re-validating on save) now
     needs a fresh engine per edit, which also discards every other
     registration and any compiled artifact's snapshot lineage. P13's
-    revisit names `unregister`; this promotes it: decide the API
-    (`unregister(uri)`, or `register(..., replace=True)`), and what happens
-    to a resource an earlier registration also claims ("P12 has three gaps …" above), to
-    anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
-    contributions that nothing else re-derives.
+    revisit names `unregister`; this promotes it. **Shape decided
+    (owner, 2026-09-23, in the TypeScript engine's ADR 0005) and to be
+    matched here:** `SchemaRegistry.unregister(uri)` and
+    `Engine.unregister_schema(uri)`, no `replace=` option — remove then
+    register is the replacement path, so a duplicate is always an error
+    unless the caller acted first. `uri` must name a registered document
+    root (its retrieval URI or alias counts); an unknown URI, or one that
+    names a resource *embedded* in another document, raises
+    `UnresolvableReferenceError` naming the owning document. Removal drops
+    everything that document's registration claimed — its embedded `$id`
+    resources, anchors and dynamic anchors, recursive roots, dialect and
+    location entries, its range lookup, and every alias pointing at it —
+    except a resource an equal copy in a later document has since taken
+    over, which stays with its current owner. `_produced_ids`/
+    `_consumed_ids` are left alone: they only widen retention, and nothing
+    re-derives them. A `snapshot()` taken earlier keeps the removed
+    document. Doing this needs per-document ownership tracking (the
+    TypeScript engine keeps `documentUri → resources claimed`, with
+    `resourceLocations` as the truth for who owns what now), which the
+    registry does not have yet, and it is the natural moment to close the
+    alias gaps in "P12 has three gaps …" above the way ADR 0005 does: an
+    `$id` equal to an existing retrieval alias, or a retrieval URI that
+    already names or aliases a different resource, is a
+    `DuplicateResourceError`.
 
 ### Resolved (owner, 2026-09-23)
 
