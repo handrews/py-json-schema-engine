@@ -86,6 +86,14 @@ minor versions may change public API.
 
 ### Fixed
 
+- **Deep output assembly raises `MaxDepthExceededError`, not
+  `RecursionError` (DESIGN.md P3).** Building the located tree, the
+  hierarchical document, or the rendered trace recurses once per
+  application, outside the evaluation backstop. A compiled evaluator spends
+  one frame per application, so it could finish a run a few hundred
+  applications deep and then leak a raw `RecursionError` while assembling
+  the `Result`. Assembly now has the same backstop as evaluation and
+  registration.
 - **`Engine.locate` resolves an anchor fragment.** An anchor is a fragment,
   not a pointer, so `locate("urn:x#spot")` percent-decoded it into `spot` —
   a string with no leading `/` that names nothing — and returned a

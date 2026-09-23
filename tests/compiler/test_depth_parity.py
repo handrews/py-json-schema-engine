@@ -116,3 +116,25 @@ def test_backstop_converts_a_stray_recursion_error() -> None:
     with pytest.raises(MaxDepthExceededError):
         compiled(_nest(5000))
     assert compiled(_nest(3)) is True
+
+
+@pytest.mark.parametrize(
+    ("output", "extra"),
+    [
+        ("list", {"trace": True}),
+        ("hierarchical", {}),
+        ("hierarchical", {"verbose": True, "trace": True}),
+    ],
+)
+def test_backstop_covers_output_assembly(output: str, extra: dict[str, bool]) -> None:
+    # A compiled evaluator spends one frame per application, so it finishes
+    # runs whose located tree the stack then cannot rebuild; assembly must
+    # raise the typed error too, not leak a `RecursionError`.
+    engine = create_engine(max_depth=1_000_000)
+    uri = engine.register_schema(
+        {"properties": {"child": {"$ref": "#"}}}, "https://depth.example/assembly"
+    )
+    evaluator = compile_evaluator(engine, uri).evaluate
+    with pytest.raises(MaxDepthExceededError):
+        evaluator(_nest(400), output=output, **extra)
+    assert evaluator(_nest(3), output=output, **extra).valid is True
