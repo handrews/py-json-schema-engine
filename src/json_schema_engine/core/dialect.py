@@ -444,7 +444,8 @@ class DialectRegistry:
             if vocabulary is None:
                 raise UnknownDialectError(
                     f"dialect '{uri}' requires unregistered vocabulary "
-                    f"'{vocabulary_uri}'"
+                    f"'{vocabulary_uri}'",
+                    dialect_uri=uri,
                 )
             for name, behavior in vocabulary.items():
                 keywords[name] = DialectKeyword(name, behavior, vocabulary_uri)
@@ -488,7 +489,9 @@ class DialectRegistry:
         try:
             return self._dialects[uri]
         except KeyError:
-            raise UnknownDialectError(f"unknown dialect '{uri}'") from None
+            raise UnknownDialectError(
+                f"unknown dialect '{uri}'", dialect_uri=uri
+            ) from None
 
     def has_dialect(self, uri: str) -> bool:
         return uri in self._dialects

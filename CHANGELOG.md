@@ -128,12 +128,11 @@ minor versions may change public API.
   only the URI that came out. A pointer miss also names the failing segment and
   the prefix that matched, so `#/a/b/c/d` failing at `b` no longer reads exactly
   like the same pointer failing at `d`.
-- `UnknownDialectError.dialect_uri`: how the registry asks for a dialect an
-  *embedded* resource declared (P14). `Engine.register_schema` consumes it to
-  assemble the dialect and register again, so an error reaching a caller
-  through the engine carries `None` there — the unavailable dialect is named
-  in the message instead, and `schema_location` names the resource that asked
-  (DESIGN.md §7, "`UnknownDialectError.dialect_uri` never reaches a caller").
+- `UnknownDialectError.dialect_uri`: the dialect that could not be found or
+  assembled, so a caller can supply its metaschema without parsing the
+  message. When a metaschema's own `$schema` is the one missing, it names
+  that inner dialect. For a dialect an *embedded* resource declared (P14),
+  `schema_location` names the resource that asked.
 - `json_schema_engine.core.uri.pointer_fragment`,
   `pointer_from_fragment`, and `schema_location`: the single pair of
   conversions between a plain-text JSON Pointer and its URI fragment form,

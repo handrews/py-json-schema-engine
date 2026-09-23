@@ -231,10 +231,10 @@ class Engine:
             except UnknownDialectError as error:
                 missing = error.dialect_uri
                 if missing is None or missing in attempted:
-                    # `None`: the root's dialect, or a registry driven
-                    # without an engine. Already attempted: assembly
-                    # returned without registering the URI it was asked
-                    # for, which would otherwise spin.
+                    # `None`: a caller's own code raised one without a URI.
+                    # Already attempted: assembly returned without
+                    # registering the URI it was asked for, which would
+                    # otherwise spin.
                     raise
                 attempted.add(missing)
                 # Outside any walk, so the journal guard that stops
@@ -370,7 +370,9 @@ class Engine:
         if self.dialects.has_dialect(effective):
             return
         if effective in self._assembling:
-            raise UnknownDialectError(f"metaschema cycle at '{effective}'")
+            raise UnknownDialectError(
+                f"metaschema cycle at '{effective}'", dialect_uri=effective
+            )
         self._assembling.add(effective)
         try:
             if not self.schemas.has(effective):
@@ -379,7 +381,8 @@ class Engine:
             if meta is None:
                 raise UnknownDialectError(
                     f"dialect '{effective}' is not registered and no loader "
-                    "provides its metaschema"
+                    "provides its metaschema",
+                    dialect_uri=effective,
                 )
             self._assemble_dialect(effective, meta)
         finally:

@@ -240,15 +240,14 @@ captured before the rollback.
 registry snapshot.
 
 `UnknownDialectError`: a schema names a `$schema` dialect URI that no
-registered dialect claims. `dialect_uri: str | None` is how the registry asks
-for a dialect that an *embedded* resource declared (P14): the walk sets it, and
-`Engine.register_schema` consumes it, assembling that dialect from a metaschema
-and registering again. An `UnknownDialectError` that reaches a caller through
-the engine therefore carries `None` there — assembly failed, the unavailable
-dialect is named in the message, and for an embedded demand `schema_location`
-names the resource that asked for it. Only an error raised by the registry
-itself carries the URI; carrying it through the engine is an open item
-(DESIGN.md §7, "`UnknownDialectError.dialect_uri` never reaches a caller").
+registered dialect claims, or that cannot be assembled. `dialect_uri: str |
+None` is the dialect that could not be found or assembled — the URI a loader
+would have to provide a metaschema for. When a metaschema's own `$schema` is
+the missing one, it names that inner dialect, since that is what is actually
+needed. For an *embedded* resource's `$schema` (P14), `schema_location` names
+the resource that asked for it. `Engine.register_schema` assembles an
+embedded dialect from a metaschema and registers again before giving up, so
+an error reaching you means that assembly failed too.
 
 `UnknownKeywordError`: a schema uses a keyword its dialect does not define and
 does not permit unknown keywords for. Only dialects built with

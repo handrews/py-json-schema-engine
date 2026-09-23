@@ -764,21 +764,6 @@ since the emitted code is the same for every level.
     anchors the old document minted, and to `_produced_ids`/`_consumed_ids`
     contributions that nothing else re-derives.
 
-
-15. **`UnknownDialectError.dialect_uri` never reaches a caller.** P14 added
-    it so the registry could ask the engine for a dialect an embedded
-    resource declared, and the engine consumes it to assemble and retry.
-    When assembly then fails, `_register_assembling_dialects` raises
-    assembly's own error, carrying the location, chain and source across but
-    not the URI — so through `Engine` the attribute is always `None`, and a
-    caller who wants to supply the missing metaschema has to parse the
-    message. The fix is one line: carry `dialect_uri` over with the rest.
-    Worth deciding at the same time whether a document-root `$schema`
-    failure should set it too, so the attribute means "the dialect that
-    could not be found or assembled" wherever it is raised. Once it does,
-    the `dialect_uri` notes in `docs/reference.md` and the changelog, which
-    currently say it arrives `None`, need rewriting.
-
 ### Resolved (owner, 2026-09-23)
 
 - "`compile_validator` drops the location chain": the flag artifact's
@@ -793,6 +778,12 @@ since the emitted code is the same for every level.
   with it is closed too: `attach_location_chain` treats a failure while
   building the chain as "no chain" rather than letting it replace the error
   being reported, the same rule `_register` applies around `_describe`.
+- "`UnknownDialectError.dialect_uri` never reaches a caller": it now means
+  "the dialect that could not be found or assembled" at every raise site —
+  a root `$schema`, an embedded one, a metaschema cycle, a dialect needing
+  an unregistered vocabulary. `_ensure_dialect_uri` sets it, which covers
+  the root path and the embedded retry alike. A metaschema whose own
+  `$schema` is missing names that inner URI, the one a caller must supply.
 
 ### Resolved (owner, 2026-09-22)
 
