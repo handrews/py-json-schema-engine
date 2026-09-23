@@ -87,6 +87,26 @@ class InvalidSchemaError(JsonSchemaEngineError):
     """
 
 
+class InvalidIdentifierError(JsonSchemaEngineError):
+    """An `$id` cannot identify the resource it claims to start.
+
+    Two syntactic refusals, both about the string the author wrote rather
+    than the URI it would resolve to:
+
+    * a non-empty fragment — `$id` sets a base URI under this dialect, and
+      a base URI cannot carry one. The plain-name form is `$anchor`.
+    * `""` or `"#"` — resolves to the enclosing resource and identifies
+      nothing new.
+
+    Per dialect, which is the point: draft-07/06 read `#name` as an anchor
+    and never reach the first rule, so the same document is legal there and
+    refused under 2019-09/2020-12. Both cases used to fall through to
+    `resolve`, land back on the enclosing resource's own URI, and surface
+    as `DuplicateResourceError` — a true sentence about a URI the author
+    never wrote, blaming a second `$id` that does not exist.
+    """
+
+
 class DuplicateResourceError(JsonSchemaEngineError):
     """Two different schemas claim the same resource URI (P12).
 
@@ -121,7 +141,27 @@ class ReadOnlyRegistryError(JsonSchemaEngineError):
 
 
 class UnknownDialectError(JsonSchemaEngineError):
-    """A schema names a `$schema` dialect URI that no registered dialect claims."""
+    """A schema names a `$schema` dialect URI that no registered dialect claims.
+
+    `dialect_uri` is set only when the demand came from the root of an
+    *embedded* schema resource, mid-walk (P14). The registry holds no
+    loaders, but the engine can often assemble that dialect from a
+    metaschema and register the document again — and because registration
+    is all-or-nothing (P13), the second attempt starts from the state the
+    first one found rather than from a half-indexed registry.
+    """
+
+    dialect_uri: str | None
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        schema_location: str | None = None,
+        dialect_uri: str | None = None,
+    ) -> None:
+        super().__init__(message, schema_location=schema_location)
+        self.dialect_uri = dialect_uri
 
 
 class UnknownKeywordError(JsonSchemaEngineError):

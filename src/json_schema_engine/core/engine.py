@@ -211,8 +211,40 @@ class Engine:
             # registered to check it — the metaschema sees the document as
             # plain data — and skipping the walk makes the failure cheaper.
             self._maybe_validate(schema, retrieval_uri, dialect_uri)
+            uri = self._register_assembling_dialects(
+                schema, retrieval_uri, dialect_uri, get_range
+            )
+        except JsonSchemaEngineError as error:
+            attach_location_chain(self.schemas, error)
+            raise
+        return uri
+
+    def _register_assembling_dialects(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+    ) -> str:
+        """Register, assembling any dialect an embedded resource demands (P14).
+
+        Only the walk knows which dialects a document actually needs: a
+        `$schema` at an embedded resource root, with its base resolved and
+        its position confirmed to be a schema position rather than data. So
+        the walk asks, and we answer and try again — which is clean only
+        because registration is all-or-nothing (P13): a walk that stopped
+        to ask is rolled back whole, so each attempt starts from the state
+        the first one found.
+
+        At most one attempt per distinct embedded dialect: assembling one
+        leaves it registered for good, so the walk cannot ask twice. One
+        attempt for every document that declares none, which is nearly all
+        of them.
+        """
+        attempted: set[str] = set()
+        while True:
             try:
-                uri = self.schemas.register(
+                return self.schemas.register(
                     schema, retrieval_uri, dialect_uri, get_range
                 )
             except RecursionError:
@@ -220,10 +252,31 @@ class Engine:
                     "schema nesting exceeded the interpreter's stack "
                     f"(max_depth={self._max_depth})"
                 ) from None
-        except JsonSchemaEngineError as error:
-            attach_location_chain(self.schemas, error)
-            raise
-        return uri
+            except UnknownDialectError as error:
+                missing = error.dialect_uri
+                if missing is None or missing in attempted:
+                    # `None`: the root's dialect, or a registry driven
+                    # without an engine. Already attempted: assembly
+                    # returned without registering the URI it was asked
+                    # for, which would otherwise spin.
+                    raise
+                attempted.add(missing)
+                # Outside any walk, so the journal guard that stops
+                # `_canonical` registering a bundled metaschema mid-walk is
+                # satisfied, and `_assembling` catches a metaschema cycle
+                # exactly where it does for a root `$schema`.
+                try:
+                    self._ensure_dialect_uri(missing)
+                except JsonSchemaEngineError as failure:
+                    # Assembly says *what* is missing; the walk's error said
+                    # *where* it was asked for. Carry the position over, or
+                    # the caller learns a dialect is unavailable with no way
+                    # back to the embedded resource that wanted it.
+                    if failure.schema_location is None:
+                        failure.schema_location = error.schema_location
+                        failure.location_chain = error.location_chain
+                        failure.schema_source = error.schema_source
+                    raise
 
     def load_schema(
         self,
@@ -326,9 +379,18 @@ class Engine:
         loaded as a metaschema (bundled or through the loaders) and a
         dialect is assembled from its `$vocabulary` (2020-12 core §8.1).
         """
-        effective = effective_dialect_uri(
-            schema, retrieval_uri, dialect_uri, self._default_dialect
+        self._ensure_dialect_uri(
+            effective_dialect_uri(
+                schema, retrieval_uri, dialect_uri, self._default_dialect
+            )
         )
+
+    def _ensure_dialect_uri(self, effective: str) -> None:
+        """Make one dialect exist, assembling it from a metaschema if need be.
+
+        Split out so the retry loop can call it for a dialect an *embedded*
+        resource demanded mid-walk (P14), which only the walk can discover.
+        """
         if self.dialects.has_dialect(effective):
             return
         if effective in self._assembling:

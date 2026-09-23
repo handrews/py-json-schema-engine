@@ -210,6 +210,14 @@ first offending character.
 nor a boolean (D19). Raised by the registration walk and, as a lazy backstop,
 by schema application.
 
+`InvalidIdentifierError`: an `$id` cannot identify the resource it claims to
+start — either it carries a non-empty fragment (under 2019-09/2020-12 an `$id`
+sets a base URI, and a base URI cannot carry one; the plain-name form is
+`$anchor`), or it is `""` or `"#"` and so resolves to the enclosing resource,
+identifying nothing new. Per dialect: draft-07/06 read `#name` as an anchor and
+never reach the first rule, so the same document is legal there. Distinct from
+`DuplicateResourceError`, which is about two positions claiming one URI.
+
 `DuplicateResourceError`: two different schemas claim one resource URI (P12) —
 either a single document minting the same `$id` twice, or a later registration
 that would rebind a URI an earlier one bound to a different schema.
@@ -222,8 +230,11 @@ draft-07/06 `$id: "#name"` form alike, including a name claimed by an
 otherwise leave `$ref` and `$dynamicRef` resolving the same fragment to
 different schemas. A single object carrying both under one name is fine.
 
-Registration is not atomic: a document that fails part-way through its walk
-stays partially indexed, so discard an engine whose registration raised.
+Registration is all-or-nothing (P13): a document whose registration raises
+leaves the registry exactly as it found it, so an engine stays usable after a
+caught registration error. Because the document is gone, `Engine.locate` cannot
+place such an error afterwards — the error carries its own `schema_source`,
+captured before the rollback.
 
 `ReadOnlyRegistryError`: registration was attempted on a compiled artifact's
 registry snapshot.

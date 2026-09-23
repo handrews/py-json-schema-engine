@@ -19,10 +19,12 @@ from json_schema_engine.core.dialect import Dialect, DialectRegistry, Identifier
 from json_schema_engine.core.errors import (
     DuplicateAnchorError,
     DuplicateResourceError,
+    InvalidIdentifierError,
     InvalidSchemaError,
     JsonSchemaEngineError,
     MaxDepthExceededError,
     ReadOnlyRegistryError,
+    UnknownDialectError,
     UnresolvableReferenceError,
 )
 from json_schema_engine.core.json_model import (
@@ -349,6 +351,97 @@ class SchemaRegistry:
                 self._journal.adds.append((index, member))
             index.add(member)
 
+    def _resource_dialect(
+        self,
+        node: Mapping[str, JsonValue],
+        base_uri: str,
+        inherited: Dialect,
+        where: str,
+    ) -> Dialect:
+        """The dialect governing a resource rooted at `node` (P14).
+
+        `$schema` is permitted at the root of *any* schema resource
+        (2020-12 core §8.1.1), so an embedded `$id` resource that declares
+        one is governed by it rather than by its document's. Honored under
+        every dialect: draft-07/06 predate the formal notion of a schema
+        resource and say only that `$schema` SHOULD be at the document
+        root, which is silence rather than prohibition.
+
+        Resolved against this resource's own base — the base in force where
+        `$schema` is written, and the embedded analogue of
+        `effective_dialect_uri` resolving against the retrieval URI. The
+        root cannot do the same: there the dialect must be known before the
+        identifiers can be read, so the `$id`-derived base does not exist
+        yet.
+        """
+        declared = node.get("$schema")
+        if not isinstance(declared, str):
+            return inherited
+        uri = _resource_of(resolve(base_uri, declared))
+        if uri == inherited.uri:
+            # The common embedded `$schema`: the dialect already in force,
+            # spelled out. No lookup, no rebind.
+            return inherited
+        if not self._dialects.has_dialect(uri):
+            # Carrying the URI, because the engine can often assemble this
+            # dialect from a metaschema and register again; the registry
+            # holds no loaders and genuinely cannot.
+            raise UnknownDialectError(
+                f"embedded schema resource '{base_uri}' declares unknown "
+                f"dialect '{uri}'",
+                schema_location=where,
+                dialect_uri=uri,
+            )
+        return self._dialects.get_dialect(uri)
+
+    def _dialect_after(self, base_uri: str, current: Dialect) -> Dialect:
+        """The dialect of a base that navigation has just entered (P14).
+
+        Falls back to the dialect already in force when registration never
+        indexed that base. Pointer navigation deliberately ignores
+        `ref_ignores_siblings` (D18), so it can reach a lexical base the
+        walk never minted; the enclosing dialect is the one that base
+        *would* have been walked under, so the fallback is both right and
+        non-raising.
+
+        A plain dict read rather than `dialect_for`, on purpose: that would
+        raise for an unindexed base — this exists so a mixed-dialect fix
+        cannot start raising where nothing raised before — and its
+        `_canonical` would try to register a bundled metaschema in the
+        middle of a navigation. Aliases cannot apply: a base minted
+        lexically from `$id` is already the canonical form the walk keyed
+        `_document_dialects` by.
+        """
+        uri = self._document_dialects.get(base_uri)
+        return current if uri is None else self._dialects.get_dialect(uri)
+
+    def _check_embedded_id(self, base_id: str, dialect: Dialect, where: str) -> None:
+        """Refuse an embedded `$id` that cannot name a new resource.
+
+        Reached only when the dialect's extractor handed this string back as
+        a *base URI*: `identifiers_legacy` turns `#name` into an anchor and
+        never arrives here, which is exactly the per-dialect distinction
+        that makes both of these errors, and neither of them draft-07's
+        problem.
+
+        Checked against the text the author wrote, before `resolve` — both
+        cases otherwise land back on the enclosing resource's own URI and
+        surface as a duplicate of an `$id` that does not exist.
+        """
+        if base_id in ("", "#"):
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} resolves to the enclosing resource and "
+                "identifies nothing new",
+                schema_location=where,
+            )
+        if split_fragment(base_id)[1]:
+            raise InvalidIdentifierError(
+                f"'$id': {base_id!r} has a non-empty fragment; under dialect "
+                f"'{dialect.uri}' an '$id' sets a base URI, and a base URI "
+                "cannot carry one (the plain-name form is '$anchor' here)",
+                schema_location=where,
+            )
+
     def _claim_resource(self, base_uri: str, node: JsonValue, where: str) -> None:
         """Bind a resource URI to a schema, or refuse to shadow another (P12).
 
@@ -512,11 +605,23 @@ class SchemaRegistry:
         ids = dialect.identifiers(node)
         if pointer != "" and ids.base_id is not None:
             claimed_at = schema_location(base_uri, pointer)
+            self._check_embedded_id(ids.base_id, dialect, claimed_at)
             # The enclosing resource and the pointer to this one within it,
             # captured before the rebinding discards both (P11).
             parent_uri, parent_pointer = base_uri, pointer
             base_uri = _resource_of(resolve(base_uri, ids.base_id))
             pointer = ""
+            # `$schema` governs the resource it roots, not the document
+            # (P14). Everything below this line — the identifiers minted
+            # *into* this resource, `ref_only`, the keyword table, and the
+            # recursion — is the inner dialect's.
+            dialect = self._resource_dialect(node, base_uri, dialect, claimed_at)
+            # The boundary was the parent's call: its `$id` syntax decided a
+            # resource starts here at all, and a relative `$schema` has no
+            # base to resolve against until it has. What is minted *into*
+            # the resource is the new dialect's, so the identifiers are read
+            # again — the inner extractor's own `base_id` is never used.
+            ids = replace(dialect.identifiers(node), base_id=ids.base_id)
             self._claim_resource(base_uri, node, claimed_at)
             self._put(self._document_dialects, base_uri, dialect.uri)
             self._put(
@@ -526,6 +631,11 @@ class SchemaRegistry:
                     document_uri, doc_pointer, parent_uri, parent_pointer, ids.base_id
                 ),
             )
+        # A `$schema` where no resource starts is ignored, not refused.
+        # The spec forbids the placement, but refusing it is strict-mode
+        # hygiene, which D14 keeps opt-in — and it is load-bearing in the
+        # wild: `{"$schema": X, "not": {"$schema": X}}` is how Bowtie spells
+        # "allows nothing" for every dialect it tests.
         here = SchemaRef(node, base_uri, pointer)
         for anchor in ids.anchors:
             self._claim_anchor(f"{base_uri}#{anchor}", here)
@@ -915,7 +1025,8 @@ class SchemaRegistry:
 
         # JSON Pointer navigation, tracking identifier-induced base changes
         # on the way, per the target document's dialect (D18).
-        identifiers = self.dialect_for(resource).identifiers
+        dialect = self.dialect_for(resource)
+        identifiers = dialect.identifiers
         node: JsonValue = root
         base_uri = resource
         pointer = ""
@@ -940,10 +1051,15 @@ class SchemaRegistry:
             pointer += "/" + escape_segment(segment)
             walked += "/" + escape_segment(segment)
             if is_object(node):
+                # The enclosing dialect's syntax decides whether this `$id`
+                # starts a resource, exactly as in the walk; the resource it
+                # starts governs every step after it (P14).
                 base_id = identifiers(node).base_id
                 if base_id is not None:
                     base_uri = _resource_of(resolve(base_uri, base_id))
                     pointer = ""
+                    dialect = self._dialect_after(base_uri, dialect)
+                    identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 
     def child(self, ref: SchemaRef, segments: Sequence[str | int]) -> SchemaRef:
@@ -952,7 +1068,8 @@ class SchemaRegistry:
         Maintains the canonical location and the lexical base, so a child
         that declares `$id` starts a new resource with an empty pointer.
         """
-        identifiers = self.dialect_for(ref.base_uri).identifiers
+        dialect = self.dialect_for(ref.base_uri)
+        identifiers = dialect.identifiers
         node = ref.node
         base_uri = ref.base_uri
         pointer = ref.pointer
@@ -964,6 +1081,8 @@ class SchemaRegistry:
                 if base_id is not None:
                     base_uri = _resource_of(resolve(base_uri, base_id))
                     pointer = ""
+                    dialect = self._dialect_after(base_uri, dialect)
+                    identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 
 

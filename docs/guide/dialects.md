@@ -4,13 +4,18 @@ A dialect is a set of keyword behaviors bound to a `$schema` URI. Four
 dialects ship built in: 2020-12, 2019-09, draft-07, and draft-06, exported
 as `DIALECT_2020_12`, `DIALECT_2019_09`, `DIALECT_DRAFT_07`, and
 `DIALECT_DRAFT_06` from `json_schema_engine.core`. One engine can hold
-documents of several dialects at once — each resource keeps the dialect it
-was registered under, and `$ref` works across dialect boundaries.
+documents of several dialects at once, and so can a single document: each
+schema resource — including one embedded by `$id` — is governed by the
+`$schema` at its own root, and `$ref` works across dialect boundaries.
 
 ## Select a dialect
 
-A schema's own `$schema` keyword picks its dialect. Without one, the
-engine's `default_dialect` applies — 2020-12 unless configured otherwise.
+A schema resource's own `$schema` keyword picks its dialect. An embedded
+resource without one inherits the dialect of the resource containing it;
+a document without one gets the engine's `default_dialect` — 2020-12
+unless configured otherwise. `$schema` is only meaningful at a resource
+root; one written anywhere else is ignored rather than refused, since
+refusing it is strict-mode hygiene and the core stays spec-clean (D14).
 
 ```python
 from json_schema_engine.core import create_engine, DIALECT_DRAFT_07
@@ -55,6 +60,62 @@ except InvalidSchemaError as error:
     assert "non-schema value (array)" in str(error)
 else:
     raise AssertionError("expected InvalidSchemaError")
+```
+
+## A dialect boundary inside one document
+
+The rule is per *resource*, not per document, so the same array-form
+`items` can be legal in one part of a document and a non-schema in
+another. An embedded `$id` resource that declares its own `$schema` is
+walked, indexed, and evaluated under it:
+
+```python
+mixed = create_engine()
+mixed.register_schema(
+    {
+        "$id": "https://example.com/mixed",
+        "$defs": {
+            "tuple": {
+                "$id": "https://example.com/mixed-legacy",
+                "$schema": DIALECT_DRAFT_07,
+                # Legal here: this resource is draft-07.
+                "items": [{"type": "string"}, {"type": "integer"}],
+                # And `$id: "#name"` is an anchor here, not a base URI.
+                "definitions": {"tag": {"$id": "#tag", "type": "string"}},
+            }
+        },
+    },
+    "https://example.com/mixed",
+)
+assert mixed.schemas.dialect_uri_for("https://example.com/mixed") == DIALECT_2020_12
+assert (
+    mixed.schemas.dialect_uri_for("https://example.com/mixed-legacy")
+    == "http://json-schema.org/draft-07/schema"
+)
+# The anchor exists because the inner resource's own dialect minted it.
+assert (
+    mixed.schemas.resolve_ref("#tag", "https://example.com/mixed-legacy").pointer
+    == "/definitions/tag"
+)
+```
+
+The identifier syntax travels with the dialect too. `$id: "#name"` mints an
+anchor under draft-07 and draft-06; under 2019-09 and 2020-12 an `$id` sets
+a base URI, and a base URI cannot carry a fragment — so the same spelling
+is an `InvalidIdentifierError` there, pointing you at `$anchor`:
+
+```python
+from json_schema_engine.core import InvalidIdentifierError
+
+try:
+    create_engine().register_schema(
+        {"$id": "https://example.com/frag", "$defs": {"a": {"$id": "#name"}}},
+        "https://example.com/frag",
+    )
+except InvalidIdentifierError as error:
+    assert "$anchor" in str(error)
+else:
+    raise AssertionError("expected InvalidIdentifierError")
 ```
 
 ## `$ref` and its siblings
@@ -163,8 +224,9 @@ assert dynamic.evaluate(dyn_uri, ["a", 1]).valid is False
 
 `register_schema` and `load_schema` raise `UnknownDialectError` for a
 `$schema` value that names a dialect the engine has neither built in nor
-assembled from a loaded metaschema. See [Metaschemas](metaschemas.md) for
-assembling dialects from `$vocabulary`.
+assembled from a loaded metaschema — at a document root or at an embedded
+resource root alike. See [Metaschemas](metaschemas.md) for assembling
+dialects from `$vocabulary`.
 
 ```python
 from json_schema_engine.core import UnknownDialectError
@@ -178,6 +240,29 @@ except UnknownDialectError as error:
     assert "no-such-dialect" in str(error)
 else:
     raise AssertionError("expected UnknownDialectError")
+```
+
+An embedded resource is no different, except that the error also says
+*where* the dialect was asked for. Registration is all-or-nothing, so
+nothing from the attempt is left behind:
+
+```python
+embedded_bad = create_engine()
+try:
+    embedded_bad.register_schema(
+        {
+            "$id": "https://example.com/outer",
+            "$defs": {"i": {"$id": "inner", "$schema": "https://example.com/nope"}},
+        },
+        "https://example.com/outer",
+    )
+except UnknownDialectError as error:
+    assert error.schema_location == "https://example.com/outer#/$defs/i"
+else:
+    raise AssertionError("expected UnknownDialectError")
+
+assert not embedded_bad.schemas.has("https://example.com/outer")
+assert not embedded_bad.schemas.has("https://example.com/inner")
 ```
 
 ## Several dialects, one engine

@@ -9,6 +9,31 @@ minor versions may change public API.
 
 ### Changed
 
+- **`$schema` now governs the schema resource it roots, not the document
+  (DESIGN.md P14).** An embedded `$id` resource declaring its own `$schema` is
+  walked, indexed and evaluated under it; one without a `$schema` inherits the
+  resource containing it. The walk previously threaded the document root's
+  dialect through the whole recursion, so the bug cut both ways: a valid
+  draft-07 resource embedded in a 2020-12 document was rejected for array-form
+  `items`, and a 2020-12 resource embedded in a draft-07 document had
+  `$id: "#foo"` accepted as an anchor. Pointer navigation was affected too — a
+  `$ref` crossing into an embedded resource under the wrong identifier syntax
+  came back mislabeled as that resource's root.
+- A dialect an embedded resource demands is assembled on the spot: the walk
+  reports what it needs, the engine loads that metaschema and registers again.
+  At most one extra attempt per distinct embedded dialect, and none for a
+  document that declares none.
+- **An embedded `$id` that cannot name a new resource now raises
+  `InvalidIdentifierError`.** A non-empty fragment (`"$id": "#frag"`), or `""`
+  or `"#"`, used to resolve back to the enclosing resource and surface as
+  `DuplicateResourceError: resource '...' is claimed twice in one document` —
+  a true sentence about a URI the author never wrote, blaming a second `$id`
+  that does not exist. Per dialect: draft-07/06 read `#name` as an anchor and
+  are unaffected. An empty trailing fragment (`"sub#"`) stays legal, matching
+  2020-12's metaschema and the bundled draft-06/07 metaschemas' own root `$id`.
+
+### Changed
+
 - **Duplicate identifiers are now registration errors (DESIGN.md P12).**
   Two different schemas may no longer claim one resource URI
   (`DuplicateResourceError`), and two different schema objects may no longer
