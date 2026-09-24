@@ -15,7 +15,8 @@ Produced by Henry Andrews via Claude Code.
 **`[json-schema-engine](https://pypi.org/project/json-schema-engine/)` and
 `[ecma-regex](https://pypi.org/project/ecma-regex/)` are published on PyPI.
 
-**Status: The `0.0.x` line is functionally complete but experimental.**
+**Status: The `0.0.x` line is functionally complete but
+not ready for production use.**
 
 See [CHANGELOG.md](CHANGELOG.md) for the current release's contents.
 [DESIGN.md](DESIGN.md) is the design contract and carries the milestone
