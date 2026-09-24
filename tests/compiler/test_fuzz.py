@@ -26,6 +26,7 @@ from json_schema_engine.compiler import (
     compile_evaluator,
     compile_validator,
 )
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
@@ -73,6 +74,8 @@ class CorpusGroup:
     engine: Engine
     uri: str
     seeds: tuple[JsonValue, ...]
+    # The planner's specialization cap (a dynamic seed pins its own).
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS
 
 
 def _file_groups(path: Path) -> dict[str, tuple[JsonValue, list[JsonValue]]]:
@@ -233,6 +236,7 @@ def _build_seed_corpus() -> list[CorpusGroup]:
                 engine=engine,
                 uri=uri,
                 seeds=tuple(instance for instance, _ in seed.tests),
+                max_dynamic_winners=seed.max_dynamic_winners,
             )
         )
     return groups
@@ -249,8 +253,11 @@ def _artifacts(group: CorpusGroup) -> tuple[CompiledValidator, CompiledValidator
     cached on first use."""
     cached = _ARTIFACT_CACHE.get(group.key)
     if cached is None:
-        fast = compile_validator(group.engine, group.uri)
-        conservative = compile_validator(group.engine, group.uri, conservative=True)
+        cap = group.max_dynamic_winners
+        fast = compile_validator(group.engine, group.uri, max_dynamic_winners=cap)
+        conservative = compile_validator(
+            group.engine, group.uri, conservative=True, max_dynamic_winners=cap
+        )
         cached = (fast, conservative)
         _ARTIFACT_CACHE[group.key] = cached
     return cached
@@ -345,7 +352,12 @@ _EVALUATOR_CACHE: dict[str, CompiledEvaluator] = {}
 def _evaluator(group: CorpusGroup) -> CompiledEvaluator:
     cached = _EVALUATOR_CACHE.get(group.key)
     if cached is None:
-        cached = compile_evaluator(group.engine, group.uri, annotations=True)
+        cached = compile_evaluator(
+            group.engine,
+            group.uri,
+            annotations=True,
+            max_dynamic_winners=group.max_dynamic_winners,
+        )
         _EVALUATOR_CACHE[group.key] = cached
     return cached
 

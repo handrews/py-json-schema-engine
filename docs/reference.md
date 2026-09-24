@@ -904,13 +904,18 @@ registries taken at compile time.
 
 ### Functions
 
-`build_plan(engine, schema_uri) -> CompilationPlan`: plans the compilation of
-one registered root schema: classifies every reachable schema node as a static
-(compilable) or interpreted (trampoline) unit. Conservative by design; anything
-uncertain falls back to the interpreter.
+`build_plan(engine, schema_uri, *, max_dynamic_winners=16) -> CompilationPlan`:
+plans the compilation of one registered root schema: classifies every reachable
+schema node as a static (compilable) or interpreted (trampoline) unit.
+Conservative by design; anything uncertain falls back to the interpreter.
+`max_dynamic_winners` caps how many declaring resources a `$dynamicRef`/
+`$recursiveRef` anchor whose target differs by path may be specialized for
+(the units below each declarer are compiled once per declarer, so every copy's
+site is a static edge); `0` never specializes, and such sites island. Negative
+values raise `ValueError`.
 
 `compile_evaluator(engine, schema_uri, *, annotations=False, max_depth=None,
-conservative=False) -> CompiledEvaluator`: compiles a registered root schema
+conservative=False, max_dynamic_winners=16) -> CompiledEvaluator`: compiles a registered root schema
 into an evaluator serving every output format but `flag` (M9). The
 annotation selection is fixed at compile time (ruled-out annotations are
 never recorded); every consumer is tracked at runtime and every branch
@@ -924,13 +929,15 @@ positions=False) -> Result` (the engine's own output controls, rejected the
 same way with `OutputOptionsError`), `plan: CompilationPlan`, `module:
 ast.Module`, `source: str`, `annotations: AnnotationsOption`.
 
-`compile_validator(engine, schema_uri, *, max_depth=None, conservative=False)
--> CompiledValidator`: compiles a registered root schema into a verdict-only
-validator. `max_depth` defaults to the engine's; `conservative=True` turns the
-emitter's optimizations off (no inlining, no set specialization): the
-differential fuzzer referees both configurations.
+`compile_validator(engine, schema_uri, *, max_depth=None, conservative=False,
+max_dynamic_winners=16) -> CompiledValidator`: compiles a registered root schema
+into a verdict-only validator. `max_depth` defaults to the engine's;
+`conservative=True` turns the emitter's optimizations off (no inlining, no set
+specialization): the differential fuzzer referees both configurations;
+`max_dynamic_winners` is the planner's specialization cap (see `build_plan`).
 
-`emit_standalone(engine, schema_uri, *, max_depth=None) -> str`: emits a
+`emit_standalone(engine, schema_uri, *, max_depth=None, max_dynamic_winners=16)
+-> str`: emits a
 registered root schema as a self-contained validator module: source text whose
 `validate(instance) -> bool` agrees with `Engine.evaluate` on every instance,
 importable without the compiler package. Raises `StandaloneUnsupportedError`
@@ -939,7 +946,8 @@ when the plan has any interpreted unit or the engine's regex backend is not
 
 `explain_compilation(plan) -> CompilationExplanation`: a read-only projection
 of a plan for census gates and diagnostics: counts of static versus interpreted
-units, grouped by `FallbackCause`.
+units, grouped by `FallbackCause`, the dynamic sites resolved at plan time, and
+the anchors specialized per dynamic context.
 
 ### Artifacts and plan types
 
@@ -955,11 +963,18 @@ tests), `formats: tuple[str, ...]` (every format name any static unit asserts,
 M7), `targets: tuple[PlannedUnit, ...]` (interpreted units in stable order;
 index = target-table slot), `coverage_ids: frozenset[str] = frozenset()` (M9:
 producer ids some tracked consumer reads; only their productions are recorded
-on a channel).
+on a channel), `split_anchors: tuple[SplitAnchor, ...] = ()` (anchors whose
+sites were specialized per dynamic context).
 
 `PlannedUnit`: a mutable, slotted dataclass: one schema node in the plan, keyed
-by its canonical location. Fields: `key: str`, `ref: SchemaRef` (internal
-type), `kind: Literal["static", "interpreted"] = "static"`, `cause:
+by its canonical location plus, once the plan has split an anchor, its dynamic
+context (the key is then the location followed by `|dynamic:<anchor>=<winner>`
+or `|recursive=<winner>` per bound anchor; `|` cannot appear raw in a URI).
+Copies of one location share one `SchemaRef` and report the same location.
+Fields: `key: str`, `ref: SchemaRef` (internal type), `context: tuple[tuple[str,
+str, str], ...] = ()` (sorted `(kind, anchor, winner)` triples: the first
+declaring resource bound on the path for each split anchor), `kind:
+Literal["static", "interpreted"] = "static"`, `cause:
 FallbackCause | None = None`, `edges: list[PlannedApplication] = []` (resolved
 outgoing edges, in keyword order, static units only), `coverage: StaticCoverage
 | None = None` (static evaluated coverage licensed for this object's consumers,
@@ -985,7 +1000,8 @@ whose anchor won, or `None` when the reference behaved like `$ref`.
 
 `FallbackCause`: a type alias, `Literal["dynamic", "unlowerable", "cycle",
 "non_schema"]`: why a unit is interpreted: a dynamic-reference site whose
-target differs by path (or a dynamic keyword without a resolution fact); a
+anchor binds more declaring resources than `max_dynamic_winners` allows the
+plan to specialize for (or a dynamic keyword without a resolution fact); a
 keyword without `lower()`, an unresolvable edge, or a consumer without static
 coverage; a possible in-place cycle; or a reference into non-schema data.
 
@@ -994,12 +1010,20 @@ coverage; a possible in-place cycle; or a reference into non-schema data.
 int]`, `interpreted_keys: tuple[str, ...]`, `reaches_interpreted: int`,
 `resolved_dynamic_sites: tuple[ResolvedDynamicSite, ...] = ()`, `tracked_units:
 int = 0` (M9: consumers tracked at runtime), `region_units: int = 0` (M9: units
-reachable in place from a tracked consumer's region).
+reachable in place from a tracked consumer's region), `split_anchors:
+tuple[SplitAnchor, ...] = ()` (the plan's specialized anchors),
+`specialized_units: int = 0` (units carrying a non-empty dynamic context).
 
 `ResolvedDynamicSite`: a frozen dataclass: a dynamic-reference site the plan
 compiled as a static edge. Fields: `unit: str` (the site's unit key),
 `keyword: str`, `ref: str`, `target: str` (the target's unit key), `winner:
-str | None`.
+str | None`, `location: str` and `target_location: str` (the schema locations
+the two units report; copies of one location share them).
+
+`SplitAnchor`: a frozen dataclass: an anchor the plan specialized per dynamic
+context. Fields: `kind: Literal["dynamic", "recursive"]`, `anchor: str` (for
+the recursive kind, the sentinel `"$recursiveAnchor"`), `winners: tuple[str,
+...]` (the declaring resources some unit bound, sorted).
 
 ### Errors
 

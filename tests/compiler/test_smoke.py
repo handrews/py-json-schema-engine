@@ -104,14 +104,27 @@ def test_other_fixtures_compile_and_agree_on_probes(name: str) -> None:
 def test_island_plan_reports_the_dynamic_unit() -> None:
     engine = create_engine()
     uri = engine.register_schema(load_fixture("island"), "https://spike.example/island")
-    compiled = compile_validator(engine, uri)
+    # The fixture's site has two possible declarers (M9); with
+    # specialization off it stays an island.
+    compiled = compile_validator(engine, uri, max_dynamic_winners=0)
     explanation = explain_compilation(compiled.plan)
-    # The fixture's site has two possible declarers (M9): it stays an island.
     assert explanation.causes == {"dynamic": 1}
     assert explanation.interpreted_keys == ("https://spike.example/genericList#/items",)
     assert explanation.resolved_dynamic_sites == ()
     assert "H_FRAG(T[0]" in compiled.source
     assert "s = (*s, 'https://spike.example/genericList')" in compiled.source
+
+
+def test_island_fixture_specializes_under_the_default_cap() -> None:
+    engine = create_engine()
+    uri = engine.register_schema(load_fixture("island"), "https://spike.example/island")
+    compiled = compile_validator(engine, uri)
+    explanation = explain_compilation(compiled.plan)
+    assert explanation.causes == {}
+    assert [a.anchor for a in explanation.split_anchors] == ["item"]
+    assert explanation.specialized_units > 0
+    assert "H_FRAG" not in compiled.source
+    assert "s = (*s," not in compiled.source
 
 
 # --- suite subset -----------------------------------------------------------

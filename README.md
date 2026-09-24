@@ -115,9 +115,10 @@ attach a `source` location to every error and annotation, and
 ## Compile
 
 The compiler tier turns a registered schema into a Python function. It is
-not a second implementation: any subschema it cannot emit (a `$dynamicRef`
-whose target differs by path, an in-place cycle) calls back into the
-interpreter, so a compiled validator is exactly
+not a second implementation: any subschema it cannot emit (an in-place
+cycle, a `$dynamicRef` with more possible targets than the planner is
+allowed to specialize for) calls back into the interpreter, so a compiled
+validator is exactly
 as correct as `Engine.evaluate` and never less complete. Tier choice is a
 performance decision, not a semantic one.
 

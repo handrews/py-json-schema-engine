@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 from json_schema_engine.compiler import build_plan, explain_compilation
-from json_schema_engine.compiler.plan import build_plan_over
+from json_schema_engine.compiler.plan import (
+    DEFAULT_MAX_DYNAMIC_WINNERS,
+    build_plan_over,
+)
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
@@ -24,19 +27,30 @@ from json_schema_engine.test_kit import load_suite_file, suite_remotes_loader
 ROOT = Path(__file__).resolve().parents[2] / "test-suite"
 REMOTES_DIR = ROOT / "remotes"
 
-# (groups, total units, interpreted units, causes, resolved dynamic sites)
-# per dialect directory. M9 resolves every dynamic-reference site whose
-# target is the same on every path (the suite's "multiple dynamic paths"
-# groups are the ones that stay islands; a resolved site plans its target's
-# subtree, hence the unit totals grow) and tracks `unevaluated*` consumers
-# whose coverage is runtime-conditional instead of islanding them, so the
-# only fallback cause left is an unstable dynamic site.
-PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int], int]]] = {
-    "draft2020-12": (DIALECT_2020_12, (384, 1371, 1, {"dynamic": 1}, 58)),
-    "draft2019-09": (DIALECT_2019_09, (373, 1300, 2, {"dynamic": 2}, 47)),
+type Census = tuple[int, int, int, dict[str, int], int, int]
+
+# (groups, total units, interpreted units, causes, resolved dynamic sites,
+# split anchors) per dialect directory. M9 resolves every dynamic-reference
+# site whose target is the same on every path, and specializes the anchor
+# of a site whose target differs by path (the suite's "multiple dynamic
+# paths" groups: one anchor each, whose clones add units and resolved
+# sites), so no fallback cause is left in the suite. `unevaluated*`
+# consumers whose coverage is runtime-conditional are tracked instead of
+# islanding.
+PINS: dict[str, tuple[str, Census]] = {
+    "draft2020-12": (DIALECT_2020_12, (384, 1376, 0, {}, 60, 1)),
+    "draft2019-09": (DIALECT_2019_09, (373, 1304, 0, {}, 51, 2)),
     # No dynamic references and no unevaluated* keywords: fully static.
-    "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0)),
-    "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0)),
+    "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0, 0)),
+    "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0, 0)),
+}
+
+# With specialization off (`max_dynamic_winners=0`) the path-dependent
+# sites island exactly as before it existed: the proof that `0` is the
+# old planner.
+UNSPECIALIZED_PINS: dict[str, tuple[str, Census]] = {
+    "draft2020-12": (DIALECT_2020_12, (384, 1371, 1, {"dynamic": 1}, 58, 0)),
+    "draft2019-09": (DIALECT_2019_09, (373, 1300, 2, {"dynamic": 2}, 47, 0)),
 }
 
 
@@ -46,8 +60,8 @@ PINS: dict[str, tuple[str, tuple[int, int, int, dict[str, int], int]]] = {
 EVALUATOR_PINS: dict[
     str, tuple[str, tuple[int, int, int, dict[str, int], int, int]]
 ] = {
-    "draft2020-12": (DIALECT_2020_12, (384, 1371, 1, {"dynamic": 1}, 85, 73)),
-    "draft2019-09": (DIALECT_2019_09, (373, 1300, 2, {"dynamic": 2}, 82, 69)),
+    "draft2020-12": (DIALECT_2020_12, (384, 1376, 0, {}, 85, 73)),
+    "draft2019-09": (DIALECT_2019_09, (373, 1304, 0, {}, 82, 69)),
     "draft7": (DIALECT_DRAFT_07, (258, 762, 0, {}, 0, 0)),
     "draft6": (DIALECT_DRAFT_06, (233, 680, 0, {}, 0, 0)),
 }
@@ -64,8 +78,9 @@ def census(
     dialect: str,
     *,
     engine_factory: Callable[[str], Engine] = _default_engine,
-) -> tuple[int, int, int, dict[str, int], int]:
-    groups = total = interpreted = resolved = 0
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
+) -> Census:
+    groups = total = interpreted = resolved = split = 0
     causes: dict[str, int] = {}
     for path in sorted((ROOT / "tests" / directory).glob("*.json")):
         seen: set[str] = set()
@@ -75,20 +90,29 @@ def census(
             seen.add(case.group)
             engine = engine_factory(dialect)
             uri = engine.load_schema(case.schema, "https://census.example/schema")
-            explanation = explain_compilation(build_plan(engine, uri))
+            explanation = explain_compilation(
+                build_plan(engine, uri, max_dynamic_winners=max_dynamic_winners)
+            )
             groups += 1
             total += explanation.total_units
             interpreted += explanation.interpreted_units
             resolved += len(explanation.resolved_dynamic_sites)
+            split += len(explanation.split_anchors)
             for cause, count in explanation.causes.items():
                 causes[cause] = causes.get(cause, 0) + count
-    return groups, total, interpreted, dict(sorted(causes.items())), resolved
+    return groups, total, interpreted, dict(sorted(causes.items())), resolved, split
 
 
 @pytest.mark.parametrize("directory", list(PINS))
 def test_census_is_pinned(directory: str) -> None:
     dialect, expected = PINS[directory]
     assert census(directory, dialect) == expected
+
+
+@pytest.mark.parametrize("directory", list(UNSPECIALIZED_PINS))
+def test_unspecialized_census_is_pinned(directory: str) -> None:
+    dialect, expected = UNSPECIALIZED_PINS[directory]
+    assert census(directory, dialect, max_dynamic_winners=0) == expected
 
 
 def evaluator_census(

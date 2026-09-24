@@ -22,6 +22,7 @@ from json_schema_engine.compiler.errors import (
     StandaloneUnsupportedError,
 )
 from json_schema_engine.compiler.plan import (
+    DEFAULT_MAX_DYNAMIC_WINNERS,
     CompilationExplanation,
     CompilationPlan,
     DynamicResolution,
@@ -29,6 +30,7 @@ from json_schema_engine.compiler.plan import (
     PlannedApplication,
     PlannedUnit,
     ResolvedDynamicSite,
+    SplitAnchor,
     build_plan,
     build_plan_over,
     explain_compilation,
@@ -57,6 +59,7 @@ __all__ = [
     "PlannedApplication",
     "PlannedUnit",
     "ResolvedDynamicSite",
+    "SplitAnchor",
     "StandaloneUnsupportedError",
     "build_plan",
     "compile_evaluator",
@@ -84,15 +87,21 @@ def compile_validator(
     *,
     max_depth: int | None = None,
     conservative: bool = False,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
 ) -> CompiledValidator:
     """Compile a registered root schema into a verdict-only validator.
 
     `max_depth` defaults to the engine's; `conservative` turns the
     emitter's optimizations off (no inlining, no set specialization) — the
-    differential fuzzer referees both configurations.
+    differential fuzzer referees both configurations. `max_dynamic_winners`
+    caps how many declaring resources a `$dynamicRef`/`$recursiveRef`
+    anchor whose target differs by path may be specialized for; `0` never
+    specializes, and such sites island instead.
     """
     registry = engine.schemas.snapshot()
-    plan = build_plan_over(registry, schema_uri)
+    plan = build_plan_over(
+        registry, schema_uri, max_dynamic_winners=max_dynamic_winners
+    )
     flags = Flags(inline=not conservative, specialize_sets=not conservative)
     serialized = serialize_plan(plan, registry, flags)
     prologue = [
@@ -155,6 +164,7 @@ def compile_evaluator(
     annotations: AnnotationsOption = False,
     max_depth: int | None = None,
     conservative: bool = False,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
 ) -> CompiledEvaluator:
     """Compile a registered root schema into an evaluator serving every
     output format but the verdict-only `flag`.
@@ -165,7 +175,12 @@ def compile_evaluator(
     errors, annotations, dropped records, and trace equal the interpreter's.
     """
     registry = engine.schemas.snapshot()
-    plan = build_plan_over(registry, schema_uri, track_all=True)
+    plan = build_plan_over(
+        registry,
+        schema_uri,
+        track_all=True,
+        max_dynamic_winners=max_dynamic_winners,
+    )
     flags = Flags(inline=False, specialize_sets=not conservative, mode="evaluator")
     record = make_record_predicate(annotations)
     serialized = serialize_plan(plan, registry, flags, record=record)

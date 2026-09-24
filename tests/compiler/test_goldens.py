@@ -13,13 +13,16 @@ import pytest
 
 from json_schema_engine.compiler import compile_evaluator, compile_validator
 from json_schema_engine.compiler.emit import BUILTINS_USED
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import create_engine
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDENS = Path(__file__).parent / "goldens"
-# `island` keeps an unstable dynamic site (M9); `dynamic-static` pins a
-# resolved one; `tracked-consumer` a consumer tracked at runtime with its
-# `anyOf` region; `dynamic-consumer` a region holding a resolved site.
+# `island` keeps an unstable dynamic site (M9, specialization off);
+# `dynamic-static` pins a resolved one; `tracked-consumer` a consumer
+# tracked at runtime with its `anyOf` region; `dynamic-consumer` a region
+# holding a resolved site; `extensible-tree` a recursive base specialized
+# per extension.
 NAMES = [
     "user",
     "event",
@@ -29,7 +32,9 @@ NAMES = [
     "dynamic-static",
     "tracked-consumer",
     "dynamic-consumer",
+    "extensible-tree",
 ]
+OPTIONS: dict[str, int] = {"island": 0}
 
 
 MODES = ["flag", "evaluator"]
@@ -39,11 +44,14 @@ def compile_fixture(name: str, mode: str = "flag") -> str:
     engine = create_engine()
     schema = json.loads((FIXTURES / f"{name}.schema.json").read_text())
     uri = engine.register_schema(schema, f"https://spike.example/{name}")
+    cap = OPTIONS.get(name, DEFAULT_MAX_DYNAMIC_WINNERS)
     if mode == "flag":
-        compiled = compile_validator(engine, uri)
+        compiled = compile_validator(engine, uri, max_dynamic_winners=cap)
         source, module = compiled.source, compiled.module
     else:
-        evaluator = compile_evaluator(engine, uri, annotations=True)
+        evaluator = compile_evaluator(
+            engine, uri, annotations=True, max_dynamic_winners=cap
+        )
         source, module = evaluator.source, evaluator.module
     # The source is the module: parsing it back gives the same tree.
     assert ast.dump(ast.parse(source)) == ast.dump(module)

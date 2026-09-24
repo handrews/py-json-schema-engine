@@ -16,7 +16,11 @@ import importlib
 import ecma_regex
 from json_schema_engine.compiler import emit as e
 from json_schema_engine.compiler.errors import StandaloneUnsupportedError
-from json_schema_engine.compiler.plan import build_plan_over, explain_compilation
+from json_schema_engine.compiler.plan import (
+    DEFAULT_MAX_DYNAMIC_WINNERS,
+    build_plan_over,
+    explain_compilation,
+)
 from json_schema_engine.compiler.serialize import (
     DEFAULT_FLAGS,
     assemble,
@@ -53,13 +57,19 @@ def _pattern_source(engine: Engine, source: str) -> tuple[str, int]:
 
 
 def emit_standalone(
-    engine: Engine, schema_uri: str, *, max_depth: int | None = None
+    engine: Engine,
+    schema_uri: str,
+    *,
+    max_depth: int | None = None,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
 ) -> str:
     """Emit a registered root schema as a self-contained validator module.
 
     The module's `validate(instance) -> bool` agrees with `Engine.evaluate`
     on every instance. Raises `StandaloneUnsupportedError` when the plan
     has any interpreted unit or the engine's regex backend is not `re`.
+    `max_dynamic_winners` is the planner's specialization cap (see
+    `compile_validator`).
     """
     if engine.regex_cache.backend != "re":
         raise StandaloneUnsupportedError(
@@ -67,7 +77,9 @@ def emit_standalone(
             f"{engine.regex_cache.backend!r}"
         )
     registry = engine.schemas.snapshot()
-    plan = build_plan_over(registry, schema_uri)
+    plan = build_plan_over(
+        registry, schema_uri, max_dynamic_winners=max_dynamic_winners
+    )
     if plan.targets:
         explanation = explain_compilation(plan)
         causes = ", ".join(f"{cause}: {n}" for cause, n in explanation.causes.items())

@@ -1,10 +1,11 @@
 # Plan-time resolution of `$dynamicRef`/`$recursiveRef` (DESIGN.md D8; M9,
-# after the TS engine's ADR 0004). Three legs: the seed corpus's pinned
-# classifications with verdict parity on every surface; every official
-# suite group holding a dynamic reference, where the target the planner
-# chose must be the target the interpreter applied (observed through the
-# trace); and the two measured schemas (OpenAPI 3.1, the 2020-12
-# metaschema as root) planning with no interpreted unit.
+# after the TS engine's ADR 0004, plus per-context specialization). Three
+# legs: the seed corpus's pinned classifications with verdict parity on
+# every surface; every official suite group holding a dynamic reference,
+# where the target the planner chose must be the target the interpreter
+# applied (observed through the trace), under the default cap and with
+# specialization off; and the two measured schemas (OpenAPI 3.1, the
+# 2020-12 metaschema as root) planning with no interpreted unit.
 
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ from json_schema_engine.compiler import (
     emit_standalone,
     explain_compilation,
 )
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import (
     DIALECT_2019_09,
     DIALECT_2020_12,
@@ -38,9 +40,9 @@ OAS_SCHEMA = (
 )
 METASCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema"
 
-# Suite groups that legitimately stay islands: their site's target differs
-# by path.
-EXPECTED_ISLANDS = {
+# Suite groups whose site's target differs by path: islands with
+# specialization off, specialized per declarer under the default cap.
+PATH_DEPENDENT_GROUPS = {
     "draft2020-12": {"multiple dynamic paths to the $dynamicRef keyword"},
     "draft2019-09": {
         "multiple dynamic paths to the $recursiveRef keyword",
@@ -51,6 +53,7 @@ DYNAMIC_KEYWORDS = {"draft2020-12": "$dynamicRef", "draft2019-09": "$recursiveRe
 MIN_GROUPS = {"draft2020-12": 15, "draft2019-09": 10}
 MIN_RESOLVED = {"draft2020-12": 15, "draft2019-09": 8}
 DIALECTS = {"draft2020-12": DIALECT_2020_12, "draft2019-09": DIALECT_2019_09}
+CAPS = [DEFAULT_MAX_DYNAMIC_WINNERS, 0]
 
 
 # --- leg 1: the seed corpus --------------------------------------------------
@@ -60,15 +63,25 @@ DIALECTS = {"draft2020-12": DIALECT_2020_12, "draft2019-09": DIALECT_2019_09}
 def test_seed_classification_and_parity(seed: DynamicSeed) -> None:
     engine = create_engine(default_dialect=seed.dialect)
     uri = engine.register_schema(seed.schema, f"https://seeds.example/{seed.key}")
-    explanation = explain_compilation(build_plan(engine, uri))
-    if seed.classification == "static":
+    cap = seed.max_dynamic_winners
+    explanation = explain_compilation(build_plan(engine, uri, max_dynamic_winners=cap))
+    if seed.classification == "island":
+        assert explanation.causes.get("dynamic", 0) >= 1, explanation.causes
+        assert explanation.split_anchors == ()
+    else:
         assert explanation.interpreted_units == 0, explanation.interpreted_keys
         assert explanation.resolved_dynamic_sites
-        assert "def validate" in emit_standalone(engine, uri)
-    else:
-        assert explanation.causes.get("dynamic", 0) >= 1, explanation.causes
-    fast = compile_validator(engine, uri).validate
-    conservative = compile_validator(engine, uri, conservative=True).validate
+        assert "def validate" in emit_standalone(engine, uri, max_dynamic_winners=cap)
+        if seed.classification == "static":
+            assert explanation.split_anchors == ()
+            assert explanation.specialized_units == 0
+        else:
+            assert explanation.split_anchors, seed.key
+            assert explanation.specialized_units > 0
+    fast = compile_validator(engine, uri, max_dynamic_winners=cap).validate
+    conservative = compile_validator(
+        engine, uri, conservative=True, max_dynamic_winners=cap
+    ).validate
     for instance, valid in seed.tests:
         assert engine.evaluate(uri, instance).valid is valid, (seed.key, instance)
         assert fast(instance) is valid, (seed.key, instance)
@@ -118,12 +131,16 @@ def _observed_resolutions(
     return seen
 
 
+@pytest.mark.parametrize("cap", CAPS)
 @pytest.mark.parametrize("directory", sorted(DIALECTS))
-def test_suite_groups_resolve_to_the_interpreters_target(directory: str) -> None:
+def test_suite_groups_resolve_to_the_interpreters_target(
+    directory: str, cap: int
+) -> None:
     keyword = DYNAMIC_KEYWORDS[directory]
     groups = _dynamic_groups(directory)
     assert len(groups) >= MIN_GROUPS[directory], len(groups)
     islands: set[str] = set()
+    specialized: set[str] = set()
     resolved_total = 0
     for key, cases in groups:
         engine = create_engine(
@@ -131,22 +148,39 @@ def test_suite_groups_resolve_to_the_interpreters_target(directory: str) -> None
             loaders=[suite_remotes_loader(REMOTES_DIR)],
         )
         uri = engine.load_schema(cases[0].schema, "https://suite.example/schema")
-        explanation = explain_compilation(build_plan(engine, uri))
+        explanation = explain_compilation(
+            build_plan(engine, uri, max_dynamic_winners=cap)
+        )
         if explanation.causes.get("dynamic"):
             islands.add(cases[0].group)
+        if explanation.split_anchors:
+            specialized.add(cases[0].group)
         resolved_total += len(explanation.resolved_dynamic_sites)
         observed = _observed_resolutions(
             engine, uri, keyword, [case.data for case in cases]
         )
+        # Clones of one location share its trace node: the planner's
+        # targets, taken together, must be exactly what the interpreter
+        # applied there.
+        planned: dict[str, set[str]] = {}
         for site in explanation.resolved_dynamic_sites:
-            applied = observed.get(site.unit)
+            planned.setdefault(site.location, set()).add(site.target_location)
+        for location, targets in planned.items():
+            applied = observed.get(location)
             if applied is None:
                 continue  # the instances never reached this site
-            assert applied == {site.target}, (key, site)
-        validate = compile_validator(engine, uri).validate
+            assert applied <= targets, (key, location, applied, targets)
+            if len(targets) == 1:
+                assert applied == targets, (key, location)
+        validate = compile_validator(engine, uri, max_dynamic_winners=cap).validate
         for case in cases:
             assert validate(case.data) is case.valid, (key, case.description)
-    assert islands == EXPECTED_ISLANDS[directory]
+    if cap == 0:
+        assert islands == PATH_DEPENDENT_GROUPS[directory]
+        assert specialized == set()
+    else:
+        assert islands == set()
+        assert specialized == PATH_DEPENDENT_GROUPS[directory]
     assert resolved_total >= MIN_RESOLVED[directory], resolved_total
 
 
@@ -159,6 +193,7 @@ def test_openapi_schema_compiles_with_no_interpreted_unit() -> None:
     uri = engine.register_schema(schema, schema["$id"])
     explanation = explain_compilation(build_plan(engine, uri))
     assert explanation.interpreted_units == 0, explanation.interpreted_keys
+    assert explanation.split_anchors == ()
     assert len(explanation.resolved_dynamic_sites) == 4
     assert {site.winner for site in explanation.resolved_dynamic_sites} == {
         schema["$id"]
@@ -172,6 +207,7 @@ def test_metaschema_as_root_resolves_every_site() -> None:
     engine = create_engine()
     explanation = explain_compilation(build_plan(engine, METASCHEMA_2020_12))
     assert explanation.interpreted_units == 0, explanation.interpreted_keys
+    assert explanation.split_anchors == ()
     assert len(explanation.resolved_dynamic_sites) > 10
     assert {site.winner for site in explanation.resolved_dynamic_sites} == {
         METASCHEMA_2020_12

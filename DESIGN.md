@@ -59,7 +59,7 @@ not the intent), **N/A** (JavaScript-only).
 | D5  | Annotation selection           | carried | `annotations=False \| True \| AnnotationSelection`: allow-lists by keyword name and vocabulary URI, deny-lists subtracted after, a `keep` predicate over the rendered unit. Internal consumers always see the channel. The interpreter elides at annotate time what the selection rules out and dependency records nothing consumes. Producers declare `produces`, consumers declare `consumes`, or `UndeclaredProductionError` / `UndeclaredConsumptionError` is raised — never a silently empty channel. Complete at M5: every suite case is evaluated under `flag` (elided) and under `hierarchical`+verbose (nothing elided) and the verdicts must agree. |
 | D6  | Output                         | carried | Formats by name: `flag`, `basic`, `detailed`, `verbose` (draft-03 §13) and `list`, `hierarchical` (machines-oriented proposal); three levels (minimal, relevant, verbose); orthogonal controls `annotations`, `error_params`, `positions`, `trace`. Unsupported combinations raise `OutputOptionsError` before evaluation. Each format fixes its own document structure and field vocabulary (`basic` speaks draft-03's `keywordLocation`/`absoluteKeywordLocation`/`instanceLocation`; `list`/`hierarchical` speak the proposal's `evaluationPath`/`schemaLocation`/`instanceLocation`), while the flat `Result.errors`/`Result.annotations` surface always carries the engine's native `evaluationPath`/`schemaLocation`/`inputLocation`. Python-side option names are snake_case (P8). Complete at M5: tracing is opt-in in the evaluator (`TraceNode` per application, `KeywordTrace` per non-structural keyword); `records.to_render_node` turns the trace into the engine-free `RenderNode` tree that `output.py` renders; `verbose` (the format, or `verbose=True` on `list`/`hierarchical`) exposes `Result.dropped_errors`/`dropped_annotations`; `trace=True` renders `Result.trace` with decoded segments and `errorIndexes` into `Result.errors`. |
 | D7  | Async boundary                 | amended | `evaluate` (and later `compile`) are synchronous. **Amendment (P4):** loaders are synchronous callables by default; an `AsyncEngine` façade over `asyncio` loaders is a later milestone. Registration itself never awaits.                                                                                                                                                                                                                                                                       |
-| D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler (M9, after the TS engine's ADR 0004, extended to `$recursiveRef`): a site whose target is the same on every path that can reach it resolves at plan time and compiles as a static edge (reference applications carry a `resolution` fact; the scope-independent half of resolution lives on the registry, `dynamic_reference`/`recursive_reference`, shared by both tiers; the planner runs a per-anchor forward dataflow over the unit graph in rounds); a site whose target differs by path islands with cause `dynamic`. 2020-12 census: 58 sites resolved, 1 island; the OpenAPI 3.1 schema and the 2020-12 metaschema plan with no interpreted unit.                                                                                                                                                                                                                                                                |
+| D8  | Dynamic scope                  | carried | Full 2020-12 `$dynamicRef` semantics over a stack of entered schema resources; 2019-09 `$recursiveRef`/`$recursiveAnchor` as the degenerate case. Compiler (M9, after the TS engine's ADR 0004, extended to `$recursiveRef`): a site whose target is the same on every path that can reach it resolves at plan time and compiles as a static edge (reference applications carry a `resolution` fact; the scope-independent half of resolution lives on the registry, `dynamic_reference`/`recursive_reference`, shared by both tiers; the planner runs a per-anchor forward dataflow over the unit graph in rounds, re-deriving every decision from the grown graph each round). A site whose target differs by path is **specialized** (2026-09-23): the anchor is split, a unit's identity becomes (location, dynamic context) — the first declaring resource bound so far for each split anchor — and the units below a declaring resource are cloned per winner, so every clone's site resolves exactly and compiles as a static edge; clones share one `SchemaRef` and report the same location. `max_dynamic_winners` (default 16) caps the declarers a split anchor may bind; beyond it, or at `0`, such sites island with cause `dynamic` as before. Census: 2020-12 60 sites resolved, 1 anchor split, 0 islands (58/0/1 with specialization off); 2019-09 51/2/0 (47/0/2); the OpenAPI 3.1 schema and the 2020-12 metaschema plan with no interpreted unit and no split.                                                                                                                                                                                                                                                                |
 | D9  | Lowering catalogue             | carried | Same catalogue in intent (evaluated-set tracking, production elision, constant locations, small-set membership, lazy unit materialization, regex/format hoisting). Measured at M6 on CPython 3.12/3.14: `type(x) is T` tests (P9) run 3–4× faster than bool-guarded `isinstance` for numbers; `frozenset` membership beats an `==` chain from two members, so `InConsts` renders all-string and all-number sets as hoisted frozensets behind a type guard and everything else as a chain; binding helpers as default arguments gains nothing over globals in the exec namespace; one call level costs ~12 ns, so a single-use static child inlines unless the inline stack passes 32 or the loop nesting would pass 16 (CPython refuses more than 20 statically nested `for`/`while`/`try`/`with` blocks; `if` does not count). Consumers (D9a): static coverage when every contributor is unconditional, else runtime tracking (M9): the consumer's unit is *tracked* (owns a coverage channel it folds through core's `coverage.py`), its in-place closure is its *region* (units producing into the channel, every branch run, a failing application's productions cut at its mark, islands harvested through a coverage trampoline), and nested tracked consumers nest through their entry mark. Evaluator plans track every consumer, since a static licence models only the parent-success path. Outside regions flag code is unchanged. |
 | D10 | Compiler output modes          | amended | Runtime compilation = `compile()` of an `ast.Module` (D1). Standalone emission = `ast.unparse` to a `.py` module importable without the compiler. There is no CSP; the security analogue is that only `json_schema_engine.compiler` may touch `ast`/`compile` (P5), and deployments can audit that with `sys.addaudithook`. CPython's cap on statically nested blocks means emission splits units into functions rather than nesting loops. Delivered at M6: `compile_validator` (runtime; `compile`/`exec` live only in `compiler/runtime_compile.py`, proven by `tests/test_fences.py` and an audit-hook probe) and `emit_standalone` (a module importing only `re`, core's errors, and core's pure helpers, with patterns pre-translated for `re`; refused with `StandaloneUnsupportedError` for any interpreted unit or a non-`re` backend). M9: `compile_evaluator` (runtime only; standalone stays flag-only by owner decision, and now accepts tracked schemas). Rule for a later evaluator standalone: every helper emitted code calls is a namespace global with a `json_schema_engine.core` import path, never a method on the runtime object, so that module is prologue work only. |
 | D11 | Draft support                  | carried | Native in core: 2020-12, 2019-09, draft-07, draft-06 (M4), all coexisting in one registry with their own identifier syntax and `$ref` semantics (D18). draft-07/06 predate vocabularies, so their keywords live under registry-internal `urn:jse:vocab:draft-0X:*` names. draft-04 as a separately importable dialect module (`json_schema_engine.dialects.draft04`, M10), assembled through the public dialect-authoring surface.                                                                                                                                                                                                                 |
@@ -167,7 +167,7 @@ Modules of `json_schema_engine.compiler` (M6):
 
 | Module               | Responsibility                                                                                                                     |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `plan.py`            | `build_plan`: static vs interpreted units from `analyze()` facts alone; plan-time dynamic-reference resolution in rounds; coverage licensing or tracking (tracked/region units); cycle islanding; `explain_compilation`. |
+| `plan.py`            | `build_plan`: static vs interpreted units from `analyze()` facts alone; plan-time dynamic-reference resolution in rounds, with per-context specialization of path-dependent sites; coverage licensing or tracking (tracked/region units); cycle islanding by location; `explain_compilation`. |
 | `emit.py`            | The gated `ast` builder: minted identifier vocabulary, `const()` as the only data entry point, node helpers, hoists.                |
 | `serialize/`         | `units.py` (lower a unit to IR), `body.py` (IR → `ast`: expressions, statements, applications, inlining), `__init__` (assembly).    |
 | `runtime.py`         | The exec namespace: core's helpers, the pattern table, the depth budget, the one-way trampolines (`frag`, `frag_cov` harvesting coverage, `frag_eval` on the shared state). |
@@ -303,7 +303,10 @@ Carried verbatim from the TS design; these rules are language-independent.
   its own region produced (`ev[mark:]`). The evaluator cuts the root
   frame when the root fails.
 - **Trampoline.** Still one-way. A resolved dynamic site is a static edge,
-  not code inside an island. `frag_eval` runs an island on the shared
+  not code inside an island, and a specialized clone is an ordinary static
+  unit keyed by (location, dynamic context): the scope threaded toward an
+  island is pushed per unit as before, and the interpreter's guards and
+  records see only locations. `frag_eval` runs an island on the shared
   state with the caller's cursor and path node; `frag_cov` harvests a
   flag-mode island's root-frame productions at its cursor into the
   region's channel.
@@ -340,6 +343,16 @@ From the TS build (language-independent):
   metaschema-`$ref` cases silently error-skip otherwise. Pin exact run counts.
 - The compiler's differential gate must be able to detect a planted
   divergence; test the gate, not only the code.
+- A plan-time dynamic-reference decision is only as good as the graph it
+  was made on: a site resolved in an early round can gain a new winner when
+  a later round plans another site's target. Every decision is re-derived
+  each round (found 2026-09-23: the planner kept a stale single-winner
+  decision and the compiled validator disagreed with the interpreter).
+- In-place cycle detection keys on schema location, never on a clone's key,
+  and islands the ancestor actually on the path: a back-edge that lands on
+  the root through a clone would otherwise island a unit further down,
+  where a short-circuiting `anyOf` never reaches it, while the interpreter's
+  second branch raises `InfiniteLoopError`.
 
 Python-specific (measured 2026-09-20 on CPython 3.14):
 
@@ -647,10 +660,13 @@ since the emitted code is the same for every level.
 4. **Bowtie image publication** — the harness image is built locally by
    `scripts/bowtie_check.py` (both tiers since M9); publishing it (ghcr.io)
    and listing the implementation with Bowtie are owner-controlled.
-5. **Per-site dispatch for unstable dynamic sites** — compile one target
-   per possible resolution and select by the first declaring scope entry;
-   deferred until a real schema needs it (the suite's "multiple dynamic
-   paths" groups are the only known cases).
+5. **Context pruning for specialized units** — a clone carries every
+   split anchor bound on its path, so units below a declaring resource are
+   cloned even when no site of that anchor is reachable from them (the
+   phylohist schema clones `tree`'s whole subtree per extension, +37%
+   units). Dropping from a unit's key the anchors whose sites it cannot
+   reach would cut that to the recursive spine; deferred until compile
+   time or artifact size makes it worth the second fixpoint.
 6. **Evaluator standalone emission** — prologue-only work under D10's
    helper convention; deferred (owner decision, M9).
 7. **Staged registration as a behavior-neutral refactor of P13.** The
@@ -679,6 +695,14 @@ since the emitted code is the same for every level.
 
 ### Resolved (owner, 2026-09-23)
 
+- "Per-site dispatch for unstable dynamic sites" (former item 5): superseded
+  by plan-time specialization (D8). The real schema arrived — phylohist's
+  extensible recursive `tree`, re-declared by `taxonomyTree` and
+  `phylogenyTree`, whose three sites islanded and put every nested node
+  through the interpreter at 2.2× the load time. Cloning the units below
+  each declarer resolves every site statically with no runtime dispatch and
+  no new emitter construct; `max_dynamic_winners` bounds it, and `0` is the
+  previous planner.
 - "`compile_validator` drops the location chain": the flag artifact's
   `validate` is the emitted function itself, so rather than wrap it — one
   more frame on every call of the tier that exists to be fast — the chain is

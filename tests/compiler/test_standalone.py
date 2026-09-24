@@ -145,7 +145,9 @@ def test_refuses_islands_and_foreign_backends() -> None:
         "https://spike.example/island",
     )
     with pytest.raises(StandaloneUnsupportedError, match="dynamic"):
-        emit_standalone(engine, uri)
+        emit_standalone(engine, uri, max_dynamic_winners=0)
+    # Specialized per declarer, the same schema has no island to refuse.
+    assert "def validate" in emit_standalone(engine, uri)
     engine = create_engine(regex_backend="regex")
     uri = engine.register_schema({"type": "string"}, "https://spike.example/plain")
     with pytest.raises(StandaloneUnsupportedError, match="backend"):

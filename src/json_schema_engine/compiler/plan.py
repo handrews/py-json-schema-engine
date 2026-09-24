@@ -15,8 +15,21 @@
 # resources that can be the outermost declarer on arrival; the graph
 # over-approximates real paths, so the analysis errs only toward islanding.
 # A resolved site adds its target's subtree — and so new paths — to the
-# graph, so the plan is built in rounds under the current site decisions;
-# decisions move only unknown → resolved → unstable, which bounds the loop.
+# graph, so the plan is built in rounds under the current site decisions,
+# and every decision is re-derived each round from the grown graph.
+#
+# Specialization: a site whose target differs by path is not islanded at
+# once. The winner is the first resource on the path that declares the
+# anchor, so the planner *splits* the anchor: from then on a unit's
+# identity is (location, dynamic context), the context being the first
+# declarer bound so far for every split anchor, and a site of a split
+# anchor resolves exactly from its unit's context. Units below a declaring
+# resource are cloned per winner; every clone is an ordinary static unit
+# that reports the location it shares with its siblings. Decisions move
+# only unknown → resolved → unstable per site and unsplit → split → capped
+# per anchor, which bounds the rounds. `max_dynamic_winners` bounds the
+# declarers a split anchor may bind (0 never splits); beyond it the anchor
+# is capped and its unstable sites island with cause "dynamic" as before.
 #
 # Dependency direction: imports core's registry/dialect/ref/errors and the
 # engine façade's type. The serializer and the public API import this.
@@ -46,10 +59,28 @@ from json_schema_engine.core.registry import SchemaRegistry
 
 type FallbackCause = Literal["dynamic", "unlowerable", "cycle", "non_schema"]
 """Why a unit is interpreted: a dynamic-reference site the plan cannot
-resolve (its target differs by path, or the keyword declares no
-resolution fact); a keyword without `lower()`, an unresolvable edge, or a
-consumer without static coverage; a possible in-place cycle; a reference
-into non-schema data (the interpreter's D19 backstop reports it)."""
+resolve (its anchor binds more declarers than `max_dynamic_winners` allows
+it to specialize, or the keyword declares no resolution fact); a keyword
+without `lower()`, an unresolvable edge, or a consumer without static
+coverage; a possible in-place cycle; a reference into non-schema data (the
+interpreter's D19 backstop reports it)."""
+
+type AnchorKind = Literal["dynamic", "recursive"]
+"""Which rebinding a site performs: 2020-12 `$dynamicRef` (keyed by anchor
+name) or 2019-09 `$recursiveRef` (one shared dataflow)."""
+
+type AnchorKey = tuple[AnchorKind, str]
+
+type DynamicContext = tuple[tuple[AnchorKind, str, str], ...]
+"""Sorted `(kind, anchor, winner)` triples: for every split anchor whose
+winner is bound on the path so far, the first declaring resource. Empty
+when nothing is split, so unit keys are then plain locations."""
+
+DEFAULT_MAX_DYNAMIC_WINNERS = 16
+"""Declaring resources a split anchor may bind before it is capped."""
+
+# The 2019-09 rebinding has no anchor name; one sentinel keys its dataflow.
+_RECURSIVE_ANCHOR = "$recursiveAnchor"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +103,13 @@ class PlannedApplication:
 
 @dataclass(slots=True)
 class PlannedUnit:
-    """One schema node in the plan, keyed by its canonical location."""
+    """One schema node in the plan, keyed by its canonical location plus,
+    once the plan has split an anchor, its dynamic context."""
 
     key: str
     ref: SchemaRef
+    # The first declarer bound for every split anchor on the way here.
+    context: DynamicContext = ()
     kind: Literal["static", "interpreted"] = "static"
     cause: FallbackCause | None = None
     # Resolved outgoing edges, in keyword order (static units only).
@@ -105,6 +139,16 @@ class PlannedUnit:
 
 
 @dataclass(frozen=True, slots=True)
+class SplitAnchor:
+    """An anchor the plan specialized: its sites resolve per unit context,
+    and `winners` are the declaring resources some unit bound."""
+
+    kind: AnchorKind
+    anchor: str
+    winners: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CompilationPlan:
     root_key: str
     # Insertion order is planning order: deterministic function numbering.
@@ -118,10 +162,21 @@ class CompilationPlan:
     # Producer ids some tracked consumer reads (M9): only their productions
     # are recorded on a channel.
     coverage_ids: frozenset[str] = frozenset()
+    # Anchors whose sites were specialized per dynamic context.
+    split_anchors: tuple[SplitAnchor, ...] = ()
 
 
-def unit_key(ref: SchemaRef) -> str:
-    return ref.location
+def unit_key(ref: SchemaRef, context: DynamicContext = ()) -> str:
+    """A unit's identity: its canonical location, suffixed with its dynamic
+    context once an anchor is split. `|` cannot appear raw in a URI, so the
+    suffix never collides with a location; the kind prefix keeps the
+    recursive sentinel apart from a dynamic anchor of the same name."""
+    if not context:
+        return ref.location
+    return ref.location + "".join(
+        f"|{kind}:{anchor}={winner}" if kind == "dynamic" else f"|{kind}={winner}"
+        for kind, anchor, winner in context
+    )
 
 
 # --- dynamic-reference sites -----------------------------------------------
@@ -142,12 +197,74 @@ type SiteDecisions = dict[SiteKey, SiteState]
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingSite:
-    """A site met during a round with no decision yet."""
+class _AnchorRules:
+    """How one anchor binds: whether a resource declares it, and where a
+    winner's declaration lands."""
+
+    declares: Callable[[str], bool]
+    target_of: Callable[[str], SchemaRef]
+
+
+def _anchor_rules(registry: SchemaRegistry, key: AnchorKey) -> _AnchorRules:
+    kind, anchor = key
+    if kind == "dynamic":
+
+        def declares(resource: str) -> bool:
+            return registry.dynamic_anchor(resource, anchor) is not None
+
+        def target_of(winner: str) -> SchemaRef:
+            hit = registry.dynamic_anchor(winner, anchor)
+            assert hit is not None
+            return hit
+
+        return _AnchorRules(declares, target_of)
+    return _AnchorRules(registry.has_recursive_root, registry.root_ref)
+
+
+@dataclass(slots=True)
+class _Splits:
+    """Plan-wide anchor decisions, owned by `build_plan_over`: an anchor is
+    unsplit (its sites are decided one by one), split (its sites resolve
+    from the unit context), or capped (never to be split). Each step is
+    permanent."""
+
+    cap: int
+    rules: dict[AnchorKey, _AnchorRules] = field(
+        default_factory=dict[AnchorKey, _AnchorRules]
+    )
+    capped: set[AnchorKey] = field(default_factory=set[AnchorKey])
+
+
+def _bound(context: DynamicContext, key: AnchorKey) -> str | None:
+    for kind, anchor, winner in context:
+        if (kind, anchor) == key:
+            return winner
+    return None
+
+
+def _enter(context: DynamicContext, ref: SchemaRef, splits: _Splits) -> DynamicContext:
+    """The context inside `ref`: the outermost-first rule applied forward —
+    every split anchor still unbound binds to this unit's resource if that
+    resource declares it."""
+    if not splits.rules:
+        return context
+    added: list[tuple[AnchorKind, str, str]] = [
+        (kind, anchor, ref.base_uri)
+        for (kind, anchor), rules in splits.rules.items()
+        if _bound(context, (kind, anchor)) is None and rules.declares(ref.base_uri)
+    ]
+    if not added:
+        return context
+    return tuple(sorted((*context, *added)))
+
+
+@dataclass(frozen=True, slots=True)
+class _DynamicSite:
+    """A site of an unsplit anchor met during a round, decided or not."""
 
     key: SiteKey
     unit_key: str
-    kind: Literal["dynamic", "recursive"]
+    kind: AnchorKind
     anchor: str
     lexical: SchemaRef
 
@@ -159,24 +276,25 @@ class _Resolved:
 
 
 @dataclass(frozen=True, slots=True)
-class _Pending:
-    site: _PendingSite
+class _Dynamic:
+    site: _DynamicSite
+    # The current decision; `None` until the round settles it.
+    state: SiteState | None
 
 
-type _EdgeResolution = _Resolved | _Pending | Literal["unresolvable", "unstable"]
-
-# The 2019-09 rebinding has no anchor name; one sentinel keys its dataflow.
-_RECURSIVE_ANCHOR = "$recursiveAnchor"
+type _EdgeResolution = _Resolved | _Dynamic | Literal["unresolvable"]
 
 
 def _resolve_edge(
     registry: SchemaRegistry,
     ref: SchemaRef,
+    context: DynamicContext,
     keyword: str,
     app: SubschemaApplication,
     sites: SiteDecisions,
+    splits: _Splits,
 ) -> _EdgeResolution:
-    """Where an application edge lands, under the current site decisions."""
+    """Where an application edge lands, under the current decisions."""
     if app.ref is None:
         head = app.sibling if app.sibling is not None else keyword
         return _Resolved(registry.child(ref, [head, *app.path]))
@@ -197,33 +315,16 @@ def _resolve_edge(
             lexical = recursive.lexical
     except UnresolvableReferenceError:
         return "unresolvable"
-    key: SiteKey = (unit_key(ref), keyword, app.ref)
-    state = sites.get(key)
-    if state is None:
-        return _Pending(
-            _PendingSite(key, unit_key(ref), app.resolution, anchor, lexical)
-        )
-    if state == "unstable":
-        return "unstable"
-    return _Resolved(state.target, DynamicResolution(state.winner))
-
-
-def edge_target(
-    registry: SchemaRegistry, ref: SchemaRef, keyword: str, app: SubschemaApplication
-) -> SchemaRef:
-    """The schema position a scope-independent application edge lands on.
-
-    Raises `UnresolvableReferenceError` for a missing target and
-    `ValueError` for a dynamic site (whose target is a plan decision).
-    """
-    resolution = _resolve_edge(registry, ref, keyword, app, {})
-    match resolution:
-        case _Resolved(target):
-            return target
-        case "unresolvable":
-            raise UnresolvableReferenceError(f"unresolvable reference {app.ref!r}")
-        case _:
-            raise ValueError("a dynamic-reference site has no plan-independent target")
+    anchor_key: AnchorKey = (app.resolution, anchor)
+    rules = splits.rules.get(anchor_key)
+    if rules is not None:
+        # A split anchor: the context names the winner exactly.
+        winner = _bound(context, anchor_key)
+        target = lexical if winner is None else rules.target_of(winner)
+        return _Resolved(target, DynamicResolution(winner))
+    key: SiteKey = (unit_key(ref, context), keyword, app.ref)
+    site = _DynamicSite(key, key[0], app.resolution, anchor, lexical)
+    return _Dynamic(site, sites.get(key))
 
 
 # --- coverage licensing ------------------------------------------------------
@@ -245,9 +346,11 @@ class _IndexHalf:
 def coverage_halves(
     registry: SchemaRegistry,
     ref: SchemaRef,
+    context: DynamicContext,
     visiting: set[str],
     exclude_consumers: bool,
     sites: SiteDecisions | None = None,
+    splits: _Splits | None = None,
 ) -> tuple[_NameHalf | None, _IndexHalf | None]:
     """The evaluated coverage a schema node contributes at its own cursor
     (D9a), including — transitively — unconditional asserting in-place
@@ -257,12 +360,14 @@ def coverage_halves(
     consumer's own coverage fact describes the state after it runs. Facts
     come from `analyze()` alone, so contribution is independent of which
     tier evaluates the target. Dynamic-reference edges resolve through
-    `sites`; a pending or unstable site is unknowable, exactly like an
-    unresolvable `$ref`.
+    `sites`, or from `context` for a split anchor; an undecided or
+    unstable site is unknowable, exactly like an unresolvable `$ref`.
     """
     if sites is None:
         sites = {}
-    key = unit_key(ref)
+    if splits is None:
+        splits = _Splits(0)
+    key = unit_key(ref, context)
     if key in visiting:
         return None, None
     visiting.add(key)
@@ -296,11 +401,25 @@ def coverage_halves(
                     continue
                 if app.conditional or not app.asserts:
                     return None, None
-                resolution = _resolve_edge(registry, ref, entry.name, app, sites)
-                if not isinstance(resolution, _Resolved):
+                resolution = _resolve_edge(
+                    registry, ref, context, entry.name, app, sites, splits
+                )
+                if isinstance(resolution, _Resolved):
+                    target = resolution.target
+                elif isinstance(resolution, _Dynamic) and isinstance(
+                    resolution.state, ResolvedSite
+                ):
+                    target = resolution.state.target
+                else:
                     return None, None
                 sub_names, sub_indexes = coverage_halves(
-                    registry, resolution.target, visiting, False, sites
+                    registry,
+                    target,
+                    _enter(context, target, splits),
+                    visiting,
+                    False,
+                    sites,
+                    splits,
                 )
                 if name_half is not None:
                     if sub_names is None:
@@ -367,14 +486,21 @@ def _is_coverage_consumer(facts: StaticFacts) -> bool:
 # --- planning ----------------------------------------------------------------
 
 
-def build_plan(engine: Engine, schema_uri: str) -> CompilationPlan:
+def build_plan(
+    engine: Engine,
+    schema_uri: str,
+    *,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
+) -> CompilationPlan:
     """Plan the compilation of one registered root schema.
 
     The walk mirrors the registration walk's position logic by
     construction: descent uses the same `analyze()` facts and the same
     `registry.child` pointer navigation. `registry` may be a snapshot.
     """
-    return build_plan_over(engine.schemas, schema_uri)
+    return build_plan_over(
+        engine.schemas, schema_uri, max_dynamic_winners=max_dynamic_winners
+    )
 
 
 @dataclass(slots=True)
@@ -382,7 +508,8 @@ class _Round:
     units: dict[str, PlannedUnit]
     patterns: dict[str, None]
     formats: dict[str, None]
-    pending: dict[SiteKey, _PendingSite]
+    # Every site of an unsplit anchor met this round, decided or not.
+    met: dict[SiteKey, _DynamicSite]
     root: PlannedUnit
     coverage_ids: set[str]
 
@@ -399,20 +526,29 @@ def _plan_round(
     registry: SchemaRegistry,
     root_ref: SchemaRef,
     sites: SiteDecisions,
+    splits: _Splits,
     track_all: bool,
 ) -> _Round:
     units: dict[str, PlannedUnit] = {}
     patterns: dict[str, None] = {}
     formats: dict[str, None] = {}
-    pending: dict[SiteKey, _PendingSite] = {}
+    met: dict[SiteKey, _DynamicSite] = {}
     coverage_ids: set[str] = set()
+    # One `SchemaRef` per location, shared by every clone of it.
+    refs: dict[str, SchemaRef] = {}
 
-    def plan(ref: SchemaRef, in_place_chain: tuple[str, ...]) -> PlannedUnit:
-        key = unit_key(ref)
+    def plan(
+        ref: SchemaRef, context: DynamicContext, chain: Mapping[str, str]
+    ) -> PlannedUnit:
+        # `context` is the entry context (the caller applied `_enter`);
+        # `chain` maps the locations of the same-cursor in-place ancestors
+        # on this path to their unit keys.
+        ref = refs.setdefault(ref.location, ref)
+        key = unit_key(ref, context)
         existing = units.get(key)
         if existing is not None:
             return existing
-        unit = PlannedUnit(key, ref)
+        unit = PlannedUnit(key, ref, context)
         units[key] = unit
         node = ref.node
         if isinstance(node, bool):
@@ -466,16 +602,27 @@ def _plan_round(
         edges: list[_Edge] = []
         for name, facts in present:
             for app in facts.applications:
-                resolution = _resolve_edge(registry, ref, name, app, sites)
+                resolution = _resolve_edge(
+                    registry, ref, context, name, app, sites, splits
+                )
                 match resolution:
                     case _Resolved(target, dynamic):
                         edges.append(_Edge(name, app, target, dynamic))
-                    case _Pending(site):
-                        # No edge this round; the round settles the site.
-                        pending.setdefault(site.key, site)
-                    case "unstable":
-                        unit.interpret("dynamic")
-                        return unit
+                    case _Dynamic(site, state):
+                        # Recorded whether decided or not: the round re-derives
+                        # every decision from the grown graph.
+                        met.setdefault(site.key, site)
+                        if state is None:
+                            # No edge this round; the round settles the site.
+                            continue
+                        if not isinstance(state, ResolvedSite):
+                            unit.interpret("dynamic")
+                            return unit
+                        edges.append(
+                            _Edge(
+                                name, app, state.target, DynamicResolution(state.winner)
+                            )
+                        )
                     case "unresolvable":
                         # Lazy-failure parity: the interpreter raises only
                         # when the reference is followed, so the whole node
@@ -496,7 +643,7 @@ def _plan_round(
             name_half, index_half = (
                 (None, None)
                 if track_all
-                else coverage_halves(registry, ref, set(), True, sites)
+                else coverage_halves(registry, ref, context, set(), True, sites, splits)
             )
             needs_names = any(f.evaluates_names is not None for f in consumers)
             needs_indexes = any(f.evaluates_indexes is not None for f in consumers)
@@ -519,30 +666,37 @@ def _plan_round(
 
         # Plan children.
         for edge in edges:
-            target_key = unit_key(edge.target)
-            planned = PlannedApplication(
-                edge.keyword, edge.app, target_key, edge.dynamic
-            )
+            target_context = _enter(context, edge.target, splits)
+            target_key = unit_key(edge.target, target_context)
             if edge.app.mode == "in_place":
-                if target_key in in_place_chain or target_key == key:
-                    # In-place cycle: same-cursor re-entry. The interpreter's
-                    # cycle guard gives exact `InfiniteLoopError` parity.
-                    cyclic = units.get(target_key) or plan(
-                        edge.target, (*in_place_chain, key)
-                    )
+                location = edge.target.location
+                if location in chain or location == ref.location:
+                    # In-place cycle: same-cursor re-entry of a location on
+                    # this path, whatever its context (the interpreter's
+                    # guard keys on location). Islanding the ancestor that
+                    # is actually on the path keeps its `InfiniteLoopError`
+                    # parity even when a short-circuiting parent would
+                    # never reach a clone islanded further down.
+                    cyclic = units[chain.get(location, key)]
                     cyclic.interpret("cycle")
                     if cyclic is unit:
                         return unit
-                    unit.edges.append(planned)
+                    unit.edges.append(
+                        PlannedApplication(
+                            edge.keyword, edge.app, cyclic.key, edge.dynamic
+                        )
+                    )
                     continue
-                plan(edge.target, (*in_place_chain, key))
+                plan(edge.target, target_context, {**chain, ref.location: key})
             else:
-                plan(edge.target, ())
-            unit.edges.append(planned)
+                plan(edge.target, target_context, {})
+            unit.edges.append(
+                PlannedApplication(edge.keyword, edge.app, target_key, edge.dynamic)
+            )
         return unit
 
-    root = plan(root_ref, ())
-    return _Round(units, patterns, formats, pending, root, coverage_ids)
+    root = plan(root_ref, _enter((), root_ref, splits), {})
+    return _Round(units, patterns, formats, met, root, coverage_ids)
 
 
 def _outermost_declarers(
@@ -556,7 +710,8 @@ def _outermost_declarers(
     Seeded at the root, propagated along every planned edge of every
     static unit — in-place or child, conditional or not — with the
     outermost-first rule (a bound winner sticks; otherwise the unit's own
-    resource binds if it declares), joined by union, to a fixpoint.
+    resource binds if it declares), joined by union, to a fixpoint. Over a
+    graph with clones, each clone has its own arrival set.
     """
 
     def own(unit: PlannedUnit, winner: str | None) -> str | None:
@@ -581,34 +736,43 @@ def _outermost_declarers(
     return arrival
 
 
-def _settle_sites(
-    registry: SchemaRegistry, round_: _Round, sites: SiteDecisions
+def _bound_winners(units: Mapping[str, PlannedUnit]) -> dict[AnchorKey, set[str]]:
+    """Per split anchor, every declarer some unit's context binds."""
+    bound: dict[AnchorKey, set[str]] = {}
+    for unit in units.values():
+        for kind, anchor, winner in unit.context:
+            bound.setdefault((kind, anchor), set()).add(winner)
+    return bound
+
+
+def _split(
+    splits: _Splits,
+    anchor_key: AnchorKey,
+    rules: _AnchorRules,
+    winners: set[str | None],
 ) -> bool:
-    """Decide every pending site of a round; True when a decision changed."""
+    """Specialize an anchor whose site has several targets, unless the cap
+    forbids it — then the anchor is capped for good."""
+    distinct = {winner for winner in winners if winner is not None}
+    if anchor_key in splits.capped or len(distinct) > splits.cap:
+        splits.capped.add(anchor_key)
+        return False
+    splits.rules[anchor_key] = rules
+    return True
+
+
+def _settle_sites(
+    registry: SchemaRegistry, round_: _Round, sites: SiteDecisions, splits: _Splits
+) -> bool:
+    """Re-derive every site met in a round from the round's graph; True
+    when a decision or an anchor's state changed."""
     changed = False
-    by_anchor: dict[tuple[str, str], list[_PendingSite]] = {}
-    for site in round_.pending.values():
+    by_anchor: dict[AnchorKey, list[_DynamicSite]] = {}
+    for site in round_.met.values():
         by_anchor.setdefault((site.kind, site.anchor), []).append(site)
-    for (kind, anchor), group in by_anchor.items():
-        if kind == "dynamic":
-
-            def declares(resource: str, anchor: str = anchor) -> bool:
-                return registry.dynamic_anchor(resource, anchor) is not None
-
-            def target_of(winner: str, anchor: str = anchor) -> SchemaRef:
-                hit = registry.dynamic_anchor(winner, anchor)
-                assert hit is not None
-                return hit
-
-        else:
-
-            def declares(resource: str, anchor: str = anchor) -> bool:
-                return registry.has_recursive_root(resource)
-
-            def target_of(winner: str, anchor: str = anchor) -> SchemaRef:
-                return registry.root_ref(winner)
-
-        arrival = _outermost_declarers(round_.units, round_.root.key, declares)
+    for anchor_key, group in by_anchor.items():
+        rules = _anchor_rules(registry, anchor_key)
+        arrival = _outermost_declarers(round_.units, round_.root.key, rules.declares)
         for site in group:
             winners = arrival.get(site.unit_key)
             if not winners:
@@ -617,36 +781,59 @@ def _settle_sites(
                 continue
             targets: dict[str, tuple[SchemaRef, str | None]] = {}
             for winner in sorted(winners, key=lambda w: (w is not None, w or "")):
-                target = site.lexical if winner is None else target_of(winner)
-                targets.setdefault(unit_key(target), (target, winner))
+                target = site.lexical if winner is None else rules.target_of(winner)
+                targets.setdefault(target.location, (target, winner))
             previous = sites.get(site.key)
+            if previous == "unstable":
+                continue
             if len(targets) == 1:
                 ((target, winner),) = targets.values()
                 if previous is None:
                     sites[site.key] = ResolvedSite(target, winner)
                     changed = True
-                elif previous != "unstable" and unit_key(previous.target) != unit_key(
-                    target
-                ):
-                    sites[site.key] = "unstable"
-                    changed = True
-            elif previous != "unstable":
-                sites[site.key] = "unstable"
+                    continue
+                if previous.target.location == target.location:
+                    continue
+            # Several targets, or a decision whose target moved as the graph
+            # grew: specialize the anchor, or island the site.
+            if _split(splits, anchor_key, rules, winners):
+                for other in group:
+                    sites.pop(other.key, None)
                 changed = True
+                break
+            sites[site.key] = "unstable"
+            changed = True
+    # The cap holds across rounds: an anchor split on one site's winners
+    # may bind more declarers once its clones are planned.
+    bound = _bound_winners(round_.units)
+    for anchor_key in list(splits.rules):
+        if len(bound.get(anchor_key, ())) > splits.cap:
+            del splits.rules[anchor_key]
+            splits.capped.add(anchor_key)
+            changed = True
     return changed
 
 
 def build_plan_over(
-    registry: SchemaRegistry, schema_uri: str, *, track_all: bool = False
+    registry: SchemaRegistry,
+    schema_uri: str,
+    *,
+    track_all: bool = False,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
 ) -> CompilationPlan:
     """Plan over a registry (normally a snapshot). `track_all` tracks every
     coverage consumer at runtime instead of licensing static coverage
-    (the evaluator's plans, whose units continue past a failed sibling)."""
+    (the evaluator's plans, whose units continue past a failed sibling).
+    `max_dynamic_winners` caps the declaring resources a split anchor may
+    bind; `0` never specializes, so every path-dependent site islands."""
+    if max_dynamic_winners < 0:
+        raise ValueError("max_dynamic_winners must be >= 0")
     root_ref = registry.root_ref(schema_uri)
     sites: SiteDecisions = {}
+    splits = _Splits(max_dynamic_winners)
     while True:
-        round_ = _plan_round(registry, root_ref, sites, track_all)
-        if not _settle_sites(registry, round_, sites):
+        round_ = _plan_round(registry, root_ref, sites, splits, track_all)
+        if not _settle_sites(registry, round_, sites, splits):
             break
     units = round_.units
 
@@ -692,6 +879,11 @@ def build_plan_over(
             units[edge.target_key].use_count += 1
 
     targets = tuple(u for u in units.values() if u.kind == "interpreted")
+    bound = _bound_winners(units)
+    split_anchors = tuple(
+        SplitAnchor(kind, anchor, tuple(sorted(bound.get((kind, anchor), ()))))
+        for kind, anchor in sorted(splits.rules)
+    )
     return CompilationPlan(
         round_.root.key,
         units,
@@ -699,6 +891,7 @@ def build_plan_over(
         tuple(round_.formats),
         targets,
         frozenset(round_.coverage_ids),
+        split_anchors,
     )
 
 
@@ -707,13 +900,17 @@ def build_plan_over(
 
 @dataclass(frozen=True, slots=True)
 class ResolvedDynamicSite:
-    """A dynamic-reference site the plan compiled as a static edge."""
+    """A dynamic-reference site the plan compiled as a static edge. `unit`
+    and `target` are unit keys; `location` and `target_location` the
+    schema locations they report."""
 
     unit: str
     keyword: str
     ref: str
     target: str
     winner: str | None
+    location: str
+    target_location: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -730,14 +927,18 @@ class CompilationExplanation:
     # M9: consumers tracked at runtime, and the units in their regions.
     tracked_units: int = 0
     region_units: int = 0
+    # Anchors specialized per dynamic context, and the units cloned for it.
+    split_anchors: tuple[SplitAnchor, ...] = ()
+    specialized_units: int = 0
 
 
 def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
     causes: dict[FallbackCause, int] = {}
     interpreted: list[str] = []
-    reaching = tracked = region = 0
+    reaching = tracked = region = specialized = 0
     resolved: list[ResolvedDynamicSite] = []
     for unit in plan.units.values():
+        specialized += bool(unit.context)
         if unit.kind == "interpreted":
             interpreted.append(unit.key)
             assert unit.cause is not None
@@ -756,6 +957,8 @@ def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
                         edge.app.ref,
                         edge.target_key,
                         edge.dynamic.winner,
+                        unit.ref.location,
+                        plan.units[edge.target_key].ref.location,
                     )
                 )
     return CompilationExplanation(
@@ -770,6 +973,8 @@ def explain_compilation(plan: CompilationPlan) -> CompilationExplanation:
         ),
         tracked_units=tracked,
         region_units=region,
+        split_anchors=plan.split_anchors,
+        specialized_units=specialized,
     )
 
 

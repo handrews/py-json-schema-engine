@@ -29,6 +29,24 @@ def compiled_and_interpreted(schema: JsonValue, max_depth: int = 512):
         {"anyOf": [{"type": "string"}, {"$ref": "#"}]},
         # A mixed cycle: the static root reaches an interpreted member.
         {"allOf": [{"$ref": "#/$defs/a"}], "$defs": {"a": {"$dynamicRef": "#"}}},
+        # A cycle through a resource that binds a split anchor (`a` has two
+        # declarers, so `S`'s site is specialized): the back-edge from
+        # `S#/$defs/inner` lands on the root by location, whatever the
+        # clone context, so the root islands and the short-circuiting
+        # `anyOf` cannot hide the loop the interpreter's second branch hits.
+        {
+            "anyOf": [{"type": "integer"}, {"$ref": "S#/$defs/inner"}],
+            "properties": {"p": {"$ref": "T"}, "q": {"$ref": "S"}},
+            "$defs": {
+                "S": {
+                    "$id": "S",
+                    "$dynamicAnchor": "a",
+                    "properties": {"x": {"$dynamicRef": "#a"}},
+                    "$defs": {"inner": {"$ref": "s"}},
+                },
+                "T": {"$id": "T", "$dynamicAnchor": "a", "$ref": "S"},
+            },
+        },
     ],
 )
 def test_in_place_cycles_raise_like_the_interpreter(schema: JsonValue) -> None:
