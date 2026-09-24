@@ -15,6 +15,7 @@ from json_schema_engine.compiler import (
     emit_standalone,
     explain_compilation,
 )
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import DIALECT_2019_09, JsonValue, create_engine
 
 Case = tuple[JsonValue, list[JsonValue]]
@@ -22,12 +23,20 @@ URI = "https://tracking.example/schema"
 
 
 def _parity(
-    schema: JsonValue, instances: list[JsonValue], dialect: str | None = None
+    schema: JsonValue,
+    instances: list[JsonValue],
+    dialect: str | None = None,
+    *,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
 ) -> Callable[[JsonValue], bool]:
     engine = create_engine(default_dialect=dialect) if dialect else create_engine()
     uri = engine.register_schema(schema, URI)
-    fast = compile_validator(engine, uri).validate
-    conservative = compile_validator(engine, uri, conservative=True).validate
+    fast = compile_validator(
+        engine, uri, max_dynamic_winners=max_dynamic_winners
+    ).validate
+    conservative = compile_validator(
+        engine, uri, conservative=True, max_dynamic_winners=max_dynamic_winners
+    ).validate
     for instance in instances:
         expected = engine.evaluate(uri, instance).valid
         assert fast(instance) is expected, (instance, expected)
@@ -125,10 +134,13 @@ def test_nested_consumers_in_all_of() -> None:
     )
 
 
-def test_an_island_inside_a_region_contributes_coverage() -> None:
-    # The `$dynamicRef` has two possible declarers, so it stays an island
-    # reached in place from the tracked root: its productions must still
-    # feed the consumer (through the coverage trampoline).
+@pytest.mark.parametrize("cap", [0, DEFAULT_MAX_DYNAMIC_WINNERS])
+def test_an_island_inside_a_region_contributes_coverage(cap: int) -> None:
+    # The `$dynamicRef` has two possible declarers. With specialization off
+    # it stays an island reached in place from the tracked root, and its
+    # productions must still feed the consumer (through the coverage
+    # trampoline); specialized, each clone produces into the channel as
+    # ordinary compiled code.
     schema: JsonValue = {
         "$defs": {
             "generic": {
@@ -154,13 +166,20 @@ def test_an_island_inside_a_region_contributes_coverage() -> None:
     }
     engine = create_engine()
     uri = engine.register_schema(schema, URI)
-    explanation = explain_compilation(build_plan(engine, uri))
-    assert explanation.causes == {"dynamic": 1}
+    explanation = explain_compilation(build_plan(engine, uri, max_dynamic_winners=cap))
+    source = compile_validator(engine, uri, max_dynamic_winners=cap).source
+    if cap == 0:
+        assert explanation.causes == {"dynamic": 1}
+        assert "H_FRAGC(" in source
+    else:
+        assert explanation.causes == {}
+        assert explanation.specialized_units > 0
+        assert "H_FRAGC(" not in source and "H_FRAG(" not in source
     assert explanation.tracked_units == 1
-    assert "H_FRAGC(" in compile_validator(engine, uri).source
     _parity(
         schema,
         [{"strict": 1, "a": 1}, {"strict": 1, "b": 1}, {"b": 1}, {"a": 1}, {"x": 1}],
+        max_dynamic_winners=cap,
     )
 
 

@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "tree": {
+      "$id": "tree",
+      "$dynamicAnchor": "tree",
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "children": {"type": "array", "items": {"$dynamicRef": "#tree"}}
+      }
+    },
+    "taxonomyTree": {
+      "$id": "taxonomyTree",
+      "$dynamicAnchor": "tree",
+      "$ref": "tree",
+      "properties": {"rank": {"type": "string"}},
+      "required": ["rank"],
+      "unevaluatedProperties": false
+    },
+    "phylogenyTree": {
+      "$id": "phylogenyTree",
+      "$dynamicAnchor": "tree",
+      "$ref": "tree",
+      "properties": {"support": {"type": "number"}},
+      "unevaluatedProperties": false
+    }
+  },
+  "properties": {
+    "taxonomy": {"$ref": "taxonomyTree"},
+    "phylogeny": {"$ref": "phylogenyTree"}
+  }
+}

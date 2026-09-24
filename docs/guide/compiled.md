@@ -155,7 +155,8 @@ assert compiled_missing.errors == interpreted_missing.errors
 
 `explain_compilation(plan)` returns a `CompilationExplanation`: unit
 counts and, for every interpreted unit, a `FallbackCause` — `"dynamic"`
-(a `$dynamicRef`-class keyword whose target depends on dynamic scope),
+(a `$dynamicRef`-class keyword the planner could not discharge: more
+possible targets than `max_dynamic_winners` allows, or no resolution fact),
 `"unlowerable"` (a keyword without `lower()` or an unresolvable reference),
 `"cycle"` (an in-place `$ref` cycle at the same cursor), or `"non_schema"`
 (a reference into a position that is not a schema at all).
@@ -182,8 +183,13 @@ assert site.target == "https://example.com/resolved#/$defs/node"
 assert site.winner == "https://example.com/resolved"
 ```
 
-A site whose target differs by path stays an island: here `#item` resolves
-to a number under one branch and a string under the other.
+A site whose target differs by path is *specialized*. The winner of a
+`$dynamicRef` is the first resource on the path that declares the anchor,
+so the planner splits the anchor and compiles the units below each
+declaring resource once per declarer; every copy's site then has one
+target and compiles as a static edge, and the copies report the schema
+location they share. Here `#item` resolves to a number under one branch
+and a string under the other, so `generic#/items` is compiled twice:
 
 ```python
 island_engine = create_engine()
@@ -212,12 +218,36 @@ island_uri = island_engine.register_schema(
     },
     "https://example.com/island",
 )
-island_compiled = compile_validator(island_engine, island_uri)
+specialized = compile_validator(island_engine, island_uri)
+explanation = explain_compilation(specialized.plan)
+assert explanation.causes == {}
+(anchor,) = explanation.split_anchors
+assert (anchor.kind, anchor.anchor) == ("dynamic", "item")
+assert anchor.winners == ("https://example.com/numbers", "https://example.com/strings")
+assert explanation.specialized_units == 8
+assert {
+    (site.location, site.target_location) for site in explanation.resolved_dynamic_sites
+} == {
+    ("https://example.com/generic#/items", "https://example.com/numbers#/$defs/i"),
+    ("https://example.com/generic#/items", "https://example.com/strings#/$defs/i"),
+}
+assert specialized.validate({"kind": "numbers", "list": [1]}) is True
+assert specialized.validate({"kind": "numbers", "list": ["x"]}) is False
+assert specialized.validate({"kind": "strings", "list": ["x"]}) is True
+```
+
+Specialization is bounded: `max_dynamic_winners` (default 16) caps the
+declaring resources one anchor may be specialized for, since every
+declarer adds a copy of the units below it. Beyond the cap, or with the
+option at `0`, such a site stays an island, and the trampoline returns
+the interpreter's answer for that subschema:
+
+```python
+island_compiled = compile_validator(island_engine, island_uri, max_dynamic_winners=0)
 explanation = explain_compilation(island_compiled.plan)
 assert explanation.causes == {"dynamic": 1}
 assert explanation.interpreted_keys == ("https://example.com/generic#/items",)
-
-# The trampoline still returns the interpreter's answer for that subschema.
+assert explanation.split_anchors == ()
 assert island_compiled.validate({"kind": "numbers", "list": [1]}) is True
 assert island_compiled.validate({"kind": "numbers", "list": ["x"]}) is False
 assert island_compiled.validate({"kind": "strings", "list": ["x"]}) is True
@@ -310,11 +340,14 @@ assert "import json_schema_engine.compiler" not in tracked_source
 from json_schema_engine.compiler import StandaloneUnsupportedError
 
 try:
-    emit_standalone(island_engine, island_uri)
+    emit_standalone(island_engine, island_uri, max_dynamic_winners=0)
 except StandaloneUnsupportedError as error:
     assert "dynamic" in str(error)
 else:
     raise AssertionError("expected StandaloneUnsupportedError")
+
+# Specialized under the default cap, the same schema has no island to refuse.
+assert "def validate" in emit_standalone(island_engine, island_uri)
 ```
 
 Write the emitted source to a file and import it with `importlib.util`,

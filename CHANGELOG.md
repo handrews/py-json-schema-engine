@@ -9,6 +9,29 @@ minor versions may change public API.
 
 ### Changed
 
+- **Path-dependent `$dynamicRef`/`$recursiveRef` sites are specialized at
+  plan time instead of islanded (DESIGN.md D8).** The winner of such a
+  reference is the first resource on the path that declares the anchor, so
+  the planner now splits the anchor: a unit's identity becomes its location
+  plus a dynamic context (the first declarer bound so far for each split
+  anchor), and the units below each declaring resource are compiled once
+  per declarer. Every copy's site then has one target and compiles as an
+  ordinary static edge; the copies share one `SchemaRef` and report the
+  same schema location, so errors, annotations, and traces are unchanged.
+  The "extensible recursive type" pattern — a base `tree` with
+  `$dynamicAnchor: tree` re-declared by each of several extensions that
+  `$ref` it — previously put every nested node through the interpreter;
+  it now compiles fully and emits standalone, as do the suite's "multiple
+  dynamic paths" groups. `max_dynamic_winners` (default 16) caps the
+  declarers one anchor may be specialized for; beyond it, or at `0`, the
+  site islands with cause `dynamic` exactly as before. Census: 2020-12 60
+  sites resolved, 1 anchor split, 0 islands (58/0/1 at cap 0); 2019-09
+  51/2/0 (47/0/2). Unit keys of specialized units carry a `|`-delimited
+  context suffix, so `PlannedUnit.key` and `CompilationExplanation.
+  interpreted_keys` are no longer always schema locations: read
+  `PlannedUnit.ref.location`, or the new `location`/`target_location`
+  fields of `ResolvedDynamicSite`, for a location.
+
 - **A schema location is now a URI (DESIGN.md P10).** The JSON Pointer in
   `schemaLocation`, `absoluteKeywordLocation`, and the `schema_location`
   carried by a raised error is percent-encoded per RFC 3986's `fragment`
@@ -113,6 +136,13 @@ minor versions may change public API.
 
 ### Added
 
+- `max_dynamic_winners` on `build_plan`, `compile_validator`,
+  `compile_evaluator`, and `emit_standalone`: the specialization cap for
+  path-dependent dynamic-reference anchors; `0` restores islanding.
+- `PlannedUnit.context`, `CompilationPlan.split_anchors`, the `SplitAnchor`
+  dataclass, `CompilationExplanation.split_anchors`/`specialized_units`,
+  and `ResolvedDynamicSite.location`/`target_location`.
+
 - **`Engine.unregister_schema(uri)` (DESIGN.md P15).** It removes a
   registered document and everything its registration claimed: embedded `$id`
   resources, anchors, recursive roots, dialect and location entries, its
@@ -164,6 +194,16 @@ minor versions may change public API.
   plus the builder every emitted schema location goes through.
 
 ### Fixed
+
+- A `$dynamicRef`/`$recursiveRef` site resolved in an early planning round
+  was never re-checked, so a path added by a later round with a different
+  winner left a stale single-winner decision and the compiled validator
+  could disagree with the interpreter. The shape: resource `r1` holds the
+  site and declares the anchor; resource `r2` declares it too and reaches
+  the site through a `$ref` that is itself the target of a `$dynamicRef`
+  from the root, so `r2`'s path is planned only after the site was decided
+  under `r1`. Every decision is now re-derived each round from the grown
+  graph; the site is specialized (or, at cap `0`, islanded).
 
 - **Deep output assembly raises `MaxDepthExceededError`, not
   `RecursionError` (DESIGN.md P3).** Building the located tree, the

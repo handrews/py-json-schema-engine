@@ -16,6 +16,7 @@ from json_schema_engine.compiler import (
     emit_standalone,
     explain_compilation,
 )
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import (
     Engine,
     JsonValue,
@@ -65,9 +66,12 @@ def test_recursive_ref_chain_trips_the_budget_on_every_surface() -> None:
             surface()
 
 
-def test_island_shares_the_budget() -> None:
-    # Two declarers of `node` keep the site an island (M9), so the recursion
-    # runs through the trampoline and the interpreter's own depth counter.
+@pytest.mark.parametrize("cap", [0, DEFAULT_MAX_DYNAMIC_WINNERS])
+def test_island_shares_the_budget(cap: int) -> None:
+    # Two declarers of `node`: with specialization off the site is an island
+    # (M9), so the recursion runs through the trampoline and the
+    # interpreter's own depth counter; specialized, the compiled counter
+    # trips at the same budget.
     engine = create_engine(max_depth=20)
     uri = engine.register_schema(
         {
@@ -98,8 +102,11 @@ def test_island_shares_the_budget() -> None:
         },
         "https://depth.example/island",
     )
-    assert explain_compilation(build_plan(engine, uri)).causes == {"dynamic": 1}
-    compiled = compile_validator(engine, uri).validate
+    causes = explain_compilation(
+        build_plan(engine, uri, max_dynamic_winners=cap)
+    ).causes
+    assert causes == ({"dynamic": 1} if cap == 0 else {})
+    compiled = compile_validator(engine, uri, max_dynamic_winners=cap).validate
     assert compiled(_nest(5)) is True
     with pytest.raises(MaxDepthExceededError):
         compiled(_nest(60))

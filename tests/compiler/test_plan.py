@@ -2,16 +2,47 @@
 # in-place cycle islanding, `reaches_interpreted`, `use_count`, and the
 # explanation projection.
 
-from json_schema_engine.compiler import build_plan, explain_compilation
+import pytest
+
+from json_schema_engine.compiler import SplitAnchor, build_plan, explain_compilation
+from json_schema_engine.compiler.plan import DEFAULT_MAX_DYNAMIC_WINNERS
 from json_schema_engine.core import DIALECT_DRAFT_07, JsonValue, create_engine
 
 
-def plan_for(schema: JsonValue, dialect: str | None = None):
+def plan_for(
+    schema: JsonValue,
+    dialect: str | None = None,
+    *,
+    max_dynamic_winners: int = DEFAULT_MAX_DYNAMIC_WINNERS,
+):
     engine = (
         create_engine() if dialect is None else create_engine(default_dialect=dialect)
     )
     uri = engine.register_schema(schema, "https://plan.example/s")
-    return build_plan(engine, uri), uri
+    return build_plan(engine, uri, max_dynamic_winners=max_dynamic_winners), uri
+
+
+# Two declarers of `item` reach one site through different paths.
+TWO_DECLARERS: JsonValue = {
+    "$defs": {
+        "generic": {
+            "$id": "generic",
+            "$defs": {"d": {"$dynamicAnchor": "item", "type": "null"}},
+            "items": {"$dynamicRef": "#item"},
+        },
+        "numbers": {
+            "$id": "numbers",
+            "$defs": {"i": {"$dynamicAnchor": "item", "type": "number"}},
+            "$ref": "generic",
+        },
+        "strings": {
+            "$id": "strings",
+            "$defs": {"i": {"$dynamicAnchor": "item", "type": "string"}},
+            "$ref": "generic",
+        },
+    },
+    "anyOf": [{"$ref": "#/$defs/numbers"}, {"$ref": "#/$defs/strings"}],
+}
 
 
 def test_static_root_with_child_edges() -> None:
@@ -50,36 +81,59 @@ def test_stable_dynamic_ref_resolves_to_a_static_edge() -> None:
     )
 
 
-def test_unstable_dynamic_ref_islands_the_unit_and_marks_reachers() -> None:
-    # Two declarers of `item` reach one site through different paths.
-    plan, uri = plan_for(
-        {
-            "$defs": {
-                "generic": {
-                    "$id": "generic",
-                    "$defs": {"d": {"$dynamicAnchor": "item", "type": "null"}},
-                    "items": {"$dynamicRef": "#item"},
-                },
-                "numbers": {
-                    "$id": "numbers",
-                    "$defs": {"i": {"$dynamicAnchor": "item", "type": "number"}},
-                    "$ref": "generic",
-                },
-                "strings": {
-                    "$id": "strings",
-                    "$defs": {"i": {"$dynamicAnchor": "item", "type": "string"}},
-                    "$ref": "generic",
-                },
-            },
-            "anyOf": [{"$ref": "#/$defs/numbers"}, {"$ref": "#/$defs/strings"}],
-        }
-    )
+def test_unstable_dynamic_ref_islands_the_unit_without_specialization() -> None:
+    plan, uri = plan_for(TWO_DECLARERS, max_dynamic_winners=0)
     base = uri.rsplit("/", 1)[0]
     island = plan.units[f"{base}/generic#/items"]
     assert island.kind == "interpreted" and island.cause == "dynamic"
+    assert island.context == ()
     assert plan.units[plan.root_key].reaches_interpreted
     assert [t.key for t in plan.targets] == [island.key]
-    assert explain_compilation(plan).resolved_dynamic_sites == ()
+    assert plan.split_anchors == ()
+    explanation = explain_compilation(plan)
+    assert explanation.resolved_dynamic_sites == ()
+    assert explanation.specialized_units == 0
+
+
+def test_split_anchor_specializes_the_site_by_context() -> None:
+    plan, uri = plan_for(TWO_DECLARERS)
+    base = uri.rsplit("/", 1)[0]
+    numbers, strings = f"{base}/numbers", f"{base}/strings"
+    assert plan.targets == ()
+    assert plan.split_anchors == (SplitAnchor("dynamic", "item", (numbers, strings)),)
+    site = f"{base}/generic#/items"
+    clones = {u.context: u for u in plan.units.values() if u.ref.location == site}
+    assert set(clones) == {
+        (("dynamic", "item", numbers),),
+        (("dynamic", "item", strings),),
+    }
+    for context, unit in clones.items():
+        winner = context[0][2]
+        assert unit.key == f"{site}|dynamic:item={winner}"
+        assert unit.kind == "static" and not unit.reaches_interpreted
+        (edge,) = unit.edges
+        assert edge.dynamic is not None and edge.dynamic.winner == winner
+        assert plan.units[edge.target_key].ref.location == f"{winner}#/$defs/i"
+    explanation = explain_compilation(plan)
+    assert explanation.causes == {}
+    assert explanation.total_units == 11 and explanation.specialized_units == 8
+    assert {s.location for s in explanation.resolved_dynamic_sites} == {site}
+    assert {s.target_location for s in explanation.resolved_dynamic_sites} == {
+        f"{numbers}#/$defs/i",
+        f"{strings}#/$defs/i",
+    }
+
+
+def test_the_cap_bounds_specialization() -> None:
+    # Two declarers: a cap of one islands, a cap of two specializes.
+    capped, _ = plan_for(TWO_DECLARERS, max_dynamic_winners=1)
+    assert explain_compilation(capped).causes == {"dynamic": 1}
+    assert capped.split_anchors == ()
+    split, _ = plan_for(TWO_DECLARERS, max_dynamic_winners=2)
+    assert explain_compilation(split).causes == {}
+    assert len(split.split_anchors) == 1
+    with pytest.raises(ValueError, match="max_dynamic_winners"):
+        plan_for(TWO_DECLARERS, max_dynamic_winners=-1)
 
 
 def test_unlowerable_keyword_islands() -> None:
