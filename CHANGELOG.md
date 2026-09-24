@@ -7,6 +7,8 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-09-23
+
 ### Changed
 
 - **Path-dependent `$dynamicRef`/`$recursiveRef` sites are specialized at
@@ -192,6 +194,9 @@ minor versions may change public API.
   `pointer_from_fragment`, and `schema_location`: the single pair of
   conversions between a plain-text JSON Pointer and its URI fragment form,
   plus the builder every emitted schema location goes through.
+- `SchemaRegistry.survey`, the registration dry run behind per-resource
+  metaschema validation (P17), is internal for now: it is not exported,
+  documented, or covered by the API reference, and may change shape.
 
 ### Fixed
 
