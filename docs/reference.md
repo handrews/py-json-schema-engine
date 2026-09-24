@@ -336,7 +336,14 @@ format-assertion vocabulary on an engine without a table.
 
 `SchemaValidationError(message, errors, *, schema_location=None)`: a registered
 document fails its own metaschema (`create_engine(validate_schemas=True)`).
-`errors: list[object]` are the list-format units of the failed evaluation.
+`errors: list[object]` are the list-format units of the failed evaluation. The
+check is per dialect region (P17). The root is checked against its dialect's
+metaschema, and so is every embedded resource whose `$schema` names a
+different dialect from its parent's, with any region nested inside it masked
+out. `schema_location` is `uri#` of the region's resource, and the error
+carries that resource's `location_chain` and `schema_source`. A region whose
+metaschema is unavailable is skipped. The check walks the document once
+before registering it, so a validated registration walks it twice.
 
 ### Dialects and keywords (the extension surface)
 

@@ -58,6 +58,57 @@ When a document's metaschema is not available (unregistered, and no loader
 supplies it), the check is skipped rather than treated as failure — there
 is nothing to validate against.
 
+### Each dialect is checked by its own metaschema
+
+An embedded resource can declare its own `$schema`, and one metaschema cannot
+judge a document that mixes dialects: 2020-12's would reject a perfectly good
+draft-07 array-form `items`, and draft-07's knows nothing of 2020-12's
+keywords. So the check is per *region*: the root, and every embedded resource
+whose dialect differs from its parent's. Each region is checked against its own
+metaschema, with the regions nested inside it masked out. An embedded resource
+in the same dialect as its parent is checked as part of the parent.
+
+```python
+DRAFT_07 = "http://json-schema.org/draft-07/schema#"
+mixed_engine = create_engine(validate_schemas=True)
+mixed_engine.register_schema(
+    {
+        "$id": "https://ex.example/mixed",
+        "$defs": {
+            "legacy": {
+                "$id": "https://ex.example/legacy",
+                "$schema": DRAFT_07,
+                "items": [{"type": "string"}],
+            }
+        },
+    },
+    "https://ex.example/mixed",
+)
+
+try:
+    mixed_engine.register_schema(
+        {
+            "$schema": DRAFT_07,
+            "$id": "https://ex.example/old-outside",
+            "definitions": {
+                "modern": {
+                    "$id": "https://ex.example/new-inside",
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "minContains": "not a number",
+                }
+            },
+        },
+        "https://ex.example/old-outside",
+    )
+    region_location = None
+except SchemaValidationError as error:
+    region_location = error.schema_location
+# The failure names the embedded resource, not the document it sits in.
+assert region_location == "https://ex.example/new-inside#"
+```
+
+A region whose metaschema is unavailable is skipped, just as the root is.
+
 ## `$vocabulary`: assembling a dialect from a custom metaschema
 
 A metaschema's own `$vocabulary` object names the vocabularies a dialect

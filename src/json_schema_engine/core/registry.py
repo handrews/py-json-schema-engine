@@ -13,7 +13,7 @@
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any, Final
+from typing import Any, Final, overload
 
 from json_schema_engine.core.dialect import Dialect, DialectRegistry, IdentifierFacts
 from json_schema_engine.core.errors import (
@@ -143,6 +143,25 @@ class RootIdentity:
     dialect: Dialect
     root_ids: IdentifierFacts
     retrieval_resource: str
+
+
+@dataclass(frozen=True, slots=True)
+class SurveyedResource:
+    """One schema resource a registration would create (`survey`, P17).
+
+    `parent_uri` is the resource lexically enclosing this one, `None` for
+    the document root. The chain and source are captured while the
+    surveyed indexes still exist, since the survey rolls them back: an
+    error about this resource later gets the same diagnostics a
+    registration error would.
+    """
+
+    base_uri: str
+    dialect_uri: str
+    document_pointer: str
+    parent_uri: str | None
+    location_chain: LocationChain
+    schema_source: SourceLocation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +363,49 @@ class SchemaRegistry:
             )
         return self._register(schema, retrieval_uri, dialect_uri, get_range)
 
+    def survey(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None = None,
+        get_range: RangeLookup | None = None,
+    ) -> tuple[SurveyedResource, ...]:
+        """The resources registering this document would create, registering
+        nothing (P17).
+
+        A dry run of the real walk, rolled back unconditionally through the
+        P13 journal: only the walk knows which positions are schemas, which
+        `$id`s start resources, and which dialect each resource is under.
+        Raises exactly what `register` would. Ordered by document pointer,
+        so the root comes first and every resource precedes those nested in
+        it.
+        """
+        if self._read_only:
+            raise ReadOnlyRegistryError(
+                "this schema registry is a compiled artifact's snapshot; "
+                "survey on the engine"
+            )
+        return self._register(
+            schema, retrieval_uri, dialect_uri, get_range, finish=self._surveyed
+        )
+
+    def _surveyed(self, root: str) -> tuple[SurveyedResource, ...]:
+        found: list[SurveyedResource] = []
+        for uri in self._claimed_resources:
+            entry = self._resource_locations[uri]
+            here = schema_location(uri, "")
+            found.append(
+                SurveyedResource(
+                    uri,
+                    self._document_dialects[uri],
+                    entry.pointer,
+                    None if uri == root else entry.parent_uri,
+                    self.location_chain(here),
+                    self.source_of(here),
+                )
+            )
+        return tuple(sorted(found, key=lambda r: r.document_pointer))
+
     def unregister(self, uri: str) -> None:
         """Remove a registered document and everything it claimed (P15).
 
@@ -491,26 +553,32 @@ class SchemaRegistry:
             )
         return self._dialects.get_dialect(uri)
 
-    def _dialect_after(self, base_uri: str, current: Dialect) -> Dialect:
-        """The dialect of a base that navigation has just entered (P14).
+    def _entered(
+        self, node: JsonValue, base_uri: str, base_id: str, current: Dialect
+    ) -> tuple[str, Dialect] | None:
+        """The resource navigation enters at `node`, if it enters one (P16).
 
-        Falls back to the dialect already in force when registration never
-        indexed that base. Pointer navigation deliberately ignores
-        `ref_ignores_siblings` (D18), so it can reach a lexical base the
-        walk never minted; the enclosing dialect is the one that base
-        *would* have been walked under, so the fallback is both right and
-        non-raising.
+        An `$id` identifies only in a schema position (§5), and navigation
+        cannot tell a schema position from data without re-running every
+        keyword's `analyze()` — which is the walk. So it asks what the walk
+        concluded: rebase only when the registry holds a resource at that
+        URI *and* `node` is that resource. Identity is the common case,
+        since `_claim_resource` stores the walked node itself; `json_equal`
+        covers a resource an equal copy in another document has taken over
+        (P15), whose node here is a different object with the same content.
 
-        A plain dict read rather than `dialect_for`, on purpose: that would
-        raise for an unindexed base — this exists so a mixed-dialect fix
-        cannot start raising where nothing raised before — and its
-        `_canonical` would try to register a bundled metaschema in the
-        middle of a navigation. Aliases cannot apply: a base minted
-        lexically from `$id` is already the canonical form the walk keyed
-        `_document_dialects` by.
+        Anything else — an `$id` inside `enum`, `const`, `examples` or an
+        unknown keyword — is data, and the pointer carries on through it
+        under the enclosing resource. That is also why this cannot raise:
+        a held resource always has its dialect recorded, and the `.get`
+        keeps a navigation from ever starting a lookup that could fail.
         """
-        uri = self._document_dialects.get(base_uri)
-        return current if uri is None else self._dialects.get_dialect(uri)
+        candidate = _resource_of(resolve(base_uri, base_id))
+        held = self._documents.get(candidate)
+        if held is None or (held is not node and not json_equal(held, node)):
+            return None
+        uri = self._document_dialects.get(candidate)
+        return candidate, current if uri is None else self._dialects.get_dialect(uri)
 
     def _check_embedded_id(self, base_id: str, dialect: Dialect, where: str) -> None:
         """Refuse an embedded `$id` that cannot name a new resource.
@@ -644,14 +712,40 @@ class SchemaRegistry:
         self._claimed_anchors.add(key)
         self._put(self._anchors, key, here)
 
+    @overload
     def _register(
         self,
         schema: JsonValue,
         retrieval_uri: str,
         dialect_uri: str | None,
         get_range: RangeLookup | None,
-    ) -> str:
-        """Index a document, all of it or none of it (§7, `_Registration`)."""
+    ) -> str: ...
+
+    @overload
+    def _register[T](
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+        *,
+        finish: Callable[[str], T],
+    ) -> T: ...
+
+    def _register(
+        self,
+        schema: JsonValue,
+        retrieval_uri: str,
+        dialect_uri: str | None,
+        get_range: RangeLookup | None,
+        *,
+        finish: Callable[[str], object] | None = None,
+    ) -> object:
+        """Index a document, all of it or none of it (§7, `_Registration`).
+
+        With `finish`, a dry run (`survey`): `finish` reads the completed
+        indexes, then everything is rolled back as if the walk had failed.
+        """
         # Saving the caller's journal and claim sets rather than asserting
         # they are empty is the re-entrancy guard. A walk never calls back
         # in here, but a custom `KeywordBehavior.analyze` or a custom
@@ -663,7 +757,12 @@ class SchemaRegistry:
         self._claimed_resources = set()
         self._claimed_anchors = set()
         try:
-            return self._index(schema, retrieval_uri, dialect_uri, get_range)
+            base_uri = self._index(schema, retrieval_uri, dialect_uri, get_range)
+            if finish is None:
+                return base_uri
+            result = finish(base_uri)
+            journal.undo()
+            return result
         except BaseException as error:
             # `BaseException`, because a walk can raise far more than a
             # typed engine error: `_step` raises bare `KeyError`/`TypeError`,
@@ -1238,13 +1337,15 @@ class SchemaRegistry:
             walked += "/" + escape_segment(segment)
             if is_object(node):
                 # The enclosing dialect's syntax decides whether this `$id`
-                # starts a resource, exactly as in the walk; the resource it
+                # could start a resource, exactly as in the walk; the
+                # registry decides whether it did (P16), and the resource it
                 # starts governs every step after it (P14).
                 base_id = identifiers(node).base_id
-                if base_id is not None:
-                    base_uri = _resource_of(resolve(base_uri, base_id))
+                if base_id is not None and (
+                    entered := self._entered(node, base_uri, base_id, dialect)
+                ):
+                    base_uri, dialect = entered
                     pointer = ""
-                    dialect = self._dialect_after(base_uri, dialect)
                     identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 
@@ -1264,10 +1365,11 @@ class SchemaRegistry:
             pointer += "/" + escape_segment(str(segment))
             if is_object(node):
                 base_id = identifiers(node).base_id
-                if base_id is not None:
-                    base_uri = _resource_of(resolve(base_uri, base_id))
+                if base_id is not None and (
+                    entered := self._entered(node, base_uri, base_id, dialect)
+                ):
+                    base_uri, dialect = entered
                     pointer = ""
-                    dialect = self._dialect_after(base_uri, dialect)
                     identifiers = dialect.identifiers
         return SchemaRef(node, base_uri, pointer)
 

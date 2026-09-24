@@ -395,3 +395,75 @@ def test_a_failure_after_a_dialect_switch_restores_document_dialects() -> None:
         )
     assert _fingerprint(reg) == before
     assert not reg.has("https://p.test/good")
+
+
+# --- survey: a dry run through the same transaction (P17) -------------------
+
+
+def test_a_survey_reports_resources_and_leaves_nothing_behind() -> None:
+    reg = _populated()
+    before = _fingerprint(reg)
+    found = reg.survey(
+        {
+            "$id": "https://x.example/surveyed",
+            "$defs": {"a": {"$id": "a/", "$defs": {"b": {"$id": "b"}}}},
+        },
+        "https://x.example/fetched-survey",
+    )
+    assert _fingerprint(reg) == before
+    assert [(r.base_uri, r.document_pointer, r.parent_uri) for r in found] == [
+        ("https://x.example/surveyed", "", None),
+        ("https://x.example/a/", "/$defs/a", "https://x.example/surveyed"),
+        ("https://x.example/a/b", "/$defs/a/$defs/b", "https://x.example/a/"),
+    ]
+    # Captured while the surveyed indexes existed.
+    assert [hop.resource_uri for hop in found[2].location_chain] == [
+        "https://x.example/a/b",
+        "https://x.example/a/",
+        "https://x.example/surveyed",
+    ]
+    assert found[0].location_chain[-1].retrieval_uri == (
+        "https://x.example/fetched-survey"
+    )
+
+
+def test_a_survey_names_each_resources_dialect() -> None:
+    engine = create_engine()
+    found = engine.schemas.survey(
+        {
+            "$id": "https://x.example/mixed",
+            "$defs": {
+                "legacy": {
+                    "$id": "https://x.example/legacy",
+                    "$schema": "http://json-schema.org/draft-07/schema#",
+                    "items": [{"type": "string"}],
+                }
+            },
+        },
+        "https://x.example/mixed",
+    )
+    assert [(r.base_uri, r.dialect_uri) for r in found] == [
+        ("https://x.example/mixed", "https://json-schema.org/draft/2020-12/schema"),
+        ("https://x.example/legacy", "http://json-schema.org/draft-07/schema"),
+    ]
+    assert not engine.schemas.has("https://x.example/mixed")
+
+
+@pytest.mark.parametrize(
+    ("label", "document", "expected"), BAD, ids=[b[0] for b in BAD]
+)
+def test_a_failing_survey_raises_what_register_would(
+    label: str, document: JsonValue, expected: type[BaseException]
+) -> None:
+    reg = _populated()
+    before = _fingerprint(reg)
+    with pytest.raises(expected):
+        reg.survey(document, "urn:wrapper")
+    assert _fingerprint(reg) == before
+
+
+def test_a_snapshot_cannot_survey() -> None:
+    from json_schema_engine.core import ReadOnlyRegistryError
+
+    with pytest.raises(ReadOnlyRegistryError):
+        _populated().snapshot().survey({}, "urn:nothing")
