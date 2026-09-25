@@ -7,6 +7,23 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+### Fixed
+
+- The output guide now says how `list` and `hierarchical` relate to the
+  machines-oriented proposal that defines them. The proposal has no
+  concept of relevance, includes every unit in `hierarchical`, and makes
+  pruning opt-in; the engine's default relevant level omits irrelevant
+  records and prunes the units left empty, and `verbose=True` gives the
+  unpruned structure. This is unchanged behavior, now documented as a
+  deliberate departure.
+- Corrected the claim that `valid` on each node of the `verbose` document
+  tells relevant results from irrelevant ones. A result is relevant only
+  when every node from the root down to it shares the root's `valid`; a
+  `valid: true` node under a rejected `oneOf` branch is irrelevant. At the
+  verbose level of `list` and `hierarchical`, `droppedErrors` and
+  `droppedAnnotations` mark each irrelevant record, but units are not
+  marked, and a unit's `valid` does not say whether it is relevant.
+
 ## [0.0.4] - 2026-09-23
 
 ### Changed

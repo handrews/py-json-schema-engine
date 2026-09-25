@@ -80,11 +80,15 @@ Every standard output format is available by name: `flag` (the default),
 `basic`, `detailed`, and `verbose` from the
 [IETF working group draft-03](https://www.ietf.org/archive/id/draft-ietf-jsonschema-json-schema-03.html)
 output sections, and `list` and `hierarchical` from the
-[machines-oriented proposal](https://github.com/json-schema-org/json-schema-spec/blob/main/specs/output/jsonschema-validation-output-machines.md).
+[machines-oriented proposal](https://github.com/json-schema-org/json-schema-spec/blob/4f56a9900674b27804f0ec32e3b7fdfa4efad695/specs/output/jsonschema-validation-output-machines.md).
 Annotations are a separate control (`annotations=True`, or an
 `AnnotationSelection`), `verbose=True` asks `list`/`hierarchical` for the
 verbose level with irrelevant records marked as dropped, and `trace=True`
-adds the application tree with error indexes into `result.errors`.
+adds the application tree with error indexes into `result.errors`. By
+default `list` and `hierarchical` leave out irrelevant records and the units
+left empty, which the proposal makes opt-in; `verbose=True` gives the
+unpruned structure (see
+[the output guide](docs/guide/output-formats.md#list-hierarchical-and-the-machines-oriented-proposal)).
 
 ```python
 result = engine.evaluate(uri, {"name": 3}, output="hierarchical")
