@@ -433,7 +433,7 @@ def test_verbose_renders_the_drafts_valid_prop_example_as_a_keyword_hierarchy() 
     }
 
 
-def test_verbose_includes_irrelevant_results_marked_only_by_valid() -> None:
+def test_verbose_includes_irrelevant_results_under_valid_nodes() -> None:
     engine, uri = engine_for({"anyOf": [{"type": "string"}, {"type": "number"}]})
     result = engine.evaluate(uri, 5, output="verbose")
     any_of = cast(dict[str, Any], result.output_document)["annotations"][0]
@@ -450,6 +450,132 @@ def test_verbose_includes_irrelevant_results_marked_only_by_valid() -> None:
     assert isinstance(failed["error"], str)
     assert result.dropped_errors is not None
     assert [e["evaluationPath"] for e in result.dropped_errors] == ["/anyOf/0/type"]
+
+
+# A `verbose` node's result is relevant exactly when every node from the
+# root down to it shares the root's `valid` (§12.2: the first transition
+# makes everything beneath it irrelevant, for good). Each pair is checked
+# against the relevant-level records of the same evaluation.
+PATH_RULE_CASES: list[tuple[str, JsonValue, list[JsonValue]]] = [
+    (
+        "anyOf",
+        {"anyOf": [{"required": ["a"], "title": "A"}, {"required": ["b"]}]},
+        [{"a": 1}, {}, {"a": 1, "b": 2}],
+    ),
+    (
+        "oneOf-ref",
+        {
+            "$defs": {"f": {"title": "f", "properties": {"a": {"title": "a"}}}},
+            "oneOf": [{"required": ["a"]}, {"required": ["b"], "$ref": "#/$defs/f"}],
+        },
+        [{"a": 1}, {"a": 1, "b": 1}, {}],
+    ),
+    ("not", {"not": {"type": "string", "title": "s"}, "title": "root"}, [1, "x"]),
+    (
+        "if-then-else",
+        {
+            "if": {"required": ["a"], "title": "if"},
+            "then": {"required": ["b"], "title": "then"},
+            "else": {"title": "else"},
+        },
+        [{}, {"a": 1}, {"a": 1, "b": 1}],
+    ),
+    (
+        "anyOf-in-failing-allOf",
+        {
+            "allOf": [
+                {"anyOf": [{"type": "integer", "title": "i"}, {"minimum": 3}]},
+                {"maximum": 2, "title": "max"},
+            ]
+        },
+        [1, 5, 2.5],
+    ),
+]
+
+
+def _uniform_path_records(
+    node: dict[str, Any], root_valid: bool, found: dict[str, set[tuple[str, str]]]
+) -> None:
+    if node["valid"] != root_valid:
+        return
+    location = (node["keywordLocation"], node["instanceLocation"])
+    if "error" in node:
+        found["errors"].add(location)
+    if "annotation" in node:
+        found["annotations"].add(location)
+    for child in [*node.get("errors", []), *node.get("annotations", [])]:
+        _uniform_path_records(child, root_valid, found)
+
+
+@pytest.mark.parametrize(
+    ("schema", "instances"),
+    [(c[1], c[2]) for c in PATH_RULE_CASES],
+    ids=[c[0] for c in PATH_RULE_CASES],
+)
+def test_verbose_relevance_is_valid_along_the_whole_path(
+    schema: JsonValue, instances: list[JsonValue]
+) -> None:
+    engine, uri = engine_for(schema)
+    for instance in instances:
+        verbose = engine.evaluate(uri, instance, output="verbose", annotations=True)
+        document = cast(dict[str, Any], verbose.output_document)
+        found: dict[str, set[tuple[str, str]]] = {"errors": set(), "annotations": set()}
+        _uniform_path_records(document, document["valid"], found)
+        relevant = engine.evaluate(uri, instance, output="basic", annotations=True)
+        assert found == {
+            "errors": {
+                (u["evaluationPath"], u["inputLocation"]) for u in relevant.errors or []
+            },
+            "annotations": {
+                (u["evaluationPath"], u["inputLocation"])
+                for u in relevant.annotations or []
+            },
+        }
+
+
+def test_verbose_valid_node_under_a_losing_branch_is_irrelevant() -> None:
+    engine, uri = engine_for(
+        {
+            "oneOf": [{"required": ["a"]}, {"required": ["b"], "$ref": "#/$defs/f"}],
+            "$defs": {"f": {"title": "f"}},
+        }
+    )
+    result = engine.evaluate(uri, {"a": 1}, output="verbose", annotations=True)
+    losing = cast(dict[str, Any], result.output_document)["annotations"][0][
+        "annotations"
+    ][1]
+    ref = losing["errors"][0]
+    assert (losing["valid"], ref["keywordLocation"], ref["valid"]) == (
+        False,
+        "/oneOf/1/$ref",
+        True,
+    )
+    assert result.annotations == []
+    assert result.dropped_annotations is not None
+    assert [a["annotation"] for a in result.dropped_annotations] == ["f"]
+
+
+def test_unit_valid_does_not_mark_relevance_in_list_or_hierarchical() -> None:
+    # The passing `anyOf` has no unit of its own, so its losing branch is
+    # `valid: false` under a `valid: false` root and still irrelevant: only
+    # the record marker says so.
+    engine, uri = engine_for(
+        {"required": ["x"], "anyOf": [{"required": ["a"]}, {"required": ["b"]}]}
+    )
+    for output in ("list", "hierarchical"):
+        result = engine.evaluate(uri, {"a": 1}, output=output, verbose=True)
+        document = cast(dict[str, Any], result.output_document)
+        units = (
+            document["details"]
+            if output == "list"
+            else [document, *document["details"]]
+        )
+        by_path = {u["evaluationPath"]: u for u in units}
+        branch = by_path["/anyOf/1"]
+        assert by_path[""]["valid"] is False
+        assert branch["valid"] is False
+        assert "errors" not in branch
+        assert set(branch["droppedErrors"]) == {"required"}
 
 
 def test_verbose_renders_unknown_keywords_as_annotation_nodes_when_selected() -> None:

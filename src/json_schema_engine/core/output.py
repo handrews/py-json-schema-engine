@@ -339,8 +339,10 @@ class OutputUnit(TypedDict):
     At the verbose level `droppedErrors`/`droppedAnnotations` mark irrelevant
     records (draft-03 §12.2): the proposal defines `droppedAnnotations` for a
     failed unit's own annotations, and the verbose level extends the marker
-    to every irrelevant record. `details` nests the sub-applications in
-    `hierarchical`; `list` flattens them.
+    to every irrelevant record. The markers classify records, not units: a
+    unit's `valid`, even along its path, does not say whether it is
+    relevant. `details` nests the sub-applications in `hierarchical`;
+    `list` flattens them.
     """
 
     valid: bool
@@ -386,7 +388,10 @@ def render_hierarchical(
     """Render the `hierarchical` document: one unit per application, nested.
 
     Irrelevant records render per `irrelevant`; at the relevant level a
-    unit carrying nothing is omitted (§13.4), but the root always remains.
+    unit carrying nothing is omitted, but the root always remains. The
+    proposal includes every unit and makes such pruning opt-in; pruning by
+    default is this engine's relevant level (draft-03 §12.2, §13.4), and
+    `mark` is the unpruned structure.
     """
 
     def unit_of(node: RenderNode) -> OutputUnit:
@@ -501,8 +506,10 @@ def _build_draft03_tree(
     """The keyword-level tree: every schema application becomes a node whose
     children are one node per keyword evaluation, in evaluation order; each
     keyword node carries the keyword's own error or annotation and the
-    applications it performed. The verbose level includes every record and
-    relies on `valid` per node as the relevance marker."""
+    applications it performed. The verbose level includes every record; a
+    record is relevant exactly when every node on its path from the root
+    shares the root's `valid` (§13.4.4), so no single node's `valid` marks
+    it."""
 
     def build(node: RenderNode) -> DetailedOutputUnit:
         keyword_location = node.evaluation_path
@@ -601,7 +608,8 @@ def render_detailed(render_input: RenderInput) -> DetailedOutputUnit:
 
 def render_verbose(render_input: RenderInput) -> DetailedOutputUnit:
     """The `verbose` document (§13.4.4): the full keyword-level tree,
-    irrelevant results included and marked only by `valid`."""
+    irrelevant results included and told apart only by `valid` along each
+    node's path from the root."""
     return _build_draft03_tree(render_input, "verbose")
 
 

@@ -156,7 +156,9 @@ str`, `absoluteKeywordLocation: str`, `instanceLocation: str`, `error:
 NotRequired[str]`, `annotation: NotRequired[JsonValue]`, `errors:
 NotRequired[list[DetailedOutputUnit]]`, `annotations:
 NotRequired[list[DetailedOutputUnit]]`. Nested results key on the node's own
-result: `errors` for a failing node, `annotations` for a passing one.
+result: `errors` for a failing node, `annotations` for a passing one. In the
+`verbose` document a node's result is relevant exactly when every node from
+the root down to it has the root's `valid`.
 
 `ListOutputDocument`: a `TypedDict` for the `list` document (the
 machines-oriented output proposal): `valid: bool`, `details: list[OutputUnit]`,
@@ -169,7 +171,9 @@ str]]`, `annotations: NotRequired[dict[str, JsonValue]]`, `droppedErrors:
 NotRequired[dict[str, str]]`, `droppedAnnotations: NotRequired[dict[str,
 JsonValue]]`, `details: NotRequired[list[OutputUnit]]` (nested
 sub-applications, `hierarchical` only). At the verbose level `droppedErrors`/
-`droppedAnnotations` mark irrelevant records.
+`droppedAnnotations` mark irrelevant records; `droppedAnnotations` can appear
+on a `valid: true` unit beneath a failed one. The markers classify records,
+not units: `valid` does not say whether a unit is relevant.
 
 `TraceUnit`: a `TypedDict` for one schema application from a traced evaluation
 (`Result.trace`): `segments: list[str]` (evaluation-path segments below the
