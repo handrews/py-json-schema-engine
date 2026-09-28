@@ -23,10 +23,14 @@ def _fmt_ops(value: float | None) -> str:
     return "-" if value is None else f"{value:,.0f}"
 
 
-def _fmt_ratio(numerator: float | None, denominator: float | None) -> str:
+def _fmt_ratio(numerator: float | None, denominator: float | None, name: str) -> str:
+    """`a/b` as a multiple, read out in words: the numbers are throughput,
+    so above 1x the numerator's subject is the faster one."""
     if numerator is None or denominator is None or denominator == 0:
         return "n/a"
-    return f"{numerator / denominator:.2f}x"
+    ratio = numerator / denominator
+    reading = "faster" if ratio > 1 else "slower" if ratio < 1 else "same speed"
+    return f"{ratio:.2f}x ({name} {reading})"
 
 
 def format_table(results: Results) -> str:
@@ -44,6 +48,8 @@ def format_table(results: Results) -> str:
         f"machine: {results.machine} — commit: {results.commit or 'unknown'} — "
         f"platform: {results.platform}",
         f"subjects: {subject_versions}",
+        "Numbers are operations per second: higher is faster. A ratio a/b is "
+        "a's ops/s over b's, so above 1x a is faster, below 1x slower.",
         "",
     ]
     ops_by = _ops_by(results)
@@ -69,26 +75,30 @@ def format_table(results: Results) -> str:
         fastjsonschema_ = by_subject.get("fastjsonschema", {})
         lines.append(
             "  compiled/interpreter (hot): "
-            + _fmt_ratio(compiled.get("hot"), interpreter.get("hot"))
+            + _fmt_ratio(compiled.get("hot"), interpreter.get("hot"), "compiled")
         )
         lines.append(
             "  compiled/fastjsonschema (hot): "
-            + _fmt_ratio(compiled.get("hot"), fastjsonschema_.get("hot"))
+            + _fmt_ratio(compiled.get("hot"), fastjsonschema_.get("hot"), "compiled")
         )
         jsonschema_ = by_subject.get("jsonschema", {})
         lines.append(
             "  compiled/jsonschema (hot): "
-            + _fmt_ratio(compiled.get("hot"), jsonschema_.get("hot"))
+            + _fmt_ratio(compiled.get("hot"), jsonschema_.get("hot"), "compiled")
         )
         lines.append(
             "  interpreter/jsonschema (hot): "
-            + _fmt_ratio(interpreter.get("hot"), jsonschema_.get("hot"))
+            + _fmt_ratio(interpreter.get("hot"), jsonschema_.get("hot"), "interpreter")
         )
         compiled_evaluator = by_subject.get("jse compiled evaluator (list)", {})
         interpreter_list = by_subject.get("jse interpreter list", {})
         lines.append(
             "  compiled evaluator/interpreter list (hot): "
-            + _fmt_ratio(compiled_evaluator.get("hot"), interpreter_list.get("hot"))
+            + _fmt_ratio(
+                compiled_evaluator.get("hot"),
+                interpreter_list.get("hot"),
+                "compiled evaluator",
+            )
         )
         lines.append("")
 

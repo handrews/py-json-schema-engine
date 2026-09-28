@@ -79,6 +79,12 @@ strictly typed.
   subject except the two plain-interpreter subjects (`jse interpreter
   flag`, `jse interpreter list`), which have no separate compile step
   worth reporting.
+- **Reading the numbers.** Every table cell is operations per second, so
+  higher is faster. A ratio `a/b` divides `a`'s ops/s by `b`'s: above
+  `1x` the first subject is faster, below `1x` slower, and each ratio line
+  says which in words (`34.03x (compiled faster)`,
+  `0.33x (interpreter slower)`). The printed report opens with the same
+  legend.
 - **Ratio lines.** Each corpus's table is followed by five ratios:
   compiled flag validator vs. the interpreter, `fastjsonschema`, and
   `jsonschema` (all `hot`); the interpreter vs. `jsonschema` (`hot`); and
@@ -152,6 +158,8 @@ mutually exclusive with `--budget-ms`/`--filter`/`--out` — there is
 nothing to run. Sample output:
 
 ```text
+Ops/s: higher is faster. after/before above 1.00 means faster after, below 1.00 slower.
+
 task                                before ops/s  after ops/s  after/before
 user | hot | jse compiled flag      2,501,446     2,506,593    1.00
 user | hot | jse interpreter flag   27,590        27,000       0.98

@@ -49,8 +49,13 @@ def compare(before: Mapping[str, JsonValue], after: Mapping[str, JsonValue]) -> 
         rows.append([task, _fmt_ops(b), _fmt_ops(a), _fmt_ratio(b, a)])
     widths = [max(len(row[i]) for row in rows) for i in range(len(header))]
     lines = [
-        "  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True))
-        for row in rows
+        "Ops/s: higher is faster. after/before above 1.00 means faster after, "
+        "below 1.00 slower.",
+        "",
+        *(
+            "  ".join(cell.ljust(w) for cell, w in zip(row, widths, strict=True))
+            for row in rows
+        ),
     ]
 
     only_before = sorted(set(before_ops) - set(after_ops))
