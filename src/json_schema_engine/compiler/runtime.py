@@ -32,6 +32,14 @@ from json_schema_engine.core.json_model import (
     json_equal,
     json_type_name,
 )
+from json_schema_engine.core.messages import (
+    apparent_type,
+    duplicate_groups,
+    index_ranges,
+    name_list,
+    preview,
+    ranges,
+)
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.regex import RegexCache
 from json_schema_engine.core.registry import SchemaRegistry, attach_location_chain
@@ -214,6 +222,12 @@ def make_namespace(
         e.H_DUP: has_duplicate_items,
         e.H_FDP: first_duplicate_pair,
         e.H_TYPE: json_type_name,
+        e.H_PREV: preview,
+        e.H_ATYPE: apparent_type,
+        e.H_IRNG: index_ranges,
+        e.H_NAMES: name_list,
+        e.H_DUPG: duplicate_groups,
+        e.H_RNGS: ranges,
         e.H_FRAG: runtime.frag,
         e.H_FRAGC: runtime.frag_cov,
         e.H_FRAGE: runtime.frag_eval,

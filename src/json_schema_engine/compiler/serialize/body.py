@@ -245,6 +245,18 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
             return e.call(e.load(e.H_FDP), *(expression(body, a) for a in args))
         case "json_type_name":
             return e.call(e.load(e.H_TYPE), *(expression(body, a) for a in args))
+        case "preview":
+            return e.call(e.load(e.H_PREV), *(expression(body, a) for a in args))
+        case "apparent_type":
+            return e.call(e.load(e.H_ATYPE), *(expression(body, a) for a in args))
+        case "index_ranges":
+            return e.call(e.load(e.H_IRNG), *(expression(body, a) for a in args))
+        case "name_list":
+            return e.call(e.load(e.H_NAMES), *(expression(body, a) for a in args))
+        case "duplicate_groups":
+            return e.call(e.load(e.H_DUPG), *(expression(body, a) for a in args))
+        case "ranges":
+            return e.call(e.load(e.H_RNGS), *(expression(body, a) for a in args))
         case "length_of" | "code_point_length":
             # `len` counts code points on `str` and elements on containers.
             (arg,) = args

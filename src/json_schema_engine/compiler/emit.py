@@ -61,6 +61,12 @@ H_ROOT = "H_ROOT"  # root_cursor
 H_FRAGE = "H_FRAGE"  # trampoline on the shared state
 H_FDP = "H_FDP"  # first_duplicate_pair
 H_TYPE = "H_TYPE"  # json_type_name
+H_PREV = "H_PREV"  # preview
+H_ATYPE = "H_ATYPE"  # apparent_type
+H_IRNG = "H_IRNG"  # index_ranges
+H_NAMES = "H_NAMES"  # name_list
+H_DUPG = "H_DUPG"  # duplicate_groups
+H_RNGS = "H_RNGS"  # ranges
 EVALUATOR_NAMES = (
     STATE,
     PATH,
@@ -84,6 +90,12 @@ EVALUATOR_NAMES = (
     H_FRAGE,
     H_FDP,
     H_TYPE,
+    H_PREV,
+    H_ATYPE,
+    H_IRNG,
+    H_NAMES,
+    H_DUPG,
+    H_RNGS,
 )
 
 BUILTINS_USED = frozenset(

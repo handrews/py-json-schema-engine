@@ -134,6 +134,14 @@ type HelperName = Literal[
     "length_of",
     "code_point_length",
     "json_type_name",
+    # Message formatting (`core/messages.py`): used only in error messages
+    # and params, never in a condition, so a flag artifact never calls one.
+    "preview",
+    "apparent_type",
+    "index_ranges",
+    "name_list",
+    "duplicate_groups",
+    "ranges",
 ]
 type CmpOp = Literal["<", "<=", ">", ">=", "==", "!="]
 
