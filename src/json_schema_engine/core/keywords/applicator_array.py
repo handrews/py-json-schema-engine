@@ -274,7 +274,13 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
         if not sibling_bounds:
             # draft-07/06: one implicit minimum, so nothing matched.
             return ("no item matches the contains subschema",), params
-        expected = f"at least {minimum}" if maximum is None else f"{minimum}-{maximum}"
+        if maximum is None:
+            expected = f"at least {minimum}"
+        elif maximum == minimum:
+            # Exactly one count is acceptable: a range of one is just it.
+            expected = f"{minimum}"
+        else:
+            expected = f"{minimum}-{maximum}"
         shown = helper("counted_indexes", matched, Const("item"), Const("items"))
         message: LowerMessage = (
             "the contains subschema matched ",

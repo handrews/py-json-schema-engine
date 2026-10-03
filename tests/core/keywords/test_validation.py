@@ -509,7 +509,7 @@ def test_unique_items_rejects_1_and_1_0_as_duplicates() -> None:
     valid, state = run({"uniqueItems": True}, [1, 1.0])
     assert not valid
     error = state.errors[0]
-    assert error.message == "items are not unique: 0 = 1"
+    assert error.message == "items are not unique: [0, 1] are equal"
     assert error.params == {"duplicates": [[0, 1]]}
     assert error.keyword_name == "uniqueItems"
 
@@ -531,7 +531,9 @@ def test_unique_items_non_array_instance_is_vacuous() -> None:
 def test_unique_items_reports_every_group_of_equal_items() -> None:
     valid, state = run({"uniqueItems": True}, [1, 2, 1, 2, 3, 1])
     assert not valid
-    assert state.errors[0].message == "items are not unique: 0 = 2 = 5; 1 = 3"
+    assert state.errors[0].message == (
+        "items are not unique: [0, 2, 5] are equal; [1, 3] are equal"
+    )
     assert state.errors[0].params == {"duplicates": [[0, 2, 5], [1, 3]]}
 
 

@@ -184,8 +184,10 @@ def counted_indexes(indexes: Sequence[int], singular: str, plural: str) -> str:
 
 
 def index_groups(groups: Sequence[Sequence[int]]) -> str:
-    """Groups of equal items: `0 = 2; 1 = 4 = 5`."""
-    return "; ".join(" = ".join(str(i) for i in group) for group in groups)
+    """Groups of equal items: `[0, 2] are equal; [1, 4, 5] are equal`."""
+    return "; ".join(
+        f"[{', '.join(str(i) for i in group)}] are equal" for group in groups
+    )
 
 
 def duplicate_groups(items: Sequence[JsonValue]) -> list[list[int]]:

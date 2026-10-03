@@ -111,7 +111,7 @@ result = engine.evaluate(
 messages = {unit["keyword"]: unit["error"] for unit in result.errors}
 assert messages == {
     "minimum": "must be >= 0, got -1",
-    "uniqueItems": "items are not unique: 0 = 2",
+    "uniqueItems": "items are not unique: [0, 2] are equal",
     "maxItems": "must have at most 3 items, got 4",
     "enum": 'must be one of ["a", "b"], got "c"',
     "additionalProperties": 'additional property "extra" not allowed',

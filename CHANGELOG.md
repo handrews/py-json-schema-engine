@@ -25,8 +25,8 @@ minor versions may change public API.
     `missing required properties "a", "c"`. Params `{"missing": [...]}`
     replaces one error per name carrying `missingProperty`.
   - `uniqueItems` names every group of equal items: `items are not unique:
-    0 = 2 = 5; 1 = 3`. Params `duplicates` is now a list of index groups,
-    not the first pair.
+    [0, 2, 5] are equal; [1, 3] are equal`. Params `duplicates` is now a
+    list of index groups, not the first pair.
   - `contains` names the matching indexes (`matched 2 items (0, 3)`, params
     `matched`); `oneOf` names the passing branches; `anyOf` counts its
     branches.

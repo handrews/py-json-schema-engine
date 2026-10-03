@@ -29,6 +29,7 @@ from json_schema_engine.core.messages import (
     PREVIEW_LIMIT,
     apparent_type,
     duplicate_groups,
+    index_groups,
     index_ranges,
     name_list,
     preview,
@@ -91,6 +92,12 @@ def test_duplicate_groups_finds_every_group() -> None:
         [3, 6],
     ]
     assert duplicate_groups([True, 1, False, 0]) == []
+
+
+def test_index_groups_reads_as_sentences() -> None:
+    assert index_groups([[0, 2, 5], [1, 3]]) == (
+        "[0, 2, 5] are equal; [1, 3] are equal"
+    )
 
 
 # --- realize matches the compiled evaluator ---------------------------------

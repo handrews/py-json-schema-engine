@@ -248,9 +248,7 @@ def test_contains_error_message_and_params_with_only_max_contains() -> None:
     schema: JsonValue = {"contains": {"items": False}, "maxContains": 1}
     _, state = run(schema, [[], []])
     err = state.errors[0]
-    assert err.message == (
-        "the contains subschema matched 2 items (0, 1), expected 1-1"
-    )
+    assert err.message == ("the contains subschema matched 2 items (0, 1), expected 1")
     assert err.params == {
         "count": 2,
         "matched": [0, 1],
@@ -265,6 +263,18 @@ def test_contains_error_message_and_params_default_unbounded_max() -> None:
     err = state.errors[-1]
     assert err.message == "the contains subschema matched none, expected at least 2"
     assert err.params == {"count": 0, "matched": [], "minContains": 2}
+
+
+def test_contains_shows_a_range_of_one_as_its_number() -> None:
+    schema: JsonValue = {
+        "contains": {"items": False},
+        "minContains": 2,
+        "maxContains": 2,
+    }
+    _, state = run(schema, [[], [1], [2]])
+    assert state.errors[-1].message == (
+        "the contains subschema matched 1 item (0), expected 2"
+    )
 
 
 def test_contains_names_the_matching_indexes() -> None:
