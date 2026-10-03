@@ -5,6 +5,7 @@
 # three vocabularies, evaluated with `run_evaluation`, mirroring
 # `tests/core/test_evaluator.py`'s pattern.
 
+import json
 import re
 
 import pytest
@@ -95,21 +96,32 @@ def test_type_matrix(instance: JsonValue, expected: frozenset[str]) -> None:
             assert not valid
             error = state.errors[0]
             assert error.keyword_name == "type"
-            assert error.message == f"expected {name}"
+            actual = _apparent_type_name(instance)
+            shown = (
+                actual
+                if isinstance(instance, list | dict)
+                else f"{json.dumps(instance)} ({actual})"
+            )
+            assert error.message == f"expected {name}, got {shown}"
             assert error.params == {
                 "expected": [name],
-                "actual": _actual_type_name(instance),
+                "actual": actual,
+                "value": instance,
             }
 
 
-def _actual_type_name(instance: JsonValue) -> str:
+def _apparent_type_name(instance: JsonValue) -> str:
     # Derived independently of the module under test, from the P2 truth
-    # table: bool before int, integral-ness is irrelevant to the base type.
+    # table: bool before int, and a mathematical integer reads as one.
     if instance is None:
         return "null"
     if isinstance(instance, bool):
         return "boolean"
-    if isinstance(instance, int | float):
+    if isinstance(instance, int) or (
+        isinstance(instance, float) and instance.is_integer()
+    ):
+        return "integer"
+    if isinstance(instance, float):
         return "number"
     if isinstance(instance, str):
         return "string"
@@ -124,8 +136,12 @@ def test_type_array_of_names_matches_any() -> None:
     valid, state = run({"type": ["string", "null"]}, 5)
     assert not valid
     error = state.errors[0]
-    assert error.message == "expected string, null"
-    assert error.params == {"expected": ["string", "null"], "actual": "number"}
+    assert error.message == "expected string, null, got 5 (integer)"
+    assert error.params == {
+        "expected": ["string", "null"],
+        "actual": "integer",
+        "value": 5,
+    }
 
 
 def test_type_true_never_matches_number_or_integer() -> None:
@@ -146,8 +162,8 @@ def test_required_missing_reports_one_error() -> None:
     assert not valid
     assert len(state.errors) == 1
     error = state.errors[0]
-    assert error.message == "missing required property 'b'"
-    assert error.params == {"missingProperty": "b"}
+    assert error.message == 'missing required property "b"'
+    assert error.params == {"missing": ["b"]}
     assert error.keyword_name == "required"
 
 
@@ -155,14 +171,12 @@ def test_required_all_present_passes() -> None:
     assert run({"required": ["a", "b"]}, {"a": 1, "b": 2})[0]
 
 
-def test_required_reports_one_error_per_missing_name_in_order() -> None:
-    valid, state = run({"required": ["a", "b", "c"]}, {})
+def test_required_reports_every_missing_name_in_one_error() -> None:
+    valid, state = run({"required": ["a", "b", "c"]}, {"b": 1})
     assert not valid
-    assert [e.params["missingProperty"] for e in state.errors if e.params] == [
-        "a",
-        "b",
-        "c",
-    ]
+    assert len(state.errors) == 1
+    assert state.errors[0].message == 'missing required properties "a", "c"'
+    assert state.errors[0].params == {"missing": ["a", "c"]}
 
 
 def test_required_non_object_instance_is_vacuous() -> None:
@@ -179,7 +193,8 @@ def test_required_prototype_trap_names_are_ordinary_keys() -> None:
     schema: JsonValue = {"required": names}
     valid, state = run(schema, {})
     assert not valid
-    assert [e.params["missingProperty"] for e in state.errors if e.params] == names
+    assert len(state.errors) == 1
+    assert state.errors[0].params == {"missing": names}
     present: JsonValue = {str(n): n for n in names}
     assert run(schema, present)[0]
 
@@ -192,8 +207,8 @@ def test_pattern_match_and_mismatch() -> None:
     valid, state = run({"pattern": "^a"}, "xyz")
     assert not valid
     error = state.errors[0]
-    assert error.message == "does not match pattern"
-    assert error.params == {"pattern": "^a"}
+    assert error.message == 'must match pattern "^a", got "xyz"'
+    assert error.params == {"pattern": "^a", "value": "xyz"}
     assert error.keyword_name == "pattern"
 
 
@@ -536,19 +551,15 @@ def test_dependent_required_non_object_instance_is_vacuous() -> None:
     assert run({"dependentRequired": {"a": ["b"]}}, [1, 2])[0]
 
 
-def test_dependent_required_reports_every_missing_dependency_in_order() -> None:
+def test_dependent_required_reports_every_missing_dependency_in_one_error() -> None:
     schema: JsonValue = {"dependentRequired": {"a": ["b", "c"], "x": ["y"]}}
     valid, state = run(schema, {"a": 1, "x": 1})
     assert not valid
-    assert len(state.errors) == 3
-    assert [
-        (e.params["property"], e.params["missingProperty"])
-        for e in state.errors
-        if e.params
-    ] == [("a", "b"), ("a", "c"), ("x", "y")]
-    for error in state.errors:
-        assert error.keyword_name == "dependentRequired"
-    assert state.errors[0].message == "'a' requires 'b' to be present"
+    assert len(state.errors) == 1
+    error = state.errors[0]
+    assert error.keyword_name == "dependentRequired"
+    assert error.params == {"missing": {"a": ["b", "c"], "x": ["y"]}}
+    assert error.message == '"a" requires "b", "c"; "x" requires "y"'
 
 
 # --- minContains / maxContains (inert siblings, M2) --------------------------

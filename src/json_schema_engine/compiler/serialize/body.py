@@ -257,6 +257,16 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
             return e.call(e.load(e.H_DUPG), *(expression(body, a) for a in args))
         case "ranges":
             return e.call(e.load(e.H_RNGS), *(expression(body, a) for a in args))
+        case "missing_names":
+            return e.call(e.load(e.H_MISS), *(expression(body, a) for a in args))
+        case "missing_dependencies":
+            return e.call(e.load(e.H_MDEP), *(expression(body, a) for a in args))
+        case "dependency_list":
+            return e.call(e.load(e.H_DLIST), *(expression(body, a) for a in args))
+        case "typed_preview":
+            return e.call(e.load(e.H_TPREV), *(expression(body, a) for a in args))
+        case "labeled_names":
+            return e.call(e.load(e.H_LNAMES), *(expression(body, a) for a in args))
         case "length_of" | "code_point_length":
             # `len` counts code points on `str` and elements on containers.
             (arg,) = args

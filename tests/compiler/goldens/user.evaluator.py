@@ -39,17 +39,21 @@ x35 = X[35]
 x36 = X[36]
 k0 = frozenset(('address', 'email', 'id', 'name', 'role', 'tags'))
 k1 = ['object']
-k2 = ['integer']
-k3 = ['string']
-k4 = ['string']
-k5 = ['admin', 'user', 'guest']
-k6 = frozenset(('admin', 'guest', 'user'))
-k7 = ['array']
-k8 = ['object']
-k9 = ['string']
-k10 = ['string']
-k11 = ['string']
-k12 = ['string']
+k2 = ['id', 'name', 'email', 'tags']
+k3 = ['id', 'name', 'email', 'tags']
+k4 = ['integer']
+k5 = ['string']
+k6 = ['string']
+k7 = ['admin', 'user', 'guest']
+k8 = frozenset(('admin', 'guest', 'user'))
+k9 = ['array']
+k10 = ['object']
+k11 = ['street', 'city']
+k12 = ['street', 'city']
+k13 = ['string']
+k14 = ['string']
+k15 = ['string']
+k16 = ['string']
 
 def u0(v, d, s, st, pn, cu):
     if d >= H_MAXD:
@@ -107,24 +111,14 @@ def u0(v, d, s, st, pn, cu):
         H_DROP(st, m7)
     m9 = H_EMARK(st)
     if not g0:
-        H_ERR(st, x6, pn, cu, 'expected object', {'expected': k1, 'actual': H_TYPE(v)})
+        H_ERR(st, x6, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k1, 'actual': H_ATYPE(v), 'value': v})
         w2 = False
     if w2:
         H_DROP(st, m9)
     m10 = H_EMARK(st)
-    if g0:
-        if 'id' not in v:
-            H_ERR(st, x7, pn, cu, "missing required property 'id'", {'missingProperty': 'id'})
-            w3 = False
-        if 'name' not in v:
-            H_ERR(st, x7, pn, cu, "missing required property 'name'", {'missingProperty': 'name'})
-            w3 = False
-        if 'email' not in v:
-            H_ERR(st, x7, pn, cu, "missing required property 'email'", {'missingProperty': 'email'})
-            w3 = False
-        if 'tags' not in v:
-            H_ERR(st, x7, pn, cu, "missing required property 'tags'", {'missingProperty': 'tags'})
-            w3 = False
+    if g0 and ('id' not in v or 'name' not in v or 'email' not in v or ('tags' not in v)):
+        H_ERR(st, x7, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k2), 'property', 'properties')), {'missing': H_MISS(v, k3)})
+        w3 = False
     if w3:
         H_DROP(st, m10)
     w4 = w0 and w1 and w2 and w3
@@ -138,7 +132,7 @@ def u1(v, d, s, st, pn, cu):
     w6 = True
     m11 = H_EMARK(st)
     if not (type(v) is int or (type(v) is float and v.is_integer())):
-        H_ERR(st, x9, pn, cu, 'expected integer', {'expected': k2, 'actual': H_TYPE(v)})
+        H_ERR(st, x9, pn, cu, 'expected integer, got ' + str(H_TPREV(v)), {'expected': k4, 'actual': H_ATYPE(v), 'value': v})
         w5 = False
     if w5:
         H_DROP(st, m11)
@@ -160,7 +154,7 @@ def u2(v, d, s, st, pn, cu):
     w10 = True
     m13 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x12, pn, cu, 'expected string', {'expected': k3, 'actual': H_TYPE(v)})
+        H_ERR(st, x12, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k5, 'actual': H_ATYPE(v), 'value': v})
         w8 = False
     if w8:
         H_DROP(st, m13)
@@ -187,13 +181,13 @@ def u3(v, d, s, st, pn, cu):
     w13 = True
     m16 = H_EMARK(st)
     if type(v) is str and r0.search(v) is None:
-        H_ERR(st, x16, pn, cu, 'does not match pattern', {'pattern': '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'})
+        H_ERR(st, x16, pn, cu, 'must match pattern "^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$", got ' + str(H_PREV(v)), {'pattern': '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$', 'value': v})
         w12 = False
     if w12:
         H_DROP(st, m16)
     m17 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x17, pn, cu, 'expected string', {'expected': k4, 'actual': H_TYPE(v)})
+        H_ERR(st, x17, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k6, 'actual': H_ATYPE(v), 'value': v})
         w13 = False
     if w13:
         H_DROP(st, m17)
@@ -206,8 +200,8 @@ def u4(v, d, s, st, pn, cu):
     t4 = H_ENTER(st, x18, pn, cu)
     w15 = True
     m18 = H_EMARK(st)
-    if not (type(v) is str and v in k6):
-        H_ERR(st, x19, pn, cu, 'must be one of ["admin", "user", "guest"], got ' + str(H_PREV(v)), {'allowedValues': k5, 'value': v})
+    if not (type(v) is str and v in k8):
+        H_ERR(st, x19, pn, cu, 'must be one of ["admin", "user", "guest"], got ' + str(H_PREV(v)), {'allowedValues': k7, 'value': v})
         w15 = False
     if w15:
         H_DROP(st, m18)
@@ -235,7 +229,7 @@ def u5(v, d, s, st, pn, cu):
         H_DROP(st, m19)
     m21 = H_EMARK(st)
     if type(v) is not list:
-        H_ERR(st, x22, pn, cu, 'expected array', {'expected': k7, 'actual': H_TYPE(v)})
+        H_ERR(st, x22, pn, cu, 'expected array, got ' + str(H_TPREV(v)), {'expected': k9, 'actual': H_ATYPE(v), 'value': v})
         w18 = False
     if w18:
         H_DROP(st, m21)
@@ -280,18 +274,14 @@ def u6(v, d, s, st, pn, cu):
         H_DROP(st, m23)
     m27 = H_EMARK(st)
     if not g1:
-        H_ERR(st, x26, pn, cu, 'expected object', {'expected': k8, 'actual': H_TYPE(v)})
+        H_ERR(st, x26, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k10, 'actual': H_ATYPE(v), 'value': v})
         w22 = False
     if w22:
         H_DROP(st, m27)
     m28 = H_EMARK(st)
-    if g1:
-        if 'street' not in v:
-            H_ERR(st, x27, pn, cu, "missing required property 'street'", {'missingProperty': 'street'})
-            w23 = False
-        if 'city' not in v:
-            H_ERR(st, x27, pn, cu, "missing required property 'city'", {'missingProperty': 'city'})
-            w23 = False
+    if g1 and ('street' not in v or 'city' not in v):
+        H_ERR(st, x27, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k11), 'property', 'properties')), {'missing': H_MISS(v, k12)})
+        w23 = False
     if w23:
         H_DROP(st, m28)
     w24 = w21 and w22 and w23
@@ -304,7 +294,7 @@ def u7(v, d, s, st, pn, cu):
     w25 = True
     m29 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x29, pn, cu, 'expected string', {'expected': k9, 'actual': H_TYPE(v)})
+        H_ERR(st, x29, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k13, 'actual': H_ATYPE(v), 'value': v})
         w25 = False
     if w25:
         H_DROP(st, m29)
@@ -318,7 +308,7 @@ def u8(v, d, s, st, pn, cu):
     w27 = True
     m30 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x31, pn, cu, 'expected string', {'expected': k10, 'actual': H_TYPE(v)})
+        H_ERR(st, x31, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k14, 'actual': H_ATYPE(v), 'value': v})
         w27 = False
     if w27:
         H_DROP(st, m30)
@@ -332,7 +322,7 @@ def u9(v, d, s, st, pn, cu):
     w29 = True
     m31 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x33, pn, cu, 'expected string', {'expected': k11, 'actual': H_TYPE(v)})
+        H_ERR(st, x33, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k15, 'actual': H_ATYPE(v), 'value': v})
         w29 = False
     if w29:
         H_DROP(st, m31)
@@ -347,13 +337,13 @@ def u10(v, d, s, st, pn, cu):
     w32 = True
     m32 = H_EMARK(st)
     if type(v) is str and r1.search(v) is None:
-        H_ERR(st, x35, pn, cu, 'does not match pattern', {'pattern': '^[0-9]{5}$'})
+        H_ERR(st, x35, pn, cu, 'must match pattern "^[0-9]{5}$", got ' + str(H_PREV(v)), {'pattern': '^[0-9]{5}$', 'value': v})
         w31 = False
     if w31:
         H_DROP(st, m32)
     m33 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x36, pn, cu, 'expected string', {'expected': k12, 'actual': H_TYPE(v)})
+        H_ERR(st, x36, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k16, 'actual': H_ATYPE(v), 'value': v})
         w32 = False
     if w32:
         H_DROP(st, m33)

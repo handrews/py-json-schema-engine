@@ -54,7 +54,7 @@ def u1(v, d, s, st, pn, cu):
     w3 = True
     m5 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x5, pn, cu, 'expected string', {'expected': k1, 'actual': H_TYPE(v)})
+        H_ERR(st, x5, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k1, 'actual': H_ATYPE(v), 'value': v})
         w3 = False
     if w3:
         H_DROP(st, m5)

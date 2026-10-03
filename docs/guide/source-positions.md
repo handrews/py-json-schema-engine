@@ -101,7 +101,7 @@ and (when the underlying document reported one) `range`:
 ```python
 result = engine.evaluate(root_uri, {}, output="list", positions=True)
 assert result.valid is False
-unit = next(e for e in result.errors if "'x'" in e["error"])
+unit = next(e for e in result.errors if '"x"' in e["error"])
 # `schemaLocation` is resource-rooted, in the *referenced* document...
 assert unit["schemaLocation"] == "https://pos.example/leaf#/required"
 # ...while `source` is document-rooted, in the document the loader parsed.

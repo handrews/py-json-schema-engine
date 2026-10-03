@@ -217,17 +217,11 @@ def test_dependencies_array_form_present_triggers_and_absent_does_not() -> None:
     assert run(schema, {"x": 1})[0] is True
 
 
-def test_dependencies_array_form_multiple_missing_reports_in_order() -> None:
+def test_dependencies_array_form_reports_every_missing_name_in_one_error() -> None:
     schema: JsonValue = {"dependencies": {"a": ["b", "c"]}}
     _, state = run(schema, {"a": 1})
-    assert [e.message for e in state.errors] == [
-        "'a' requires 'b' to be present",
-        "'a' requires 'c' to be present",
-    ]
-    assert [e.params for e in state.errors] == [
-        {"property": "a", "missingProperty": "b"},
-        {"property": "a", "missingProperty": "c"},
-    ]
+    assert [e.message for e in state.errors] == ['"a" requires "b", "c"']
+    assert [e.params for e in state.errors] == [{"missing": {"a": ["b", "c"]}}]
 
 
 def test_dependencies_non_object_instance_passes() -> None:
@@ -249,7 +243,7 @@ def test_dependencies_schema_form_applies_in_place_at_the_same_cursor() -> None:
     assert not valid
     err = state.errors[0]
     assert err.cursor.pointer == ""
-    assert err.message == "'x' requires 'y' to be present"
+    assert err.message == '"x" requires "y"'
 
 
 def test_dependencies_boolean_subschema_form() -> None:
@@ -266,10 +260,8 @@ def test_dependencies_escaped_names() -> None:
     assert run(schema, {"foo\nbar": 1, 'foo"bar': 1})[0] is True
     valid, state = run(schema, {"foo\nbar": 1})
     assert not valid
-    assert state.errors[0].params == {
-        "property": "foo\nbar",
-        "missingProperty": 'foo"bar',
-    }
+    assert state.errors[0].params == {"missing": {"foo\nbar": ['foo"bar']}}
+    assert state.errors[0].message == '"foo\\nbar" requires "foo\\"bar"'
 
 
 def test_dependencies_mixed_map_of_array_and_schema_members() -> None:

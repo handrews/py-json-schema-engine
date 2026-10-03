@@ -11,7 +11,7 @@
 # Dependency direction: imports `cursor`, `dialect`, `json_model`, and this
 # package's `_ids`. Never imports the registry or evaluator.
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import TypeGuard
 
 from json_schema_engine.core.cursor import Cursor
@@ -42,7 +42,6 @@ from json_schema_engine.core.lowering import (
     LoweringContext,
     LowerMessage,
     LowerParams,
-    Stmt,
     TypeName,
     and_,
     cmp,
@@ -52,11 +51,12 @@ from json_schema_engine.core.lowering import (
     in_consts,
     lower_nothing,
     not_,
+    or_,
     regex_test,
     type_is,
     when,
 )
-from json_schema_engine.core.messages import preview, realize
+from json_schema_engine.core.messages import missing_dependencies, preview, realize
 
 # --- pattern (EXEMPLAR: assertion class) ----------------------------------
 
@@ -65,13 +65,20 @@ def _pattern_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     return StaticFacts(regexes=(value,)) if isinstance(value, str) else StaticFacts()
 
 
+def _pattern_describe(value: str, instance: Expr) -> tuple[LowerMessage, LowerParams]:
+    return (
+        (f"must match pattern {preview(value)}, got ", helper("preview", instance)),
+        {"pattern": Const(value), "value": instance},
+    )
+
+
 def _pattern_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     instance = cursor.value
     if not isinstance(instance, str) or not isinstance(value, str):
         return True
     if ctx.compile_regex(value).search(instance):
         return True
-    ctx.error("does not match pattern", {"pattern": value})
+    ctx.error(*realize(*_pattern_describe(value, INSTANCE), instance))
     return False
 
 
@@ -82,7 +89,7 @@ def _pattern_lower(value: JsonValue, lctx: LoweringContext) -> None:
     lctx.emit(
         when(
             and_(type_is(instance, "string"), not_(regex_test(value, instance))),
-            (fail(("does not match pattern",), {"pattern": Const(value)}),),
+            (fail(*_pattern_describe(value, instance)),),
         )
     )
 
@@ -172,16 +179,28 @@ def _type_matches(name: JsonValue, instance: JsonValue) -> bool:
     return json_type_of(instance) == name
 
 
+def _type_describe(
+    names: Sequence[JsonValue], instance: Expr
+) -> tuple[LowerMessage, LowerParams]:
+    return (
+        (
+            "expected " + ", ".join(str(n) for n in names) + ", got ",
+            helper("typed_preview", instance),
+        ),
+        {
+            "expected": Const(list(names)),
+            "actual": helper("apparent_type", instance),
+            "value": instance,
+        },
+    )
+
+
 def _type_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     names = value if isinstance(value, list) else [value]
     instance = cursor.value
     if any(_type_matches(name, instance) for name in names):
         return True
-    expected = [str(name) for name in names]
-    ctx.error(
-        "expected " + ", ".join(expected),
-        {"expected": list(names), "actual": json_type_of(instance).value},
-    )
+    ctx.error(*realize(*_type_describe(names, INSTANCE), instance))
     return False
 
 
@@ -206,15 +225,7 @@ def _type_lower(value: JsonValue, lctx: LoweringContext) -> None:
     lctx.emit(
         when(
             not_(type_is(lctx.instance, *known)),
-            (
-                fail(
-                    ("expected " + ", ".join(str(n) for n in names),),
-                    {
-                        "expected": Const(list(names)),
-                        "actual": helper("json_type_name", lctx.instance),
-                    },
-                ),
-            ),
+            (fail(*_type_describe(names, lctx.instance)),),
         )
     )
 
@@ -229,41 +240,46 @@ _type_behavior = KeywordBehavior(
 # --- required --------------------------------------------------------------
 
 
+def _required_describe(
+    value: list[JsonValue], instance: Expr
+) -> tuple[LowerMessage, LowerParams]:
+    missing = helper("missing_names", instance, Const(value))
+    return (
+        (
+            "missing required ",
+            helper("labeled_names", missing, Const("property"), Const("properties")),
+        ),
+        {"missing": missing},
+    )
+
+
 def _required_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     instance = cursor.value
     if not is_object(instance) or not isinstance(value, list):
         return True
-    ok = True
     # Python dicts have no prototype chain (D20, §5): `name in instance` is
     # complete here where a JS engine needs `Object.hasOwn`. The suite's
     # `__proto__`/`constructor`/`toString` property names are still exercised
     # in tests, so the absence of the hazard is proven rather than assumed.
-    for name in value:
-        if isinstance(name, str) and name not in instance:
-            ctx.error(f"missing required property '{name}'", {"missingProperty": name})
-            ok = False
-    return ok
+    if all(not isinstance(n, str) or n in instance for n in value):
+        return True
+    # One error naming every missing property: a minimal error list.
+    ctx.error(*realize(*_required_describe(value, INSTANCE), instance))
+    return False
 
 
 def _required_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not isinstance(value, list):
         return
     instance = lctx.instance
-    checks = tuple(
-        when(
-            not_(has_key(instance, name)),
-            (
-                fail(
-                    (f"missing required property '{name}'",),
-                    {"missingProperty": Const(name)},
-                ),
-            ),
+    absent = tuple(not_(has_key(instance, n)) for n in value if isinstance(n, str))
+    if absent:
+        lctx.emit(
+            when(
+                and_(type_is(instance, "object"), or_(*absent)),
+                (fail(*_required_describe(value, instance)),),
+            )
         )
-        for name in value
-        if isinstance(name, str)
-    )
-    if checks:
-        lctx.emit(when(type_is(instance, "object"), checks))
 
 
 _required_behavior = KeywordBehavior(
@@ -580,51 +596,52 @@ _unique_items_behavior = KeywordBehavior(
 # --- dependentRequired (M2) -------------------------------------------------
 
 
+def dependency_describe(
+    spec: dict[str, JsonValue], instance: Expr
+) -> tuple[LowerMessage, LowerParams]:
+    """One error for every missing dependency (`dependentRequired`, and the
+    array members of draft-07's `dependencies`)."""
+    missing = helper("missing_dependencies", instance, Const(spec))
+    return ((helper("dependency_list", missing),), {"missing": missing})
+
+
+def dependency_absent(spec: Mapping[str, JsonValue], instance: Expr) -> Expr | None:
+    """Whether some present property's array member names an absent one;
+    `None` when no array member names anything."""
+    pairs = [
+        and_(has_key(instance, name), not_(has_key(instance, dep)))
+        for name, deps in spec.items()
+        if isinstance(deps, list)
+        for dep in deps
+        if isinstance(dep, str)
+    ]
+    return or_(*pairs) if pairs else None
+
+
 def _dependent_required_evaluate(
     value: JsonValue, cursor: Cursor, ctx: KeywordContext
 ) -> bool:
     instance = cursor.value
     if not is_object(instance) or not is_object(value):
         return True
-    ok = True
-    for name, deps in value.items():
-        if name not in instance or not isinstance(deps, list):
-            continue
-        for dep in deps:
-            if isinstance(dep, str) and dep not in instance:
-                ctx.error(
-                    f"'{name}' requires '{dep}' to be present",
-                    {"property": name, "missingProperty": dep},
-                )
-                ok = False
-    return ok
+    if not missing_dependencies(instance, value):
+        return True
+    ctx.error(*realize(*dependency_describe(value, INSTANCE), instance))
+    return False
 
 
 def _dependent_required_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
-    outer: list[Stmt] = []
-    for name, deps in value.items():
-        if not isinstance(deps, list):
-            continue
-        inner = tuple(
+    absent = dependency_absent(value, instance)
+    if absent is not None:
+        lctx.emit(
             when(
-                not_(has_key(instance, dep)),
-                (
-                    fail(
-                        (f"'{name}' requires '{dep}' to be present",),
-                        {"property": Const(name), "missingProperty": Const(dep)},
-                    ),
-                ),
+                and_(type_is(instance, "object"), absent),
+                (fail(*dependency_describe(value, instance)),),
             )
-            for dep in deps
-            if isinstance(dep, str)
         )
-        if inner:
-            outer.append(when(has_key(instance, name), inner))
-    if outer:
-        lctx.emit(when(type_is(instance, "object"), tuple(outer)))
 
 
 _dependent_required_behavior = KeywordBehavior(

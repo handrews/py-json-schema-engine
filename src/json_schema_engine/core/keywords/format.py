@@ -39,16 +39,22 @@ from json_schema_engine.core.keywords._ids import (
     keyword_id,
 )
 from json_schema_engine.core.lowering import (
+    INSTANCE,
     Const,
+    Expr,
     LoweringContext,
+    LowerMessage,
+    LowerParams,
     and_,
     annotate,
     fail,
     format_test,
+    helper,
     not_,
     type_is,
     when,
 )
+from json_schema_engine.core.messages import preview, realize
 
 
 def _format_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -73,8 +79,11 @@ FORMAT_ANNOTATION_VOCABULARY = {"format": format_annotation}
 FORMAT_ASSERTION_ID = keyword_id(VOCAB_FORMAT_ASSERTION, "format")
 
 
-def _message(name: str) -> str:
-    return f"must match format '{name}'"
+def _describe(name: str, instance: Expr) -> tuple[LowerMessage, LowerParams]:
+    return (
+        (f"must match format {preview(name)}, got ", helper("preview", instance)),
+        {"format": Const(name), "value": instance},
+    )
 
 
 def asserting_format(
@@ -120,7 +129,7 @@ def asserting_format(
         instance = cursor.value
         if not applies_to(definition.types, instance) or definition.test(instance):
             return True
-        ctx.error(_message(value), {"format": value})
+        ctx.error(*realize(*_describe(value, INSTANCE), instance))
         return False
 
     def lower(value: JsonValue, lctx: LoweringContext) -> None:
@@ -137,7 +146,7 @@ def asserting_format(
                     type_is(instance, *definition.types),
                     not_(format_test(value, instance)),
                 ),
-                (fail((_message(value),), {"format": Const(value)}),),
+                (fail(*_describe(value, instance)),),
             )
         )
 

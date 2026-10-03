@@ -31,6 +31,7 @@ from json_schema_engine.core.lowering import (
     helper,
     in_consts,
     not_,
+    or_,
     type_is,
     when,
 )
@@ -411,43 +412,21 @@ def test_unique_items_non_boolean_value_emits_nothing() -> None:
 # --- dependentRequired -------------------------------------------------
 
 
-def test_dependent_required_lowers_to_nested_object_and_key_guards() -> None:
+def test_dependent_required_lowers_to_one_guarded_fail() -> None:
+    # One error naming every missing dependency: the condition is "some
+    # present property lacks one of its dependencies".
     behavior = VALIDATION_VOCABULARY["dependentRequired"]
     stmts = lower(behavior, {"a": ["b", "c"]})
     assert stmts == (
         when(
-            type_is(INSTANCE, "object"),
-            (
-                when(
-                    has_key(INSTANCE, "a"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "b")),
-                            (
-                                fail(
-                                    ("'a' requires 'b' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("b"),
-                                    },
-                                ),
-                            ),
-                        ),
-                        when(
-                            not_(has_key(INSTANCE, "c")),
-                            (
-                                fail(
-                                    ("'a' requires 'c' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("c"),
-                                    },
-                                ),
-                            ),
-                        ),
-                    ),
+            and_(
+                type_is(INSTANCE, "object"),
+                or_(
+                    and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "b"))),
+                    and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "c"))),
                 ),
             ),
+            (ANY_FAIL,),
         ),
     )
 
@@ -458,32 +437,16 @@ def test_dependent_required_non_object_value_emits_nothing() -> None:
 
 def test_dependent_required_skips_malformed_dependency_lists() -> None:
     # `evaluate` skips a name whose dependency list isn't a list, and skips
-    # any individual dependency name that isn't a string; a name left with
-    # no valid dependencies contributes no `when` at all.
+    # any individual dependency name that isn't a string.
     behavior = VALIDATION_VOCABULARY["dependentRequired"]
     stmts = lower(behavior, {"a": "not-a-list", "b": [1, "c"]})
     assert stmts == (
         when(
-            type_is(INSTANCE, "object"),
-            (
-                when(
-                    has_key(INSTANCE, "b"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "c")),
-                            (
-                                fail(
-                                    ("'b' requires 'c' to be present",),
-                                    {
-                                        "property": Const("b"),
-                                        "missingProperty": Const("c"),
-                                    },
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
+            and_(
+                type_is(INSTANCE, "object"),
+                or_(and_(has_key(INSTANCE, "b"), not_(has_key(INSTANCE, "c")))),
             ),
+            (ANY_FAIL,),
         ),
     )
 
@@ -495,6 +458,15 @@ def test_dependent_required_all_malformed_emits_nothing() -> None:
 
 def test_dependent_required_message_matches_evaluate() -> None:
     assert_message_matches_evaluate("dependentRequired", {"a": ["b"]}, {"a": 1})
+    assert_message_matches_evaluate(
+        "dependentRequired", {"a": ["b", "c"], "d": ["e"]}, {"a": 1, "d": 2}
+    )
+
+
+def test_type_required_and_pattern_messages_match_evaluate() -> None:
+    assert_message_matches_evaluate("type", "string", 3)
+    assert_message_matches_evaluate("type", ["string", "null"], [1])
+    assert_message_matches_evaluate("required", ["a", "b", "c"], {"b": 1})
 
 
 # --- minContains / maxContains (inert siblings) -----------------------

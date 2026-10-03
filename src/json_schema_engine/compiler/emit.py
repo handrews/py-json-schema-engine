@@ -67,6 +67,11 @@ H_IRNG = "H_IRNG"  # index_ranges
 H_NAMES = "H_NAMES"  # name_list
 H_DUPG = "H_DUPG"  # duplicate_groups
 H_RNGS = "H_RNGS"  # ranges
+H_MISS = "H_MISS"  # missing_names
+H_MDEP = "H_MDEP"  # missing_dependencies
+H_DLIST = "H_DLIST"  # dependency_list
+H_TPREV = "H_TPREV"  # typed_preview
+H_LNAMES = "H_LNAMES"  # labeled_names
 EVALUATOR_NAMES = (
     STATE,
     PATH,
@@ -96,6 +101,11 @@ EVALUATOR_NAMES = (
     H_NAMES,
     H_DUPG,
     H_RNGS,
+    H_MISS,
+    H_MDEP,
+    H_DLIST,
+    H_TPREV,
+    H_LNAMES,
 )
 
 BUILTINS_USED = frozenset(

@@ -22,10 +22,12 @@ x20 = X[20]
 x21 = X[21]
 x22 = X[22]
 k0 = ['object']
-k1 = ['string']
-k2 = ['string']
+k1 = ['id']
+k2 = ['id']
 k3 = ['string']
 k4 = ['string']
+k5 = ['string']
+k6 = ['string']
 
 def u0(v, d, s, st, pn, cu):
     if d >= H_MAXD:
@@ -63,15 +65,14 @@ def u0(v, d, s, st, pn, cu):
         H_DROP(st, m0)
     m5 = H_EMARK(st)
     if not g0:
-        H_ERR(st, x4, pn, cu, 'expected object', {'expected': k0, 'actual': H_TYPE(v)})
+        H_ERR(st, x4, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k0, 'actual': H_ATYPE(v), 'value': v})
         w1 = False
     if w1:
         H_DROP(st, m5)
     m6 = H_EMARK(st)
-    if g0:
-        if 'id' not in v:
-            H_ERR(st, x5, pn, cu, "missing required property 'id'", {'missingProperty': 'id'})
-            w2 = False
+    if g0 and 'id' not in v:
+        H_ERR(st, x5, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k1), 'property', 'properties')), {'missing': H_MISS(v, k2)})
+        w2 = False
     if w2:
         H_DROP(st, m6)
     m7 = H_EMARK(st)
@@ -90,7 +91,7 @@ def u1(v, d, s, st, pn, cu):
     w7 = True
     m8 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x8, pn, cu, 'expected string', {'expected': k1, 'actual': H_TYPE(v)})
+        H_ERR(st, x8, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k3, 'actual': H_ATYPE(v), 'value': v})
         w5 = False
     if w5:
         H_DROP(st, m8)
@@ -114,7 +115,7 @@ def u2(v, d, s, st, pn, cu):
     w11 = True
     m11 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x12, pn, cu, 'expected string', {'expected': k2, 'actual': H_TYPE(v)})
+        H_ERR(st, x12, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k4, 'actual': H_ATYPE(v), 'value': v})
         w9 = False
     if w9:
         H_DROP(st, m11)
@@ -138,7 +139,7 @@ def u3(v, d, s, st, pn, cu):
     w15 = True
     m14 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x16, pn, cu, 'expected string', {'expected': k3, 'actual': H_TYPE(v)})
+        H_ERR(st, x16, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k5, 'actual': H_ATYPE(v), 'value': v})
         w13 = False
     if w13:
         H_DROP(st, m14)
@@ -162,7 +163,7 @@ def u4(v, d, s, st, pn, cu):
     w19 = True
     m17 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x20, pn, cu, 'expected string', {'expected': k4, 'actual': H_TYPE(v)})
+        H_ERR(st, x20, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k6, 'actual': H_ATYPE(v), 'value': v})
         w17 = False
     if w17:
         H_DROP(st, m17)

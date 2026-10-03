@@ -48,16 +48,18 @@ x46 = X[46]
 x47 = X[47]
 x48 = X[48]
 x49 = X[49]
-k0 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
-k1 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
-k2 = ['object']
-k3 = ['string']
+k0 = ['rank']
+k1 = ['rank']
+k2 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
+k3 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
 k4 = ['object']
-k5 = ['number']
-k6 = ['string']
-k7 = ['array']
+k5 = ['string']
+k6 = ['object']
+k7 = ['number']
 k8 = ['string']
 k9 = ['array']
+k10 = ['string']
+k11 = ['array']
 
 def u0(v, d, s, st, pn, cu):
     if d >= H_MAXD:
@@ -155,15 +157,14 @@ def u3(v, d, s, st, pn, cu, ev):
     if w7:
         H_DROP(st, m11)
     m13 = H_EMARK(st)
-    if g1:
-        if 'rank' not in v:
-            H_ERR(st, x12, pn, cu, "missing required property 'rank'", {'missingProperty': 'rank'})
-            w8 = False
+    if g1 and 'rank' not in v:
+        H_ERR(st, x12, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k0), 'property', 'properties')), {'missing': H_MISS(v, k1)})
+        w8 = False
     if w8:
         H_DROP(st, m13)
     m14 = H_EMARK(st)
     if g1:
-        b1 = H_COVN(ev[m7:], k0)
+        b1 = H_COVN(ev[m7:], k2)
         b2 = []
         for b3 in v:
             if b3 not in b1:
@@ -215,7 +216,7 @@ def u4(v, d, s, st, pn, cu, ev):
         H_DROP(st, m20)
     m22 = H_EMARK(st)
     if g2:
-        b5 = H_COVN(ev[m16:], k1)
+        b5 = H_COVN(ev[m16:], k3)
         b6 = []
         for b7 in v:
             if b7 not in b5:
@@ -262,7 +263,7 @@ def u5(v, d, s, st, pn, cu, ev):
         H_DROP(st, m24)
     m27 = H_EMARK(st)
     if not g3:
-        H_ERR(st, x26, pn, cu, 'expected object', {'expected': k2, 'actual': H_TYPE(v)})
+        H_ERR(st, x26, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k4, 'actual': H_ATYPE(v), 'value': v})
         w16 = False
     if w16:
         H_DROP(st, m27)
@@ -276,7 +277,7 @@ def u6(v, d, s, st, pn, cu):
     w18 = True
     m28 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x28, pn, cu, 'expected string', {'expected': k3, 'actual': H_TYPE(v)})
+        H_ERR(st, x28, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k5, 'actual': H_ATYPE(v), 'value': v})
         w18 = False
     if w18:
         H_DROP(st, m28)
@@ -314,7 +315,7 @@ def u7(v, d, s, st, pn, cu, ev):
         H_DROP(st, m29)
     m32 = H_EMARK(st)
     if not g4:
-        H_ERR(st, x33, pn, cu, 'expected object', {'expected': k4, 'actual': H_TYPE(v)})
+        H_ERR(st, x33, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k6, 'actual': H_ATYPE(v), 'value': v})
         w21 = False
     if w21:
         H_DROP(st, m32)
@@ -328,7 +329,7 @@ def u8(v, d, s, st, pn, cu):
     w23 = True
     m33 = H_EMARK(st)
     if not (type(v) is int or type(v) is float):
-        H_ERR(st, x35, pn, cu, 'expected number', {'expected': k5, 'actual': H_TYPE(v)})
+        H_ERR(st, x35, pn, cu, 'expected number, got ' + str(H_TPREV(v)), {'expected': k7, 'actual': H_ATYPE(v), 'value': v})
         w23 = False
     if w23:
         H_DROP(st, m33)
@@ -342,7 +343,7 @@ def u9(v, d, s, st, pn, cu):
     w25 = True
     m34 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x37, pn, cu, 'expected string', {'expected': k6, 'actual': H_TYPE(v)})
+        H_ERR(st, x37, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k8, 'actual': H_ATYPE(v), 'value': v})
         w25 = False
     if w25:
         H_DROP(st, m34)
@@ -369,7 +370,7 @@ def u10(v, d, s, st, pn, cu):
         H_DROP(st, m35)
     m37 = H_EMARK(st)
     if type(v) is not list:
-        H_ERR(st, x40, pn, cu, 'expected array', {'expected': k7, 'actual': H_TYPE(v)})
+        H_ERR(st, x40, pn, cu, 'expected array, got ' + str(H_TPREV(v)), {'expected': k9, 'actual': H_ATYPE(v), 'value': v})
         w28 = False
     if w28:
         H_DROP(st, m37)
@@ -383,7 +384,7 @@ def u11(v, d, s, st, pn, cu):
     w30 = True
     m38 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x42, pn, cu, 'expected string', {'expected': k8, 'actual': H_TYPE(v)})
+        H_ERR(st, x42, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k10, 'actual': H_ATYPE(v), 'value': v})
         w30 = False
     if w30:
         H_DROP(st, m38)
@@ -410,7 +411,7 @@ def u12(v, d, s, st, pn, cu):
         H_DROP(st, m39)
     m41 = H_EMARK(st)
     if type(v) is not list:
-        H_ERR(st, x45, pn, cu, 'expected array', {'expected': k9, 'actual': H_TYPE(v)})
+        H_ERR(st, x45, pn, cu, 'expected array, got ' + str(H_TPREV(v)), {'expected': k11, 'actual': H_ATYPE(v), 'value': v})
         w33 = False
     if w33:
         H_DROP(st, m41)

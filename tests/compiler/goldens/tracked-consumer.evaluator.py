@@ -119,7 +119,7 @@ def u3(v, d, s, st, pn, cu):
     w7 = True
     m12 = H_EMARK(st)
     if not (type(v) is int or (type(v) is float and v.is_integer())):
-        H_ERR(st, x9, pn, cu, 'expected integer', {'expected': k1, 'actual': H_TYPE(v)})
+        H_ERR(st, x9, pn, cu, 'expected integer, got ' + str(H_TPREV(v)), {'expected': k1, 'actual': H_ATYPE(v), 'value': v})
         w7 = False
     if w7:
         H_DROP(st, m12)
@@ -133,7 +133,7 @@ def u4(v, d, s, st, pn, cu):
     w9 = True
     m13 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x11, pn, cu, 'expected string', {'expected': k2, 'actual': H_TYPE(v)})
+        H_ERR(st, x11, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k2, 'actual': H_ATYPE(v), 'value': v})
         w9 = False
     if w9:
         H_DROP(st, m13)

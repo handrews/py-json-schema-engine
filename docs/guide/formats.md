@@ -226,8 +226,8 @@ wherever it was emitted.
 
 ## Error text
 
-An asserting `format` reports `must match format '<name>'`, with
-`params={"format": name}` under `error_params=True`:
+An asserting `format` reports `must match format "<name>", got <value>`,
+with `params={"format": name, "value": value}` under `error_params=True`:
 
 ```python
 err_engine = create_engine(formats=FORMATS_2020_12, assert_formats=True)
@@ -235,8 +235,8 @@ err_uri = err_engine.register_schema({"format": "ipv4"}, "https://example.com/er
 outcome = err_engine.evaluate(err_uri, "nope", output="list", error_params=True)
 assert outcome.valid is False
 (error_unit,) = outcome.errors
-assert error_unit["error"] == "must match format 'ipv4'"
-assert error_unit["params"] == {"format": "ipv4"}
+assert error_unit["error"] == 'must match format "ipv4", got "nope"'
+assert error_unit["params"] == {"format": "ipv4", "value": "nope"}
 ```
 
 ## Notable rulings the suite pins

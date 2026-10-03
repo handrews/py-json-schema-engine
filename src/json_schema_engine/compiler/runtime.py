@@ -34,11 +34,16 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.messages import (
     apparent_type,
+    dependency_list,
     duplicate_groups,
     index_ranges,
+    labeled_names,
+    missing_dependencies,
+    missing_names,
     name_list,
     preview,
     ranges,
+    typed_preview,
 )
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.regex import RegexCache
@@ -228,6 +233,11 @@ def make_namespace(
         e.H_NAMES: name_list,
         e.H_DUPG: duplicate_groups,
         e.H_RNGS: ranges,
+        e.H_MISS: missing_names,
+        e.H_MDEP: missing_dependencies,
+        e.H_DLIST: dependency_list,
+        e.H_TPREV: typed_preview,
+        e.H_LNAMES: labeled_names,
         e.H_FRAG: runtime.frag,
         e.H_FRAGC: runtime.frag_cov,
         e.H_FRAGE: runtime.frag_eval,

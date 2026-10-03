@@ -142,6 +142,11 @@ type HelperName = Literal[
     "name_list",
     "duplicate_groups",
     "ranges",
+    "missing_names",
+    "missing_dependencies",
+    "dependency_list",
+    "typed_preview",
+    "labeled_names",
 ]
 type CmpOp = Literal["<", "<=", ">", ">=", "==", "!="]
 

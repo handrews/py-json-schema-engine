@@ -97,7 +97,7 @@ COUNT_ERROR: ErrorUnit = {
     "evaluationPath": "/properties/count/type",
     "schemaLocation": "https://golden.example/schema#/properties/count/type",
     "inputLocation": "/count",
-    "error": "expected integer",
+    "error": 'expected integer, got "nope" (string)',
 }
 
 
@@ -171,7 +171,7 @@ def test_list_verbose_level_includes_every_unit_with_markers() -> None:
     assert [u["evaluationPath"] for u in details] == ["", "/properties/name"]
     assert details[0]["droppedAnnotations"] == {"title": "root"}
     assert details[1]["droppedAnnotations"] == {"title": "the name"}
-    assert details[1]["errors"] == {"type": "expected string"}
+    assert details[1]["errors"] == {"type": "expected string, got 3 (integer)"}
     assert result.dropped_annotations is not None
     assert [a["annotation"] for a in result.dropped_annotations] == [
         "the name",
@@ -313,7 +313,7 @@ def test_detailed_condenses_the_polygon_example_node_for_node() -> None:
                         "keywordLocation": "/items/$ref/required",
                         "absoluteKeywordLocation": "https://example.com/polygon#/$defs/point/required",
                         "instanceLocation": "/1",
-                        "error": "missing required property 'y'",
+                        "error": 'missing required property "y"',
                     },
                 ],
             },

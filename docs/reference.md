@@ -873,10 +873,12 @@ refinement.
 `HelperName`: `Literal["json_equal", "is_multiple_of",
 "has_duplicate_items", "first_duplicate_pair", "length_of",
 "code_point_length", "json_type_name", "preview", "apparent_type",
-"index_ranges", "name_list", "duplicate_groups", "ranges"]` — the closed
-helper set `Helper` may name. The last six format error messages and
-params (`json_schema_engine.core.messages`) and never appear in a
-condition.
+"index_ranges", "name_list", "duplicate_groups", "ranges",
+"missing_names", "missing_dependencies", "dependency_list",
+"typed_preview", "labeled_names"]` — the
+closed helper set `Helper` may name. Everything after `json_type_name`
+formats error messages and params (`json_schema_engine.core.messages`)
+and never appears in a condition.
 
 `CmpOp`: `Literal["<", "<=", ">", ">=", "==", "!="]`.
 

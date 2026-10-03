@@ -31,15 +31,21 @@ x29 = X[29]
 x30 = X[30]
 x31 = X[31]
 k0 = ['object']
-k1 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
-k2 = ['created', 'updated', 'deleted']
-k3 = frozenset(('created', 'deleted', 'updated'))
-k4 = ['object']
-k5 = ['object']
-k6 = ['string']
-k7 = ['string']
-k8 = ['string']
-k9 = ['string']
+k1 = ['kind']
+k2 = ['kind']
+k3 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
+k4 = ['created', 'updated', 'deleted']
+k5 = frozenset(('created', 'deleted', 'updated'))
+k6 = ['object']
+k7 = ['id', 'actor']
+k8 = ['id', 'actor']
+k9 = ['object']
+k10 = ['createdAt']
+k11 = ['createdAt']
+k12 = ['string']
+k13 = ['string']
+k14 = ['string']
+k15 = ['string']
 
 def u0(v, d, s, st, pn, cu, ev):
     if d >= H_MAXD:
@@ -83,20 +89,19 @@ def u0(v, d, s, st, pn, cu, ev):
         H_DROP(st, m6)
     m8 = H_EMARK(st)
     if not g0:
-        H_ERR(st, x6, pn, cu, 'expected object', {'expected': k0, 'actual': H_TYPE(v)})
+        H_ERR(st, x6, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k0, 'actual': H_ATYPE(v), 'value': v})
         w2 = False
     if w2:
         H_DROP(st, m8)
     m9 = H_EMARK(st)
-    if g0:
-        if 'kind' not in v:
-            H_ERR(st, x7, pn, cu, "missing required property 'kind'", {'missingProperty': 'kind'})
-            w3 = False
+    if g0 and 'kind' not in v:
+        H_ERR(st, x7, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k1), 'property', 'properties')), {'missing': H_MISS(v, k2)})
+        w3 = False
     if w3:
         H_DROP(st, m9)
     m10 = H_EMARK(st)
     if g0:
-        b1 = H_COVN(ev[m0:], k1)
+        b1 = H_COVN(ev[m0:], k3)
         b2 = []
         for b3 in v:
             if b3 not in b1:
@@ -158,8 +163,8 @@ def u3(v, d, s, st, pn, cu):
     t3 = H_ENTER(st, x14, pn, cu)
     w10 = True
     m18 = H_EMARK(st)
-    if not (type(v) is str and v in k3):
-        H_ERR(st, x15, pn, cu, 'must be one of ["created", "updated", "deleted"], got ' + str(H_PREV(v)), {'allowedValues': k2, 'value': v})
+    if not (type(v) is str and v in k5):
+        H_ERR(st, x15, pn, cu, 'must be one of ["created", "updated", "deleted"], got ' + str(H_PREV(v)), {'allowedValues': k4, 'value': v})
         w10 = False
     if w10:
         H_DROP(st, m18)
@@ -198,18 +203,14 @@ def u4(v, d, s, st, pn, cu, ev):
         H_DROP(st, m19)
     m22 = H_EMARK(st)
     if not g1:
-        H_ERR(st, x18, pn, cu, 'expected object', {'expected': k4, 'actual': H_TYPE(v)})
+        H_ERR(st, x18, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k6, 'actual': H_ATYPE(v), 'value': v})
         w13 = False
     if w13:
         H_DROP(st, m22)
     m23 = H_EMARK(st)
-    if g1:
-        if 'id' not in v:
-            H_ERR(st, x19, pn, cu, "missing required property 'id'", {'missingProperty': 'id'})
-            w14 = False
-        if 'actor' not in v:
-            H_ERR(st, x19, pn, cu, "missing required property 'actor'", {'missingProperty': 'actor'})
-            w14 = False
+    if g1 and ('id' not in v or 'actor' not in v):
+        H_ERR(st, x19, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k7), 'property', 'properties')), {'missing': H_MISS(v, k8)})
+        w14 = False
     if w14:
         H_DROP(st, m23)
     w15 = w12 and w13 and w14
@@ -247,15 +248,14 @@ def u5(v, d, s, st, pn, cu, ev):
         H_DROP(st, m24)
     m27 = H_EMARK(st)
     if not g2:
-        H_ERR(st, x22, pn, cu, 'expected object', {'expected': k5, 'actual': H_TYPE(v)})
+        H_ERR(st, x22, pn, cu, 'expected object, got ' + str(H_TPREV(v)), {'expected': k9, 'actual': H_ATYPE(v), 'value': v})
         w17 = False
     if w17:
         H_DROP(st, m27)
     m28 = H_EMARK(st)
-    if g2:
-        if 'createdAt' not in v:
-            H_ERR(st, x23, pn, cu, "missing required property 'createdAt'", {'missingProperty': 'createdAt'})
-            w18 = False
+    if g2 and 'createdAt' not in v:
+        H_ERR(st, x23, pn, cu, 'missing required ' + str(H_LNAMES(H_MISS(v, k10), 'property', 'properties')), {'missing': H_MISS(v, k11)})
+        w18 = False
     if w18:
         H_DROP(st, m28)
     w19 = w16 and w17 and w18
@@ -268,7 +268,7 @@ def u6(v, d, s, st, pn, cu):
     w20 = True
     m29 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x25, pn, cu, 'expected string', {'expected': k6, 'actual': H_TYPE(v)})
+        H_ERR(st, x25, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k12, 'actual': H_ATYPE(v), 'value': v})
         w20 = False
     if w20:
         H_DROP(st, m29)
@@ -282,7 +282,7 @@ def u7(v, d, s, st, pn, cu):
     w22 = True
     m30 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x27, pn, cu, 'expected string', {'expected': k7, 'actual': H_TYPE(v)})
+        H_ERR(st, x27, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k13, 'actual': H_ATYPE(v), 'value': v})
         w22 = False
     if w22:
         H_DROP(st, m30)
@@ -296,7 +296,7 @@ def u8(v, d, s, st, pn, cu):
     w24 = True
     m31 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x29, pn, cu, 'expected string', {'expected': k8, 'actual': H_TYPE(v)})
+        H_ERR(st, x29, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k14, 'actual': H_ATYPE(v), 'value': v})
         w24 = False
     if w24:
         H_DROP(st, m31)
@@ -310,7 +310,7 @@ def u9(v, d, s, st, pn, cu):
     w26 = True
     m32 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x31, pn, cu, 'expected string', {'expected': k9, 'actual': H_TYPE(v)})
+        H_ERR(st, x31, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k15, 'actual': H_ATYPE(v), 'value': v})
         w26 = False
     if w26:
         H_DROP(st, m32)

@@ -125,6 +125,14 @@ def apparent_type(value: JsonValue) -> str:
     return json_type_of(value).value
 
 
+def typed_preview(value: JsonValue) -> str:
+    """A scalar with its apparent type, `3 (integer)`; a container by its
+    type alone, `array`, since its value can be arbitrarily large."""
+    if isinstance(value, list) or is_object(value):
+        return apparent_type(value)
+    return f"{preview(value)} ({apparent_type(value)})"
+
+
 def _sorted_unique(indexes: Sequence[int]) -> list[int]:
     return sorted(set(indexes))
 
@@ -157,6 +165,12 @@ def name_list(names: Sequence[str]) -> str:
     return f"{shown} and {rest} more" if rest > 0 else shown
 
 
+def labeled_names(names: Sequence[str], singular: str, plural: str) -> str:
+    """`property "b"` or `properties "b", "c"`: a `name_list` with its
+    noun agreeing in number."""
+    return f"{singular if len(names) == 1 else plural} {name_list(names)}"
+
+
 def duplicate_groups(items: Sequence[JsonValue]) -> list[list[int]]:
     """Every group of two or more equal items, as indexes, ordered by each
     group's first index. One pass bucketed by `canonical_key`; a bucket is
@@ -172,6 +186,37 @@ def duplicate_groups(items: Sequence[JsonValue]) -> list[list[int]]:
             groups.append([index])
     found = [g for groups in buckets.values() for g in groups if len(g) > 1]
     return sorted(found, key=lambda g: g[0])
+
+
+def missing_names(instance: JsonValue, names: Sequence[JsonValue]) -> list[str]:
+    """The string `names` an object instance lacks, in keyword order."""
+    if not is_object(instance):
+        return []
+    return [n for n in names if isinstance(n, str) and n not in instance]
+
+
+def missing_dependencies(
+    instance: JsonValue, spec: Mapping[str, JsonValue]
+) -> dict[str, list[str]]:
+    """For each property present whose array member in `spec` names
+    properties the instance lacks, those missing names. Non-array members
+    (`dependencies`' schemas) are not this helper's concern."""
+    if not is_object(instance):
+        return {}
+    found: dict[str, list[str]] = {}
+    for name, deps in spec.items():
+        if name in instance and isinstance(deps, list):
+            missing = missing_names(instance, deps)
+            if missing:
+                found[name] = missing
+    return found
+
+
+def dependency_list(missing: Mapping[str, Sequence[str]]) -> str:
+    """`"a" requires "b", "c"; "d" requires "e"`."""
+    return "; ".join(
+        f"{preview(name)} requires {name_list(deps)}" for name, deps in missing.items()
+    )
 
 
 # Every helper a lowered expression may call, by its IR name. The compiled
@@ -190,6 +235,11 @@ HELPERS: Final[Mapping[HelperName, Callable[..., JsonValue]]] = {
     "name_list": name_list,
     "duplicate_groups": duplicate_groups,  # type: ignore[dict-item]
     "ranges": ranges,  # type: ignore[dict-item]
+    "missing_names": missing_names,  # type: ignore[dict-item]
+    "missing_dependencies": missing_dependencies,  # type: ignore[dict-item]
+    "dependency_list": dependency_list,
+    "typed_preview": typed_preview,
+    "labeled_names": labeled_names,  # type: ignore[dict-item]
 }
 
 

@@ -35,7 +35,7 @@ def test_round_trip_through_an_embedded_id_resource() -> None:
     result = engine.evaluate(uri, {}, output="list", positions=True)
     assert result.valid is False
     assert result.errors is not None
-    unit = next(e for e in result.errors if "'x'" in e["error"])
+    unit = next(e for e in result.errors if '"x"' in e["error"])
     assert unit["schemaLocation"] == "https://pos.example/leaf#/required"
 
     assert "source" in unit

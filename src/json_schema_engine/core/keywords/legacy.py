@@ -14,8 +14,10 @@
 # from this one keyword exactly the way 2020-12's `unevaluatedItems` folds
 # coverage from two, so no consumer-side special case is needed.
 #
-# Dependency direction: imports `cursor`, `dialect`, `json_model`, and
-# `_ids`. Never the evaluator or the registry.
+# Dependency direction: imports `cursor`, `dialect`, `json_model`, `_ids`,
+# `messages`, and `validation` (the dependency builder `dependencies`'
+# array members share with `dependentRequired`). Never the evaluator or
+# the registry.
 
 from json_schema_engine.core.cursor import Cursor, child_cursor
 from json_schema_engine.core.dialect import (
@@ -33,10 +35,14 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_APPLICATOR_2019,
     keyword_id,
 )
+from json_schema_engine.core.keywords.validation import (
+    dependency_absent,
+    dependency_describe,
+)
 from json_schema_engine.core.lowering import (
     HERE,
+    INSTANCE,
     Binding,
-    Const,
     ForEachIndex,
     LoweringContext,
     Stmt,
@@ -48,11 +54,11 @@ from json_schema_engine.core.lowering import (
     fail,
     has_key,
     helper,
-    not_,
     produce,
     type_is,
     when,
 )
+from json_schema_engine.core.messages import missing_dependencies, realize
 
 ITEMS_LEGACY_ID = keyword_id(VOCAB_APPLICATOR_2019, "items")
 ADDITIONAL_ITEMS_ID = keyword_id(VOCAB_APPLICATOR_2019, "additionalItems")
@@ -303,34 +309,19 @@ def _dependencies_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
-    checks: list[Stmt] = []
-    for name, dep in value.items():
-        if isinstance(dep, list):
-            # Array member: the `dependentRequired` shape.
-            required_checks = tuple(
-                when(
-                    not_(has_key(instance, required)),
-                    (
-                        fail(
-                            (f"'{name}' requires '{required}' to be present",),
-                            {
-                                "property": Const(name),
-                                "missingProperty": Const(required),
-                            },
-                        ),
-                    ),
-                )
-                for required in dep
-                if isinstance(required, str)
-            )
-            if required_checks:
-                checks.append(when(has_key(instance, name), required_checks))
-        elif _is_schema_value(dep):
-            # Schema member: an in-place application guarded by presence,
-            # same as `dependentSchemas`.
-            checks.append(when(has_key(instance, name), (apply((name,), HERE),)))
-        # Any other member shape is unreachable per the metaschema; ignored
-        # defensively, mirroring `evaluate`.
+    checks: list[Stmt] = [
+        # Schema member: an in-place application guarded by presence, same
+        # as `dependentSchemas`. Any other member shape is unreachable per
+        # the metaschema; ignored defensively, mirroring `evaluate`.
+        when(has_key(instance, name), (apply((name,), HERE),))
+        for name, dep in value.items()
+        if not isinstance(dep, list) and _is_schema_value(dep)
+    ]
+    # Array members: one error naming every missing dependency, after the
+    # schema members' own errors, as in `evaluate`.
+    absent = dependency_absent(value, instance)
+    if absent is not None:
+        checks.append(when(absent, (fail(*dependency_describe(value, instance)),)))
     if checks:
         lctx.emit(when(type_is(instance, "object"), tuple(checks)))
 
@@ -343,20 +334,18 @@ def _dependencies_evaluate(
         return True
     ok = True
     for name, dep in value.items():
-        if name not in instance:
-            continue
-        if isinstance(dep, list):
-            for required in dep:
-                if isinstance(required, str) and required not in instance:
-                    ctx.error(
-                        f"'{name}' requires '{required}' to be present",
-                        {"property": name, "missingProperty": required},
-                    )
-                    ok = False
-        elif _is_schema_value(dep) and not ctx.apply(("dependencies", name), cursor):
+        if (
+            name in instance
+            and not isinstance(dep, list)
+            and _is_schema_value(dep)
+            and not ctx.apply(("dependencies", name), cursor)
+        ):
             ok = False
         # Any other member shape is unreachable per the metaschema
         # (`anyOf`: schema or string array); ignored defensively.
+    if missing_dependencies(instance, value):
+        ctx.error(*realize(*dependency_describe(value, INSTANCE), instance))
+        ok = False
     return ok
 
 

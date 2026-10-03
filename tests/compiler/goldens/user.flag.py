@@ -61,26 +61,16 @@ def u0(v, d, s):
                         return False
             if not g1:
                 return False
-            if g1:
-                if 'street' not in t6:
-                    return False
-                if 'city' not in t6:
-                    return False
+            if g1 and ('street' not in t6 or 'city' not in t6):
+                return False
     if g0:
         for b1 in v:
             if b1 not in k1:
                 return False
     if not g0:
         return False
-    if g0:
-        if 'id' not in v:
-            return False
-        if 'name' not in v:
-            return False
-        if 'email' not in v:
-            return False
-        if 'tags' not in v:
-            return False
+    if g0 and ('id' not in v or 'name' not in v or 'email' not in v or ('tags' not in v)):
+        return False
     return True
 
 def validate(v):

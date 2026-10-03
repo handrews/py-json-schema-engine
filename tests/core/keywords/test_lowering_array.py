@@ -16,6 +16,7 @@ from json_schema_engine.core.keywords.legacy import (
     DEPENDENCIES,
     ITEMS_LEGACY,
 )
+from json_schema_engine.core.keywords.validation import dependency_describe
 from json_schema_engine.core.lowering import (
     HERE,
     INSTANCE,
@@ -24,6 +25,7 @@ from json_schema_engine.core.lowering import (
     CountRange,
     ForEachIndex,
     Stmt,
+    and_,
     apply,
     apply_expr,
     child,
@@ -34,6 +36,7 @@ from json_schema_engine.core.lowering import (
     has_key,
     helper,
     not_,
+    or_,
     produce,
     type_is,
     when,
@@ -258,33 +261,11 @@ def test_dependencies_array_member_lowers_to_the_dependent_required_shape() -> N
             type_is(INSTANCE, "object"),
             (
                 when(
-                    has_key(INSTANCE, "a"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "b")),
-                            (
-                                fail(
-                                    ("'a' requires 'b' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("b"),
-                                    },
-                                ),
-                            ),
-                        ),
-                        when(
-                            not_(has_key(INSTANCE, "c")),
-                            (
-                                fail(
-                                    ("'a' requires 'c' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("c"),
-                                    },
-                                ),
-                            ),
-                        ),
+                    or_(
+                        and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "b"))),
+                        and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "c"))),
                     ),
+                    (fail(*dependency_describe({"a": ["b", "c"]}, INSTANCE)),),
                 ),
             ),
         ),
@@ -302,29 +283,18 @@ def test_dependencies_schema_member_lowers_to_a_guarded_in_place_apply() -> None
 
 
 def test_dependencies_mixed_array_and_schema_members() -> None:
+    # Schema members apply first; the array members' one combined error
+    # comes after their errors, as in `evaluate`.
     stmts = lower(DEPENDENCIES, {"a": ["b"], "c": {}})
     assert stmts == (
         when(
             type_is(INSTANCE, "object"),
             (
-                when(
-                    has_key(INSTANCE, "a"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "b")),
-                            (
-                                fail(
-                                    ("'a' requires 'b' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("b"),
-                                    },
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
                 when(has_key(INSTANCE, "c"), (apply(("c",), HERE),)),
+                when(
+                    or_(and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "b")))),
+                    (fail(*dependency_describe({"a": ["b"], "c": {}}, INSTANCE)),),
+                ),
             ),
         ),
     )
