@@ -236,8 +236,8 @@ def test_enum_no_match_reports_error() -> None:
     valid, state = run({"enum": [1, 2]}, 3)
     assert not valid
     error = state.errors[0]
-    assert error.message == "not one of the allowed values"
-    assert error.params == {"allowedValues": [1, 2]}
+    assert error.message == "must be one of [1, 2], got 3"
+    assert error.params == {"allowedValues": [1, 2], "value": 3}
     assert error.keyword_name == "enum"
 
 
@@ -263,8 +263,8 @@ def test_const_mismatch_reports_error() -> None:
     valid, state = run({"const": 5}, 6)
     assert not valid
     error = state.errors[0]
-    assert error.message == "does not equal the required constant"
-    assert error.params == {"allowedValue": 5}
+    assert error.message == "must equal 5, got 6"
+    assert error.params == {"allowedValue": 5, "value": 6}
     assert error.keyword_name == "const"
 
 
@@ -295,8 +295,8 @@ def test_multiple_of_error_params() -> None:
     valid, state = run({"multipleOf": 2}, 5)
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be a multiple of 2"
-    assert error.params == {"multipleOf": 2}
+    assert error.message == "must be a multiple of 2, got 5"
+    assert error.params == {"multipleOf": 2, "value": 5}
     assert error.keyword_name == "multipleOf"
 
 
@@ -354,10 +354,10 @@ def test_numeric_bounds_1_0_vs_1_compare_exactly() -> None:
 @pytest.mark.parametrize(
     ("keyword", "message"),
     [
-        ("maximum", "must be <= 5"),
-        ("exclusiveMaximum", "must be < 5"),
-        ("minimum", "must be >= 5"),
-        ("exclusiveMinimum", "must be > 5"),
+        ("maximum", "must be <= 5, got 10"),
+        ("exclusiveMaximum", "must be < 5, got 10"),
+        ("minimum", "must be >= 5, got 0"),
+        ("exclusiveMinimum", "must be > 5, got 0"),
     ],
 )
 def test_numeric_bounds_error_message_and_params(keyword: str, message: str) -> None:
@@ -366,7 +366,7 @@ def test_numeric_bounds_error_message_and_params(keyword: str, message: str) -> 
     assert not valid
     error = state.errors[0]
     assert error.message == message
-    assert error.params == {"limit": 5}
+    assert error.params == {"limit": 5, "value": instance}
     assert error.keyword_name == keyword
 
 
@@ -397,15 +397,43 @@ def test_length_bounds_error_message_and_params() -> None:
     valid, state = run({"maxLength": 3}, "abcd")
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be at most 3 characters"
-    assert error.params == {"limit": 3}
+    assert error.message == 'must be at most 3 characters, got "abcd" (4)'
+    assert error.params == {"limit": 3, "value": "abcd", "length": 4}
     assert error.keyword_name == "maxLength"
 
     valid, state = run({"minLength": 3}, "ab")
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be at least 3 characters"
-    assert error.params == {"limit": 3}
+    assert error.message == 'must be at least 3 characters, got "ab" (2)'
+    assert error.params == {"limit": 3, "value": "ab", "length": 2}
+
+
+def test_a_long_instance_is_shown_truncated_but_carried_whole() -> None:
+    long = "x" * 200
+    valid, state = run({"maxLength": 3}, long)
+    assert not valid
+    error = state.errors[0]
+    assert error.message.startswith('must be at most 3 characters, got "xxx')
+    assert "…" in error.message
+    assert error.message.endswith("… (200)")
+    assert error.params is not None and error.params["value"] == long
+
+
+def test_a_length_is_counted_in_code_points() -> None:
+    valid, state = run({"minLength": 3}, "\U0001f600")
+    assert not valid
+    assert state.errors[0].message.endswith(" (1)")
+
+
+def test_enum_and_const_show_values_as_json() -> None:
+    valid, state = run({"enum": [True, None, {"a": "b"}]}, False)
+    assert not valid
+    assert state.errors[0].message == (
+        'must be one of [true, null, {"a": "b"}], got false'
+    )
+    valid, state = run({"const": {"a": [1, 2]}}, [1])
+    assert not valid
+    assert state.errors[0].message == 'must equal {"a": [1, 2]}, got [1]'
 
 
 # --- maxItems / minItems (M2) -----------------------------------------------
@@ -428,8 +456,8 @@ def test_item_count_bounds_error_message_and_params() -> None:
     valid, state = run({"maxItems": 2}, [1, 2, 3])
     assert not valid
     error = state.errors[0]
-    assert error.message == "must have at most 2 items"
-    assert error.params == {"limit": 2}
+    assert error.message == "must have at most 2 items, got 3"
+    assert error.params == {"limit": 2, "count": 3}
     assert error.keyword_name == "maxItems"
 
 
@@ -453,8 +481,8 @@ def test_property_count_bounds_error_message_and_params() -> None:
     valid, state = run({"maxProperties": 2}, {"a": 1, "b": 2, "c": 3})
     assert not valid
     error = state.errors[0]
-    assert error.message == "must have at most 2 properties"
-    assert error.params == {"limit": 2}
+    assert error.message == "must have at most 2 properties, got 3"
+    assert error.params == {"limit": 2, "count": 3}
     assert error.keyword_name == "maxProperties"
 
 

@@ -167,7 +167,7 @@ def u6(v, d, s, st, pn, cu):
     w14 = True
     m15 = H_EMARK(st)
     if not (type(v) is str and v == 'numbers'):
-        H_ERR(st, x16, pn, cu, 'does not equal the required constant', {'allowedValue': 'numbers'})
+        H_ERR(st, x16, pn, cu, 'must equal "numbers", got ' + str(H_PREV(v)), {'allowedValue': 'numbers', 'value': v})
         w14 = False
     if w14:
         H_DROP(st, m15)

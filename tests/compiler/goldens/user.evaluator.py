@@ -144,7 +144,7 @@ def u1(v, d, s, st, pn, cu):
         H_DROP(st, m11)
     m12 = H_EMARK(st)
     if (type(v) is int or type(v) is float) and (not v >= 1):
-        H_ERR(st, x10, pn, cu, 'must be >= 1', {'limit': 1})
+        H_ERR(st, x10, pn, cu, 'must be >= 1, got ' + str(H_PREV(v)), {'limit': 1, 'value': v})
         w6 = False
     if w6:
         H_DROP(st, m12)
@@ -166,13 +166,13 @@ def u2(v, d, s, st, pn, cu):
         H_DROP(st, m13)
     m14 = H_EMARK(st)
     if type(v) is str and (not len(v) <= 100):
-        H_ERR(st, x13, pn, cu, 'must be at most 100 characters', {'limit': 100})
+        H_ERR(st, x13, pn, cu, 'must be at most 100 characters, got ' + str(H_PREV(v)) + ' (' + str(len(v)) + ')', {'limit': 100, 'value': v, 'length': len(v)})
         w9 = False
     if w9:
         H_DROP(st, m14)
     m15 = H_EMARK(st)
     if type(v) is str and (not len(v) >= 1):
-        H_ERR(st, x14, pn, cu, 'must be at least 1 characters', {'limit': 1})
+        H_ERR(st, x14, pn, cu, 'must be at least 1 characters, got ' + str(H_PREV(v)) + ' (' + str(len(v)) + ')', {'limit': 1, 'value': v, 'length': len(v)})
         w10 = False
     if w10:
         H_DROP(st, m15)
@@ -207,7 +207,7 @@ def u4(v, d, s, st, pn, cu):
     w15 = True
     m18 = H_EMARK(st)
     if not (type(v) is str and v in k6):
-        H_ERR(st, x19, pn, cu, 'not one of the allowed values', {'allowedValues': k5})
+        H_ERR(st, x19, pn, cu, 'must be one of ["admin", "user", "guest"], got ' + str(H_PREV(v)), {'allowedValues': k5, 'value': v})
         w15 = False
     if w15:
         H_DROP(st, m18)
@@ -241,7 +241,7 @@ def u5(v, d, s, st, pn, cu):
         H_DROP(st, m21)
     m22 = H_EMARK(st)
     if type(v) is list and (not len(v) <= 10):
-        H_ERR(st, x23, pn, cu, 'must have at most 10 items', {'limit': 10})
+        H_ERR(st, x23, pn, cu, 'must have at most 10 items, got ' + str(len(v)), {'limit': 10, 'count': len(v)})
         w19 = False
     if w19:
         H_DROP(st, m22)

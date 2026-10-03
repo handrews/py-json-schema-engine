@@ -159,7 +159,7 @@ def u3(v, d, s, st, pn, cu):
     w10 = True
     m18 = H_EMARK(st)
     if not (type(v) is str and v in k3):
-        H_ERR(st, x15, pn, cu, 'not one of the allowed values', {'allowedValues': k2})
+        H_ERR(st, x15, pn, cu, 'must be one of ["created", "updated", "deleted"], got ' + str(H_PREV(v)), {'allowedValues': k2, 'value': v})
         w10 = False
     if w10:
         H_DROP(st, m18)

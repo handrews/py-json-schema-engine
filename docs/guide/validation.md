@@ -75,8 +75,8 @@ assert unit["evaluationPath"] == "/properties/name/$ref/minLength"
 assert unit["schemaLocation"] == "https://example.com/named#/$defs/name/minLength"
 assert unit["inputLocation"] == "/name"
 assert unit["keyword"] == "minLength"
-assert unit["params"] == {"limit": 1}
-assert unit["error"] == "must be at least 1 characters"
+assert unit["params"] == {"limit": 1, "value": "", "length": 0}
+assert unit["error"] == 'must be at least 1 characters, got "" (0)'
 ```
 
 `evaluationPath` names every keyword on the way to the failure, including

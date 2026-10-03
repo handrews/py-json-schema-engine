@@ -303,7 +303,7 @@ params_uri = engine.register_schema(
 result = engine.evaluate(params_uri, {"a": 1}, output="list", error_params=True)
 by_keyword = {u["keyword"]: u["params"] for u in result.errors}
 assert by_keyword["required"] == {"missingProperty": "b"}
-assert by_keyword["enum"] == {"allowedValues": [{"a": 1, "b": 2}]}
+assert by_keyword["enum"] == {"allowedValues": [{"a": 1, "b": 2}], "value": {"a": 1}}
 ```
 
 ## Trace

@@ -5,12 +5,12 @@
 # are covered by the module's own docstring as the M1/M2 exemplars and are
 # not repeated here.
 #
-# Every keyword with a keyword-value-only message gets one test asserting
-# the lowered `Fail`'s message text is byte-identical to the message
-# `evaluate` reports for the same failing case (via `run_evaluation`), so
-# the two can never quietly drift apart.
+# Every keyword gets one test asserting the lowered `Fail`, realized against
+# a failing instance, reports exactly the message and params `evaluate`
+# reports for it (via `run_evaluation`), so the two can never quietly drift
+# apart. The shape tests compare conditions and treat the `Fail` as opaque.
 
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from json_schema_engine.core.dialect import DialectRegistry
 from json_schema_engine.core.evaluator import EvalState, run_evaluation
@@ -34,6 +34,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
+from json_schema_engine.core.messages import realize
 from json_schema_engine.core.registry import SchemaRegistry
 
 from .lowering_helpers import lower
@@ -69,16 +70,33 @@ def _single_fail(stmts: tuple[Stmt, ...]) -> Fail:
     return stmt
 
 
+class _AnyFail:
+    """Equal to any `Fail`: the shape tests pin a lowering's conditions, and
+    its message and params come from the keyword's one builder (P18), which
+    `assert_message_matches_evaluate` and `test_validation.py` cover."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Fail)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+# Typed as a `Fail` so it can stand in one inside `when(...)`.
+ANY_FAIL = cast(Fail, _AnyFail())
+
+
 def assert_message_matches_evaluate(
     keyword: str, value: JsonValue, instance: JsonValue
 ) -> None:
-    """The lowered `Fail`'s message equals `evaluate`'s message for the same
-    (keyword value, failing instance) pair."""
+    """The lowered `Fail`, realized against the instance, reports exactly
+    `evaluate`'s message and params for the same (keyword value, failing
+    instance) pair."""
     behavior = VALIDATION_VOCABULARY[keyword]
     node = _single_fail(lower(behavior, value))
     valid, state = run({keyword: value}, instance)
     assert not valid
-    assert node.message == (state.errors[0].message,)
+    text, params = realize(node.message, node.params, instance)
+    assert (text, params) == (state.errors[0].message, state.errors[0].params)
 
 
 # --- enum --------------------------------------------------------------
@@ -90,12 +108,7 @@ def test_enum_lowers_to_an_in_consts_membership_test() -> None:
     assert stmts == (
         when(
             not_(in_consts(INSTANCE, (1, "a", None))),
-            (
-                fail(
-                    ("not one of the allowed values",),
-                    {"allowedValues": Const([1, "a", None])},
-                ),
-            ),
+            (ANY_FAIL,),
         ),
     )
 
@@ -103,20 +116,13 @@ def test_enum_lowers_to_an_in_consts_membership_test() -> None:
 def test_enum_non_list_value_always_fails_unconditionally() -> None:
     behavior = VALIDATION_VOCABULARY["enum"]
     stmts = lower(behavior, "not-a-list")
-    assert stmts == (
-        fail(
-            ("not one of the allowed values",),
-            {"allowedValues": Const("not-a-list")},
-        ),
-    )
+    assert stmts == (ANY_FAIL,)
 
 
 def test_enum_empty_list_also_always_fails_unconditionally() -> None:
     behavior = VALIDATION_VOCABULARY["enum"]
     stmts = lower(behavior, [])
-    assert stmts == (
-        fail(("not one of the allowed values",), {"allowedValues": Const([])}),
-    )
+    assert stmts == (ANY_FAIL,)
 
 
 def test_enum_message_matches_evaluate() -> None:
@@ -132,12 +138,7 @@ def test_const_lowers_to_a_json_equal_test() -> None:
     assert stmts == (
         when(
             not_(helper("json_equal", INSTANCE, Const({"a": 1}))),
-            (
-                fail(
-                    ("does not equal the required constant",),
-                    {"allowedValue": Const({"a": 1})},
-                ),
-            ),
+            (ANY_FAIL,),
         ),
     )
 
@@ -158,7 +159,7 @@ def test_multiple_of_lowers_to_a_numeric_guard_and_helper_call() -> None:
                 type_is(INSTANCE, "number"),
                 not_(helper("is_multiple_of", INSTANCE, Const(2))),
             ),
-            (fail(("must be a multiple of 2",), {"multipleOf": Const(2)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -181,7 +182,7 @@ def test_maximum_lowers_to_a_numeric_guard_and_cmp() -> None:
     assert stmts == (
         when(
             and_(type_is(INSTANCE, "number"), not_(cmp("<=", INSTANCE, Const(10)))),
-            (fail(("must be <= 10",), {"limit": Const(10)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -192,7 +193,7 @@ def test_exclusive_maximum_uses_strict_less_than() -> None:
     assert stmts == (
         when(
             and_(type_is(INSTANCE, "number"), not_(cmp("<", INSTANCE, Const(10)))),
-            (fail(("must be < 10",), {"limit": Const(10)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -203,7 +204,7 @@ def test_minimum_uses_greater_or_equal() -> None:
     assert stmts == (
         when(
             and_(type_is(INSTANCE, "number"), not_(cmp(">=", INSTANCE, Const(1)))),
-            (fail(("must be >= 1",), {"limit": Const(1)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -214,7 +215,7 @@ def test_exclusive_minimum_uses_strict_greater_than() -> None:
     assert stmts == (
         when(
             and_(type_is(INSTANCE, "number"), not_(cmp(">", INSTANCE, Const(1)))),
-            (fail(("must be > 1",), {"limit": Const(1)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -243,7 +244,7 @@ def test_max_length_lowers_to_a_string_guard_and_code_point_length_cmp() -> None
                 type_is(INSTANCE, "string"),
                 not_(cmp("<=", helper("code_point_length", INSTANCE), Const(3))),
             ),
-            (fail(("must be at most 3 characters",), {"limit": Const(3)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -257,7 +258,7 @@ def test_min_length_uses_greater_or_equal() -> None:
                 type_is(INSTANCE, "string"),
                 not_(cmp(">=", helper("code_point_length", INSTANCE), Const(2))),
             ),
-            (fail(("must be at least 2 characters",), {"limit": Const(2)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -265,7 +266,7 @@ def test_min_length_uses_greater_or_equal() -> None:
 def test_max_length_non_integer_float_value_is_truncated_like_evaluate() -> None:
     # `evaluate` casts the keyword value with `int(value)`, so `2.0` behaves
     # exactly like `2` — but the reported `limit` param still carries the
-    # raw `2.0` (mirroring `_limit_params`, which never truncates).
+    # raw `2.0`, untruncated.
     behavior = VALIDATION_VOCABULARY["maxLength"]
     stmts = lower(behavior, 2.0)
     assert stmts == (
@@ -274,7 +275,7 @@ def test_max_length_non_integer_float_value_is_truncated_like_evaluate() -> None
                 type_is(INSTANCE, "string"),
                 not_(cmp("<=", helper("code_point_length", INSTANCE), Const(2))),
             ),
-            (fail(("must be at most 2.0 characters",), {"limit": Const(2.0)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -302,7 +303,7 @@ def test_max_items_lowers_to_an_array_guard_and_length_of_cmp() -> None:
                 type_is(INSTANCE, "array"),
                 not_(cmp("<=", helper("length_of", INSTANCE), Const(2))),
             ),
-            (fail(("must have at most 2 items",), {"limit": Const(2)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -316,7 +317,7 @@ def test_min_items_uses_greater_or_equal() -> None:
                 type_is(INSTANCE, "array"),
                 not_(cmp(">=", helper("length_of", INSTANCE), Const(1))),
             ),
-            (fail(("must have at least 1 items",), {"limit": Const(1)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -342,7 +343,7 @@ def test_max_properties_lowers_to_an_object_guard_and_length_of_cmp() -> None:
                 type_is(INSTANCE, "object"),
                 not_(cmp("<=", helper("length_of", INSTANCE), Const(2))),
             ),
-            (fail(("must have at most 2 properties",), {"limit": Const(2)}),),
+            (ANY_FAIL,),
         ),
     )
 
@@ -356,7 +357,7 @@ def test_min_properties_uses_greater_or_equal() -> None:
                 type_is(INSTANCE, "object"),
                 not_(cmp(">=", helper("length_of", INSTANCE), Const(1))),
             ),
-            (fail(("must have at least 1 properties",), {"limit": Const(1)}),),
+            (ANY_FAIL,),
         ),
     )
 

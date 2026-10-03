@@ -17,7 +17,6 @@ from typing import TypeGuard
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.dialect import (
     AnalyzeContext,
-    ErrorParams,
     KeywordBehavior,
     KeywordContext,
     StaticFacts,
@@ -34,6 +33,7 @@ from json_schema_engine.core.json_model import (
 )
 from json_schema_engine.core.keywords._ids import VOCAB_VALIDATION, keyword_id
 from json_schema_engine.core.lowering import (
+    INSTANCE,
     CmpOp,
     Const,
     Expr,
@@ -56,6 +56,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
+from json_schema_engine.core.messages import preview, realize
 
 # --- pattern (EXEMPLAR: assertion class) ----------------------------------
 
@@ -97,36 +98,42 @@ pattern = KeywordBehavior(
 # --- assertion factory (M2) --------------------------------------------
 
 
+type Describe = Callable[[JsonValue, Expr], tuple[LowerMessage, LowerParams | None]]
+
+
 def assertion(
     name: str,
     test: Callable[[JsonValue, JsonValue], bool],
-    message: Callable[[JsonValue], str],
-    params: Callable[[JsonValue], ErrorParams] | None = None,
+    describe: Describe,
     lower: LowerFn | None = None,
     lower_test: Callable[[JsonValue, Expr], Expr | None] | None = None,
 ) -> KeywordBehavior:
-    """Build a one-error assertion: `test(value, instance)` or `ctx.error()`.
+    """Build a one-error assertion: `test(value, instance)` or report.
 
     Covers every validation keyword whose entire behavior is "check a
     predicate against the instance, and if it fails, report exactly one
-    error naming the keyword's own value" — everything here except
-    `enum`/`uniqueItems` (whose lowering isn't one guard-then-compare) and
-    `dependentRequired` (which can report more than one error).
+    error" — everything here except `enum`/`uniqueItems` (whose lowering
+    isn't one guard-then-compare) and `dependentRequired` (which names
+    several dependencies).
+
+    `describe(value, instance)` is the keyword's one message builder
+    (P18): IR for the message and params, given the keyword's value and
+    the instance expression. `lower` emits it; `evaluate` realizes it
+    against the concrete instance, so the two tiers report the same text.
 
     `lower_test(value, instance)` names the "guard, then compare" family:
     given the keyword's (schema-fixed) value and the instance expression,
     it returns the failing condition, or `None` when the keyword value
     itself makes the assertion always vacuous (mirroring `test`'s own
     vacuous-truth guard on `value`, decided once at lowering time rather
-    than per instance). `message`/`params` are shared verbatim with
-    `evaluate` so the two never drift. Pass `lower` directly instead for a
-    keyword whose lowering isn't of this shape.
+    than per instance). Pass `lower` directly instead for a keyword whose
+    lowering isn't of this shape.
     """
 
     def _evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         if test(value, cursor.value):
             return True
-        ctx.error(message(value), params(value) if params is not None else None)
+        ctx.error(*realize(*describe(value, INSTANCE), cursor.value))
         return False
 
     def _lower(value: JsonValue, lctx: LoweringContext) -> None:
@@ -134,11 +141,7 @@ def assertion(
         cond = lower_test(value, lctx.instance)
         if cond is None:
             return
-        raw_params = params(value) if params is not None else None
-        wrapped: LowerParams | None = (
-            None if raw_params is None else {k: Const(v) for k, v in raw_params.items()}
-        )
-        lctx.emit(when(cond, (fail((message(value),), wrapped),)))
+        lctx.emit(when(cond, (fail(*describe(value, lctx.instance)),)))
 
     resolved_lower = (
         lower if lower is not None else (_lower if lower_test is not None else None)
@@ -152,10 +155,6 @@ def assertion(
 def _is_number(x: JsonValue) -> TypeGuard[int | float]:
     """P2: bool is never a number, so it is excluded before the numeric test."""
     return not isinstance(x, bool) and isinstance(x, int | float)
-
-
-def _limit_params(value: JsonValue) -> ErrorParams:
-    return {"limit": value}
 
 
 # --- type -------------------------------------------------------------
@@ -282,39 +281,44 @@ def _enum_test(value: JsonValue, instance: JsonValue) -> bool:
     return any(json_equal(candidate, instance) for candidate in candidates)
 
 
+def _enum_describe(
+    value: JsonValue, instance: Expr
+) -> tuple[LowerMessage, LowerParams | None]:
+    return (
+        (f"must be one of {preview(value)}, got ", helper("preview", instance)),
+        {"allowedValues": Const(value), "value": instance},
+    )
+
+
 def _enum_lower(value: JsonValue, lctx: LoweringContext) -> None:
     # A non-list `value` gives `_enum_test` an empty candidate set, which
     # fails for every instance (§4 rule 6 vacuous-truth guards run the
     # other way here): mirror that as an unconditional `Fail`, no `when`.
-    message: LowerMessage = ("not one of the allowed values",)
-    params: LowerParams = {"allowedValues": Const(value)}
+    described = fail(*_enum_describe(value, lctx.instance))
     if not isinstance(value, list) or not value:
-        lctx.emit(fail(message, params))
+        lctx.emit(described)
         return
-    lctx.emit(
-        when(not_(in_consts(lctx.instance, tuple(value))), (fail(message, params),))
-    )
+    lctx.emit(when(not_(in_consts(lctx.instance, tuple(value))), (described,)))
 
 
-_enum_behavior = assertion(
-    "enum",
-    _enum_test,
-    lambda _value: "not one of the allowed values",
-    lambda value: {"allowedValues": value},
-    lower=_enum_lower,
-)
+_enum_behavior = assertion("enum", _enum_test, _enum_describe, lower=_enum_lower)
 
 
 def _const_lower_test(value: JsonValue, instance: Expr) -> Expr | None:
     return not_(helper("json_equal", instance, Const(value)))
 
 
+def _const_describe(
+    value: JsonValue, instance: Expr
+) -> tuple[LowerMessage, LowerParams | None]:
+    return (
+        (f"must equal {preview(value)}, got ", helper("preview", instance)),
+        {"allowedValue": Const(value), "value": instance},
+    )
+
+
 _const_behavior = assertion(
-    "const",
-    json_equal,
-    lambda _value: "does not equal the required constant",
-    lambda value: {"allowedValue": value},
-    lower_test=_const_lower_test,
+    "const", json_equal, _const_describe, lower_test=_const_lower_test
 )
 
 
@@ -336,11 +340,19 @@ def _multiple_of_lower_test(value: JsonValue, instance: Expr) -> Expr | None:
     )
 
 
+def _multiple_of_describe(
+    value: JsonValue, instance: Expr
+) -> tuple[LowerMessage, LowerParams | None]:
+    return (
+        (f"must be a multiple of {value}, got ", helper("preview", instance)),
+        {"multipleOf": Const(value), "value": instance},
+    )
+
+
 _multiple_of_behavior = assertion(
     "multipleOf",
     _multiple_of_test,
-    lambda value: f"must be a multiple of {value}",
-    lambda value: {"multipleOf": value},
+    _multiple_of_describe,
     lower_test=_multiple_of_lower_test,
 )
 
@@ -363,13 +375,15 @@ def _numeric_bound(
             type_is(instance, "number"), not_(cmp(symbol, instance, Const(value)))
         )
 
-    return assertion(
-        name,
-        _test,
-        lambda value: f"must be {symbol} {value}",
-        _limit_params,
-        lower_test=_lower_test,
-    )
+    def _describe(
+        value: JsonValue, instance: Expr
+    ) -> tuple[LowerMessage, LowerParams | None]:
+        return (
+            (f"must be {symbol} {value}, got ", helper("preview", instance)),
+            {"limit": Const(value), "value": instance},
+        )
+
+    return assertion(name, _test, _describe, lower_test=_lower_test)
 
 
 _maximum_behavior = _numeric_bound("maximum", lambda i, v: i <= v, "<=")
@@ -404,13 +418,22 @@ def _string_bound(
             not_(cmp(symbol, helper("code_point_length", instance), Const(int(value)))),
         )
 
-    return assertion(
-        name,
-        _test,
-        lambda value: f"must be {phrase} {value} characters",
-        _limit_params,
-        lower_test=_lower_test,
-    )
+    def _describe(
+        value: JsonValue, instance: Expr
+    ) -> tuple[LowerMessage, LowerParams | None]:
+        length = helper("code_point_length", instance)
+        return (
+            (
+                f"must be {phrase} {value} characters, got ",
+                helper("preview", instance),
+                " (",
+                length,
+                ")",
+            ),
+            {"limit": Const(value), "value": instance, "length": length},
+        )
+
+    return assertion(name, _test, _describe, lower_test=_lower_test)
 
 
 _max_length_behavior = _string_bound(
@@ -440,13 +463,16 @@ def _array_bound(
             not_(cmp(symbol, helper("length_of", instance), Const(int(value)))),
         )
 
-    return assertion(
-        name,
-        _test,
-        lambda value: f"must have {phrase} {value} items",
-        _limit_params,
-        lower_test=_lower_test,
-    )
+    def _describe(
+        value: JsonValue, instance: Expr
+    ) -> tuple[LowerMessage, LowerParams | None]:
+        count = helper("length_of", instance)
+        return (
+            (f"must have {phrase} {value} items, got ", count),
+            {"limit": Const(value), "count": count},
+        )
+
+    return assertion(name, _test, _describe, lower_test=_lower_test)
 
 
 _max_items_behavior = _array_bound(
@@ -476,13 +502,16 @@ def _object_bound(
             not_(cmp(symbol, helper("length_of", instance), Const(int(value)))),
         )
 
-    return assertion(
-        name,
-        _test,
-        lambda value: f"must have {phrase} {value} properties",
-        _limit_params,
-        lower_test=_lower_test,
-    )
+    def _describe(
+        value: JsonValue, instance: Expr
+    ) -> tuple[LowerMessage, LowerParams | None]:
+        count = helper("length_of", instance)
+        return (
+            (f"must have {phrase} {value} properties, got ", count),
+            {"limit": Const(value), "count": count},
+        )
+
+    return assertion(name, _test, _describe, lower_test=_lower_test)
 
 
 _max_properties_behavior = _object_bound(
