@@ -12,18 +12,22 @@ from json_schema_engine.core.keywords.applicator import (
     NOT,
     ONE_OF,
     THEN,
+    dependents_rejected,
 )
 from json_schema_engine.core.lowering import (
     HERE,
     Apply,
     ApplyExpr,
     Binding,
+    Collect,
     CombineCheck,
     Const,
     HasKey,
     If,
     Instance,
     LowerApply,
+    Reject,
+    RejectCheck,
     TypeIs,
     helper,
 )
@@ -177,7 +181,7 @@ def test_dependent_schemas_applications_are_conditional_and_assert() -> None:
 
 
 def test_dependent_schemas_lowers_to_a_guarded_has_key_check_per_name() -> None:
-    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": False})
+    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": {}})
     assert stmts == (
         If(
             TypeIs(Instance(), ("object",)),
@@ -190,6 +194,24 @@ def test_dependent_schemas_lowers_to_a_guarded_has_key_check_per_name() -> None:
                     HasKey(Instance(), "b"),
                     (Apply(LowerApply(("b",), HERE, "all_must_pass")),),
                 ),
+            ),
+        ),
+    )
+
+
+def test_dependent_schemas_false_members_are_rejected_not_applied() -> None:
+    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": False})
+    assert stmts == (
+        If(
+            TypeIs(Instance(), ("object",)),
+            (
+                Collect(0, errors=True),
+                If(
+                    HasKey(Instance(), "a"),
+                    (Apply(LowerApply(("a",), HERE, "all_must_pass")),),
+                ),
+                If(HasKey(Instance(), "b"), (Reject(0, Const("b")),)),
+                RejectCheck(0, *dependents_rejected("dependentSchemas", Binding(0))),
             ),
         ),
     )

@@ -63,12 +63,26 @@ def run(schema: JsonValue, instance: JsonValue) -> tuple[bool, EvalState]:
 
 
 def test_prefix_items_applies_positionally_at_the_right_path() -> None:
-    schema: JsonValue = {"prefixItems": [{}, False]}
-    valid, state = run(schema, [1, 2, 3])
+    # A nested tuple whose only member is `false` fails the second item,
+    # so the error's paths prove where that item's subschema applied.
+    schema: JsonValue = {"prefixItems": [{}, {"prefixItems": [False]}]}
+    valid, state = run(schema, [1, [2], 3])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/prefixItems/1"
     assert err.cursor.pointer == "/1"
+    assert err.message == "items not allowed at 0"
+
+
+def test_prefix_items_false_members_report_once() -> None:
+    schema: JsonValue = {"prefixItems": [{}, False, {}, False]}
+    valid, state = run(schema, [1, 2, 3, 4, 5])
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "prefixItems"
+    assert materialize_path(err.path_node) == ""
+    assert err.message == "items not allowed at 1, 3"
+    assert err.params == {"failed": [[1, 1], [3, 3]]}
 
 
 def test_prefix_items_ignores_elements_past_its_own_length() -> None:
@@ -116,12 +130,23 @@ def test_prefix_items_produces_nothing_when_empty_or_rejecting() -> None:
 
 
 def test_items_applies_past_the_sibling_prefix_at_the_right_path() -> None:
-    schema: JsonValue = {"prefixItems": [{}], "items": False}
-    valid, state = run(schema, [1, 2, 3])
+    schema: JsonValue = {"prefixItems": [{}], "items": {"prefixItems": [False]}}
+    valid, state = run(schema, [1, [2], [3]])
     assert not valid
-    err = state.errors[0]
-    assert materialize_path(err.path_node) == "/items"
-    assert err.cursor.pointer == "/1"
+    assert [materialize_path(e.path_node) for e in state.errors] == ["/items"] * 2
+    assert [e.cursor.pointer for e in state.errors] == ["/1", "/2"]
+
+
+def test_items_false_reports_the_tail_once() -> None:
+    schema: JsonValue = {"prefixItems": [{}], "items": False}
+    valid, state = run(schema, [1, 2, 3, 4, 5])
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "items"
+    assert err.cursor.pointer == ""
+    assert err.message == "items not allowed from index 1: 1-4"
+    assert err.params == {"start": 1, "failed": [[1, 4]]}
+    assert run(schema, [1])[0] is True
 
 
 def test_items_applies_to_every_element_without_prefix_items() -> None:
@@ -185,11 +210,21 @@ def test_contains_at_the_right_path() -> None:
     # contains itself rejects, so the failing probe's error stays relevant
     # (§4 rule 6) alongside contains' own "no match" error.
     err = state.errors[0]
-    assert materialize_path(err.path_node) == "/contains/items"
-    assert err.cursor.pointer == "/0/0"
+    assert materialize_path(err.path_node) == "/contains"
+    assert err.cursor.pointer == "/0"
+    assert err.message == "items not allowed from index 0: 0"
     assert state.errors[-1].message == (
         "the contains subschema matched none, expected at least 1"
     )
+
+
+def test_contains_false_probes_nothing() -> None:
+    # A `false` subschema matches nothing: one error, none per item.
+    valid, state = run({"contains": False}, [1, 2, 3])
+    assert not valid
+    (err,) = state.errors
+    assert err.message == "the contains subschema matched none, expected at least 1"
+    assert run({"contains": False, "minContains": 0}, [1, 2])[0] is True
 
 
 def test_contains_produces_matched_indexes_or_true_when_every_element_matches() -> None:

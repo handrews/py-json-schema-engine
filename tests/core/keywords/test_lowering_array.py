@@ -5,6 +5,7 @@
 # (`lowering_helpers.lower`) rather than running the compiler end to end —
 # that differential lives in `tests/compiler/test_parity_array.py`.
 
+from json_schema_engine.core.keywords._rejects import tail_rejected
 from json_schema_engine.core.keywords.applicator_array import (
     CONTAINS,
     ITEMS,
@@ -30,6 +31,7 @@ from json_schema_engine.core.lowering import (
     apply_expr,
     child,
     cmp,
+    collect,
     cond,
     const,
     fail,
@@ -38,6 +40,8 @@ from json_schema_engine.core.lowering import (
     not_,
     or_,
     produce,
+    reject,
+    reject_check,
     type_is,
     when,
 )
@@ -250,7 +254,22 @@ def test_items_legacy_schema_form_sweeps_every_index_from_zero() -> None:
 
 
 def test_items_legacy_boolean_value_is_a_schema_form() -> None:
-    assert lower(ITEMS_LEGACY, False) == _items_sweep(0)
+    assert lower(ITEMS_LEGACY, True) == _items_sweep(0)
+
+
+def test_items_legacy_false_rejects_every_index() -> None:
+    stmts = lower(ITEMS_LEGACY, False)
+    assert stmts == (
+        when(
+            type_is(INSTANCE, "array"),
+            (
+                collect(1, errors=True),
+                ForEachIndex(INSTANCE, 0, (reject(1, Binding(0)),), start=0),
+                reject_check(1, *tail_rejected("items", 0, Binding(1))),
+                when(cmp(">", _LENGTH, const(0)), (produce(const(True)),)),
+            ),
+        ),
+    )
 
 
 def test_items_legacy_non_schema_non_list_value_emits_nothing() -> None:
@@ -261,7 +280,7 @@ def test_items_legacy_non_schema_non_list_value_emits_nothing() -> None:
 
 
 def test_additional_items_lowers_only_with_a_list_items_sibling() -> None:
-    assert lower(ADDITIONAL_ITEMS, False, schema={"items": [{}, {}]}) == _items_sweep(2)
+    assert lower(ADDITIONAL_ITEMS, True, schema={"items": [{}, {}]}) == _items_sweep(2)
 
 
 def test_additional_items_emits_nothing_without_a_list_items_sibling() -> None:

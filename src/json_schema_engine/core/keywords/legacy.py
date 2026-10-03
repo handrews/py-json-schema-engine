@@ -35,6 +35,14 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_APPLICATOR_2019,
     keyword_id,
 )
+from json_schema_engine.core.keywords._rejects import (
+    is_false,
+    positions_rejected,
+    positions_sweep,
+    tail_evaluate,
+    tail_sweep,
+)
+from json_schema_engine.core.keywords.applicator import dependents_rejected
 from json_schema_engine.core.keywords.validation import (
     dependency_absent,
     dependency_describe,
@@ -43,18 +51,22 @@ from json_schema_engine.core.lowering import (
     HERE,
     INSTANCE,
     Binding,
+    Const,
     ForEachIndex,
     LoweringContext,
     Stmt,
     apply,
     child,
     cmp,
+    collect,
     cond,
     const,
     fail,
     has_key,
     helper,
     produce,
+    reject,
+    reject_check,
     type_is,
     when,
 )
@@ -107,17 +119,24 @@ def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
         # Tuple form: same shape as 2020-12 `prefixItems`, dependency data
         # included (`True` when every element was covered, else the
         # largest applied index; nothing for an empty array).
+        head, tail, r = positions_sweep(value, lctx)
         lctx.emit(
             when(
                 type_is(instance, "array"),
                 (
+                    *head,
                     *(
                         when(
                             cmp(">", length, const(index)),
-                            (apply((index,), child(HERE, index)),),
+                            (
+                                reject(r, const(index))
+                                if is_false(schema)
+                                else apply((index,), child(HERE, index)),
+                            ),
                         )
-                        for index in range(len(value))
+                        for index, schema in enumerate(value)
                     ),
+                    *tail,
                     *(
                         (
                             when(
@@ -145,16 +164,14 @@ def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
     # Schema form: same shape as 2020-12 `items`, with no sibling
     # `prefixItems` to start after.
     binding = lctx.binding()
+    head, step, tail = tail_sweep("items", value, 0, binding, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
-                ForEachIndex(
-                    instance,
-                    binding,
-                    (apply((), child(HERE, Binding(binding))),),
-                    start=0,
-                ),
+                *head,
+                ForEachIndex(instance, binding, (step,), start=0),
+                *tail,
                 when(cmp(">", length, const(0)), (produce(const(True)),)),
             ),
         )
@@ -172,11 +189,17 @@ def _items_legacy_evaluate(
         # — same shape as 2020-12 `prefixItems`.
         n = min(len(value), len(instance))
         ok = True
+        rejected: list[JsonValue] = []
         for index in range(n):
-            if not ctx.apply(
+            if is_false(value[index]):
+                rejected.append(index)
+            elif not ctx.apply(
                 ("items", index), child_cursor(cursor, index, instance[index])
             ):
                 ok = False
+        if rejected:
+            ctx.error(*realize(*positions_rejected(Const(rejected)), instance))
+            ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6):
         # the largest applied index, or True when it covered the whole array.
         if n > 0 and ok:
@@ -186,6 +209,8 @@ def _items_legacy_evaluate(
         return True
     # Schema form: every element, from index 0 — same shape as 2020-12
     # `items` but with no sibling `prefixItems` to start after.
+    if is_false(value):
+        return tail_evaluate("items", 0, instance, ctx)
     ok = True
     applied = False
     for index in range(len(instance)):
@@ -230,23 +255,21 @@ def _additional_items_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticF
     return StaticFacts(subschemas=((),), produces=(ADDITIONAL_ITEMS_ID,))
 
 
-def _additional_items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+def _additional_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     sibling = lctx.schema.get("items")
     if not isinstance(sibling, list):
         return
     start = len(sibling)
     instance = lctx.instance
     binding = lctx.binding()
+    head, step, tail = tail_sweep("additional items", value, start, binding, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
-                ForEachIndex(
-                    instance,
-                    binding,
-                    (apply((), child(HERE, Binding(binding))),),
-                    start=start,
-                ),
+                *head,
+                ForEachIndex(instance, binding, (step,), start=start),
+                *tail,
                 when(
                     cmp(">", helper("length_of", instance), const(start)),
                     (produce(const(True)),),
@@ -257,13 +280,15 @@ def _additional_items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
 
 
 def _additional_items_evaluate(
-    _value: JsonValue, cursor: Cursor, ctx: KeywordContext
+    value: JsonValue, cursor: Cursor, ctx: KeywordContext
 ) -> bool:
     instance = cursor.value
     sibling = ctx.schema.get("items")
     if not isinstance(instance, list) or not isinstance(sibling, list):
         return True
     start = len(sibling)
+    if is_false(value):
+        return tail_evaluate("additional items", start, instance, ctx)
     ok = True
     applied = False
     for index in range(start, len(instance)):
@@ -309,13 +334,27 @@ def _dependencies_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
+    r = lctx.binding()
+    forbidden = any(is_false(dep) for dep in value.values())
     checks: list[Stmt] = [
+        *((collect(r, errors=True),) if forbidden else ()),
         # Schema member: an in-place application guarded by presence, same
-        # as `dependentSchemas`. Any other member shape is unreachable per
-        # the metaschema; ignored defensively, mirroring `evaluate`.
-        when(has_key(instance, name), (apply((name,), HERE),))
-        for name, dep in value.items()
-        if not isinstance(dep, list) and _is_schema_value(dep)
+        # as `dependentSchemas`; a `false` one is named once below. Any
+        # other member shape is unreachable per the metaschema; ignored
+        # defensively, mirroring `evaluate`.
+        *(
+            when(
+                has_key(instance, name),
+                (reject(r, Const(name)) if is_false(dep) else apply((name,), HERE),),
+            )
+            for name, dep in value.items()
+            if not isinstance(dep, list) and _is_schema_value(dep)
+        ),
+        *(
+            (reject_check(r, *dependents_rejected("dependencies", Binding(r))),)
+            if forbidden
+            else ()
+        ),
     ]
     # Array members: one error naming every missing dependency, after the
     # schema members' own errors, as in `evaluate`.
@@ -333,16 +372,20 @@ def _dependencies_evaluate(
     if not is_object(instance) or not is_object(value):
         return True
     ok = True
+    rejected: list[JsonValue] = []
     for name, dep in value.items():
-        if (
-            name in instance
-            and not isinstance(dep, list)
-            and _is_schema_value(dep)
-            and not ctx.apply(("dependencies", name), cursor)
-        ):
+        if name not in instance or isinstance(dep, list) or not _is_schema_value(dep):
+            # Any other member shape is unreachable per the metaschema
+            # (`anyOf`: schema or string array); ignored defensively.
+            continue
+        if is_false(dep):
+            rejected.append(name)
+        elif not ctx.apply(("dependencies", name), cursor):
             ok = False
-        # Any other member shape is unreachable per the metaschema
-        # (`anyOf`: schema or string array); ignored defensively.
+    if rejected:
+        described = dependents_rejected("dependencies", Const(rejected))
+        ctx.error(*realize(*described, instance))
+        ok = False
     if missing_dependencies(instance, value):
         ctx.error(*realize(*dependency_describe(value, INSTANCE), instance))
         ok = False

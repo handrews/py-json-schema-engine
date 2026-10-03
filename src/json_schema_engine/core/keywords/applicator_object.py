@@ -27,6 +27,7 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.keywords._rejects import is_false, names_rejected
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
@@ -34,20 +35,27 @@ from json_schema_engine.core.lowering import (
     Expr,
     ForEachKey,
     LoweringContext,
+    LowerMessage,
+    LowerParams,
+    Stmt,
     append,
     apply,
     child,
     collect,
     has_key,
+    helper,
     in_consts,
     key,
     not_,
     or_,
     produce,
     regex_test,
+    reject,
+    reject_check,
     type_is,
     when,
 )
+from json_schema_engine.core.messages import name_list, realize
 
 PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "properties")
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
@@ -78,20 +86,25 @@ def _properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
         return
     instance = lctx.instance
     n = lctx.binding()
+    r = lctx.binding()
+    forbidden = any(is_false(schema) for schema in value.values())
+
+    def step(name: str) -> tuple[Stmt, ...]:
+        if is_false(value[name]):
+            return (append(n, Const(name)), reject(r, Const(name)))
+        return (append(n, Const(name)), apply((name,), child(HERE, name)))
+
     lctx.emit(
         when(
             type_is(instance, "object"),
             (
                 collect(n),
+                *((collect(r, errors=True),) if forbidden else ()),
+                *(when(has_key(instance, name), step(name)) for name in value),
                 *(
-                    when(
-                        has_key(instance, name),
-                        (
-                            append(n, Const(name)),
-                            apply((name,), child(HERE, name)),
-                        ),
-                    )
-                    for name in value
+                    (reject_check(r, *names_rejected("", " not allowed", Binding(r))),)
+                    if forbidden
+                    else ()
                 ),
                 produce(Binding(n)),
             ),
@@ -105,13 +118,22 @@ def _properties_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) 
         return True
     ok = True
     matched: list[str] = []
+    rejected: list[JsonValue] = []
     for name in value:
         if name in instance:
             matched.append(name)
-            if not ctx.apply(
+            if is_false(value[name]):
+                # One summary error below instead of `schema is false`.
+                rejected.append(name)
+            elif not ctx.apply(
                 ("properties", name), child_cursor(cursor, name, instance[name])
             ):
                 ok = False
+    if rejected:
+        ctx.error(
+            *realize(*names_rejected("", " not allowed", Const(rejected)), instance)
+        )
+        ok = False
     # Dependency data comes only from an accepting keyword (§4 rule 6,
     # draft-03 Appendix D): a rejecting `properties` communicates nothing.
     if ok:
@@ -148,12 +170,35 @@ def _pattern_properties_analyze(value: JsonValue, _ctx: AnalyzeContext) -> Stati
     )
 
 
+def _forbidden_patterns(value: dict[str, JsonValue]) -> list[str]:
+    return [pattern for pattern, schema in value.items() if is_false(schema)]
+
+
+def _pattern_properties_rejected(
+    patterns: list[str], names: Expr
+) -> tuple[LowerMessage, LowerParams]:
+    return names_rejected(
+        "",
+        f" matching {name_list(patterns)} not allowed",
+        names,
+        {"patterns": Const(list(patterns))},
+    )
+
+
 def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
     b = lctx.binding()
     n = lctx.binding()
+    r = lctx.binding()
+    forbidden = _forbidden_patterns(value)
+
+    def step(pattern: str) -> Stmt:
+        if is_false(value[pattern]):
+            return reject(r, Binding(b), unique=True)
+        return apply((pattern,), child(HERE, Binding(b)))
+
     # Pattern-outermost, as `evaluate` sweeps: the error and annotation
     # order (and the produced name order) must match the interpreter's.
     lctx.emit(
@@ -161,6 +206,7 @@ def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
             type_is(instance, "object"),
             (
                 collect(n),
+                *((collect(r, errors=True),) if forbidden else ()),
                 *(
                     ForEachKey(
                         instance,
@@ -168,14 +214,20 @@ def _pattern_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
                         (
                             when(
                                 regex_test(pattern, Binding(b)),
-                                (
-                                    append(n, Binding(b), unique=True),
-                                    apply((pattern,), child(HERE, Binding(b))),
-                                ),
+                                (append(n, Binding(b), unique=True), step(pattern)),
                             ),
                         ),
                     )
                     for pattern in value
+                ),
+                *(
+                    (
+                        reject_check(
+                            r, *_pattern_properties_rejected(forbidden, Binding(r))
+                        ),
+                    )
+                    if forbidden
+                    else ()
                 ),
                 produce(Binding(n)),
             ),
@@ -191,17 +243,27 @@ def _pattern_properties_evaluate(
         return True
     ok = True
     matched: list[str] = []
+    rejected: list[JsonValue] = []
     for pattern in value:
         regex = ctx.compile_regex(pattern)
         for name in instance:
             if regex.search(name):
                 if name not in matched:
                     matched.append(name)
-                if not ctx.apply(
+                if is_false(value[pattern]):
+                    if name not in rejected:
+                        rejected.append(name)
+                elif not ctx.apply(
                     ("patternProperties", pattern),
                     child_cursor(cursor, name, instance[name]),
                 ):
                     ok = False
+    if rejected:
+        described = _pattern_properties_rejected(
+            _forbidden_patterns(value), Const(rejected)
+        )
+        ctx.error(*realize(*described, instance))
+        ok = False
     if ok:
         ctx.produce(matched)
     return ok
@@ -231,7 +293,7 @@ def _additional_properties_analyze(
     )
 
 
-def _additional_properties_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+def _additional_properties_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
     sibling_properties = lctx.schema.get("properties")
     names = tuple(sibling_properties) if is_object(sibling_properties) else ()
@@ -244,24 +306,29 @@ def _additional_properties_lower(_value: JsonValue, lctx: LoweringContext) -> No
         parts.append(in_consts(Binding(b), names))
     parts.extend(regex_test(pattern, Binding(b)) for pattern in patterns)
     covered = or_(*parts)
+    if is_false(value):
+        # Every additional name fails: report them once, apply nothing.
+        r = lctx.binding()
+        step: Stmt = reject(r, Binding(b))
+        head: tuple[Stmt, ...] = (collect(n), collect(r, errors=True))
+        tail: tuple[Stmt, ...] = (
+            reject_check(r, *names_rejected("additional ", " not allowed", Binding(r))),
+        )
+    else:
+        step = apply((), child(HERE, Binding(b)))
+        head = (collect(n),)
+        tail = ()
     lctx.emit(
         when(
             type_is(instance, "object"),
             (
-                collect(n),
+                *head,
                 ForEachKey(
                     instance,
                     b,
-                    (
-                        when(
-                            not_(covered),
-                            (
-                                append(n, Binding(b)),
-                                apply((), child(HERE, Binding(b))),
-                            ),
-                        ),
-                    ),
+                    (when(not_(covered), (append(n, Binding(b)), step)),),
                 ),
+                *tail,
                 produce(Binding(n)),
             ),
         )
@@ -290,10 +357,19 @@ def _additional_properties_evaluate(
         if name in names or any(regex.search(name) for regex in patterns):
             continue
         matched.append(name)
-        if not ctx.apply(
+        if not is_false(value) and not ctx.apply(
             ("additionalProperties",), child_cursor(cursor, name, instance[name])
         ):
             ok = False
+    if is_false(value) and matched:
+        rejected: list[JsonValue] = list(matched)
+        ctx.error(
+            *realize(
+                *names_rejected("additional ", " not allowed", Const(rejected)),
+                instance,
+            )
+        )
+        ok = False
     if ok:
         ctx.produce(matched)
     return ok
@@ -319,9 +395,29 @@ def _property_names_analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFa
     )
 
 
-def _property_names_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+def _property_names_rejected(names: Expr) -> tuple[LowerMessage, LowerParams]:
+    return (
+        ("no property names allowed, got ", helper("name_list", names)),
+        {"properties": names},
+    )
+
+
+def _property_names_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
     b = lctx.binding()
+    if is_false(value):
+        r = lctx.binding()
+        lctx.emit(
+            when(
+                type_is(instance, "object"),
+                (
+                    collect(r, errors=True),
+                    ForEachKey(instance, b, (reject(r, Binding(b)),)),
+                    reject_check(r, *_property_names_rejected(Binding(r))),
+                ),
+            )
+        )
+        return
     lctx.emit(
         when(
             type_is(instance, "object"),
@@ -331,11 +427,17 @@ def _property_names_lower(_value: JsonValue, lctx: LoweringContext) -> None:
 
 
 def _property_names_evaluate(
-    _value: JsonValue, cursor: Cursor, ctx: KeywordContext
+    value: JsonValue, cursor: Cursor, ctx: KeywordContext
 ) -> bool:
     instance = cursor.value
     if not is_object(instance):
         return True
+    if is_false(value):
+        if not instance:
+            return True
+        names: list[JsonValue] = list(instance)
+        ctx.error(*realize(*_property_names_rejected(Const(names)), instance))
+        return False
     ok = True
     for name in instance:
         if not ctx.apply(("propertyNames",), child_cursor(cursor, name, name)):

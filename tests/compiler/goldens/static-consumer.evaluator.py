@@ -3,7 +3,6 @@ x1 = X[1]
 x2 = X[2]
 x3 = X[3]
 x4 = X[4]
-x5 = X[5]
 k0 = frozenset(('https://json-schema.org/draft/2020-12/vocab/applicator#additionalProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#patternProperties', 'https://json-schema.org/draft/2020-12/vocab/applicator#properties', 'https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties'))
 k1 = ['string']
 
@@ -33,13 +32,14 @@ def u0(v, d, s, st, pn, cu, ev):
     if g0:
         b1 = H_COVN(ev[m0:], k0)
         b2 = []
-        for b3 in v:
-            if b3 not in b1:
-                b2.append(b3)
-                m4 = H_AMARK(st)
-                if not H_FALSE(st, x3, H_PATH(pn, 'unevaluatedProperties'), H_CHILD(cu, b3, v[b3])):
-                    w1 = False
-                    H_ACUT(st, m4)
+        b3 = []
+        for b4 in v:
+            if b4 not in b1:
+                b2.append(b4)
+                b3.append(b4)
+        if b3:
+            H_ERR(st, x2, pn, cu, 'unevaluated ' + str(H_LNAMES(b3, 'property', 'properties')) + ' not allowed', {'properties': b3})
+            w1 = False
         if w1:
             ev.append(('https://json-schema.org/draft/2020-12/vocab/unevaluated#unevaluatedProperties', b2))
     if w1:
@@ -50,14 +50,14 @@ def u0(v, d, s, st, pn, cu, ev):
     return w2
 
 def u1(v, d, s, st, pn, cu):
-    t1 = H_ENTER(st, x4, pn, cu)
+    t1 = H_ENTER(st, x3, pn, cu)
     w3 = True
-    m5 = H_EMARK(st)
+    m4 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x5, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k1, 'actual': H_ATYPE(v), 'value': v})
+        H_ERR(st, x4, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k1, 'actual': H_ATYPE(v), 'value': v})
         w3 = False
     if w3:
-        H_DROP(st, m5)
+        H_DROP(st, m4)
     w4 = w3
     H_KWS(t1, 'type', w3)
     H_EXIT(st, t1, w4)

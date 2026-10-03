@@ -7,8 +7,46 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+### Changed
+
+- **Error messages say what was wrong with what (DESIGN.md D13).** Every
+  error that names a limit now names the value that broke it, and the same
+  facts appear in `params` (`error_params=True`). Values render as compact
+  JSON, cut at 64 characters in the message and carried in full in params.
+  - Bounds and sizes: `must be >= 5, got 3`, `must be at least 5
+    characters, got "abc" (3)`, `must have at least 3 items, got 1`.
+    `enum` and `const` show both values: `must be one of [1, 2, 3], got 4`.
+  - `type`: `expected string, got 3 (integer)`. A container shows only its
+    type. `params.actual` is now the apparent type, so `integer` for a
+    mathematical integer.
+  - `pattern` and asserting `format`: `must match pattern "^a", got "b"`.
+  - `required`, `dependentRequired`, and draft-07 `dependencies` arrays
+    report **one error per keyword** naming every missing property:
+    `missing required properties "a", "c"`. Params `{"missing": [...]}`
+    replaces one error per name carrying `missingProperty`.
+  - `uniqueItems` names every group of equal items: `items are not unique:
+    0 = 2 = 5; 1 = 3`. Params `duplicates` is now a list of index groups,
+    not the first pair.
+  - `contains` names the matching indexes (`matched 2 items (0, 3)`, params
+    `matched`); `oneOf` names the passing branches; `anyOf` counts its
+    branches.
+- **An applicator reports a `false` subschema once, by name (DESIGN.md
+  P19).** `additionalProperties: false` used to report `schema is false`
+  once per extra property, at each property. It now reports one error at
+  its own location, `additional properties "b", "c" not allowed`, with
+  params `properties`. The same holds for `unevaluatedProperties`,
+  `properties`, `patternProperties`, `propertyNames`, `dependentSchemas`,
+  `prefixItems`, `items`, `additionalItems`, `unevaluatedItems`
+  (`items not allowed from index 1: 1-4`, params `start` and `failed`),
+  `allOf`, `contains`, and draft-07 `dependencies`. The `false` subschema is
+  no longer applied, so `trace` has no node for it. A `$ref` to `false`
+  still reports `schema is false`. The compiled flag validator is unchanged
+  and still stops at the first offending key.
+
 ### Fixed
 
+- A compiled evaluator for `oneOf: []` referred to bindings no branch had
+  set. It now reports the constant failure the interpreter does.
 - The output guide now says how `list` and `hierarchical` relate to the
   machines-oriented proposal that defines them. The proposal has no
   concept of relevance, includes every unit in `hierarchical`, and makes

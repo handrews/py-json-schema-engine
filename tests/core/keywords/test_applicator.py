@@ -72,12 +72,23 @@ def run(schema: JsonValue, instance: JsonValue) -> tuple[bool, EvalState]:
 def test_properties_applies_matching_children_at_the_right_path() -> None:
     # No annotating keyword in this vocabulary, so path/location are proven
     # through a failing child subschema and its error's paths instead.
-    schema: JsonValue = {"properties": {"x": False}}
-    valid, state = run(schema, {"x": 1, "y": 2})
+    schema: JsonValue = {"properties": {"x": {"properties": {"y": False}}}}
+    valid, state = run(schema, {"x": {"y": 1}, "y": 2})
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/properties/x"
     assert err.cursor.pointer == "/x"
+    assert err.message == 'property "y" not allowed'
+
+
+def test_properties_false_members_report_once() -> None:
+    schema: JsonValue = {"properties": {"a": False, "b": {}, "c": False}}
+    valid, state = run(schema, {"a": 1, "b": 2, "c": 3})
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "properties"
+    assert err.message == 'properties "a", "c" not allowed'
+    assert err.params == {"properties": ["a", "c"]}
 
 
 def test_properties_skips_absent_names() -> None:
@@ -126,8 +137,8 @@ def test_any_of_all_failing_reports_branch_errors_plus_its_own() -> None:
     assert not valid
     messages = [e.message for e in state.errors]
     assert messages == [
-        "schema is false",
-        "schema is false",
+        'property "x" not allowed',
+        'property "x" not allowed',
         "does not match any of the 2 anyOf branches",
     ]
     assert state.errors[-1].keyword_name == "anyOf"
@@ -148,9 +159,22 @@ def test_all_of_requires_every_branch() -> None:
     }
     valid, state = run(schema, {"x": 1})
     assert not valid
-    # allOf contributes no message of its own (mirrors the TS convention).
-    assert [e.message for e in state.errors] == ["schema is false"]
+    # allOf contributes no message of its own for a failing branch (mirrors
+    # the TS convention): the branch already said why.
+    assert [e.message for e in state.errors] == ['property "x" not allowed']
     assert not any(e.keyword_name == "allOf" for e in state.errors)
+
+
+def test_all_of_names_its_false_branches() -> None:
+    # A `false` branch explains nothing, so `allOf` names it instead.
+    valid, state = run({"allOf": [{}, False, {}, False]}, 1)
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "allOf"
+    assert err.message == "allOf branches 1, 3 are false"
+    assert err.params == {"failed": [1, 3]}
+    valid, state = run({"allOf": [False]}, 1)
+    assert state.errors[0].message == "allOf branch 0 is false"
 
 
 def test_all_of_passes_when_every_branch_passes() -> None:
@@ -388,8 +412,29 @@ def test_unevaluated_properties_subschema_applies_at_the_right_path() -> None:
     valid, state = run(schema, {"extra": {"x": 1}})
     assert not valid
     err = state.errors[0]
-    assert materialize_path(err.path_node) == "/unevaluatedProperties/properties/x"
-    assert err.cursor.pointer == "/extra/x"
+    assert materialize_path(err.path_node) == "/unevaluatedProperties"
+    assert err.cursor.pointer == "/extra"
+    assert err.message == 'property "x" not allowed'
+
+
+def test_unevaluated_properties_false_names_them_once() -> None:
+    schema: JsonValue = {"properties": {"a": {}}, "unevaluatedProperties": False}
+    valid, state = run(schema, {"a": 1, "b": 2, "c": 3})
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "unevaluatedProperties"
+    assert err.message == 'unevaluated properties "b", "c" not allowed'
+    assert err.params == {"properties": ["b", "c"]}
+
+
+def test_dependent_schemas_false_members_report_once() -> None:
+    schema: JsonValue = {"dependentSchemas": {"a": False, "b": {}}}
+    valid, state = run(schema, {"a": 1, "b": 2})
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "dependentSchemas"
+    assert err.message == 'property "a" present, which dependentSchemas forbids'
+    assert err.params == {"properties": ["a"]}
 
 
 def test_unevaluated_properties_dependency_data_shape() -> None:

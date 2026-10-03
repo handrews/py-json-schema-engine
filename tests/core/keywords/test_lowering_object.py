@@ -8,6 +8,7 @@
 import pytest
 
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.keywords._rejects import names_rejected
 from json_schema_engine.core.keywords.applicator_array import (
     CONTAINS_ID,
     PREFIX_ITEMS_ID,
@@ -48,6 +49,8 @@ from json_schema_engine.core.lowering import (
     or_,
     produce,
     regex_test,
+    reject,
+    reject_check,
     type_is,
     when,
 )
@@ -155,19 +158,19 @@ def _additional_sweep(covered: Expr) -> tuple[Stmt, ...]:
 
 
 def test_additional_properties_with_no_sibling_covers_nothing() -> None:
-    assert lower(ADDITIONAL_PROPERTIES, False, schema={}) == _additional_sweep(or_())
+    assert lower(ADDITIONAL_PROPERTIES, True, schema={}) == _additional_sweep(or_())
 
 
 def test_additional_properties_reads_sibling_names() -> None:
     stmts = lower(
-        ADDITIONAL_PROPERTIES, False, schema={"properties": {"a": True, "b": True}}
+        ADDITIONAL_PROPERTIES, True, schema={"properties": {"a": True, "b": True}}
     )
     assert stmts == _additional_sweep(or_(in_consts(Binding(0), ("a", "b"))))
 
 
 def test_additional_properties_reads_sibling_patterns() -> None:
     stmts = lower(
-        ADDITIONAL_PROPERTIES, False, schema={"patternProperties": {"^x": True}}
+        ADDITIONAL_PROPERTIES, True, schema={"patternProperties": {"^x": True}}
     )
     assert stmts == _additional_sweep(or_(regex_test("^x", Binding(0))))
 
@@ -175,7 +178,7 @@ def test_additional_properties_reads_sibling_patterns() -> None:
 def test_additional_properties_combines_names_and_patterns() -> None:
     stmts = lower(
         ADDITIONAL_PROPERTIES,
-        False,
+        True,
         schema={"properties": {"a": True}, "patternProperties": {"^x": True}},
     )
     assert stmts == _additional_sweep(
@@ -186,10 +189,39 @@ def test_additional_properties_combines_names_and_patterns() -> None:
 def test_additional_properties_ignores_non_object_siblings() -> None:
     stmts = lower(
         ADDITIONAL_PROPERTIES,
-        False,
+        True,
         schema={"properties": ["not", "an", "object"], "patternProperties": True},
     )
     assert stmts == _additional_sweep(or_())
+
+
+def test_additional_properties_false_rejects_instead_of_applying() -> None:
+    # The `false` subschema is never applied: each additional name is
+    # rejected, and one summary error names them all (D13).
+    stmts = lower(ADDITIONAL_PROPERTIES, False, schema={"properties": {"a": True}})
+    assert stmts == (
+        when(
+            type_is(INSTANCE, "object"),
+            (
+                collect(1),
+                collect(2, errors=True),
+                ForEachKey(
+                    INSTANCE,
+                    0,
+                    (
+                        when(
+                            not_(or_(in_consts(Binding(0), ("a",)))),
+                            (append(1, Binding(0)), reject(2, Binding(0))),
+                        ),
+                    ),
+                ),
+                reject_check(
+                    2, *names_rejected("additional ", " not allowed", Binding(2))
+                ),
+                produce(Binding(1)),
+            ),
+        ),
+    )
 
 
 # --- propertyNames ------------------------------------------------------------
@@ -201,6 +233,27 @@ def test_property_names_sweeps_with_the_key_as_the_cursor() -> None:
         when(
             type_is(INSTANCE, "object"),
             (ForEachKey(INSTANCE, 0, (apply((), key(0)),)),),
+        ),
+    )
+
+
+def test_property_names_false_rejects_every_key() -> None:
+    stmts = lower(PROPERTY_NAMES, False)
+    assert stmts == (
+        when(
+            type_is(INSTANCE, "object"),
+            (
+                collect(1, errors=True),
+                ForEachKey(INSTANCE, 0, (reject(1, Binding(0)),)),
+                reject_check(
+                    1,
+                    (
+                        "no property names allowed, got ",
+                        helper("name_list", Binding(1)),
+                    ),
+                    {"properties": Binding(1)},
+                ),
+            ),
         ),
     )
 
@@ -258,12 +311,12 @@ def _uncovered_names_sweep(uncovered: Expr, *head: Stmt) -> tuple[Stmt, ...]:
 
 
 def test_unevaluated_properties_with_total_coverage_lowers_to_nothing() -> None:
-    stmts = lower(UNEVALUATED_PROPERTIES, False, coverage=TOTAL_NAME_COVERAGE)
+    stmts = lower(UNEVALUATED_PROPERTIES, True, coverage=TOTAL_NAME_COVERAGE)
     assert stmts == ()
 
 
 def test_unevaluated_properties_sweeps_the_uncovered_names_and_patterns() -> None:
-    stmts = lower(UNEVALUATED_PROPERTIES, False, coverage=PARTIAL_NAME_COVERAGE)
+    stmts = lower(UNEVALUATED_PROPERTIES, True, coverage=PARTIAL_NAME_COVERAGE)
     assert stmts == _uncovered_names_sweep(
         not_(or_(in_consts(Binding(0), ("a", "b")), regex_test("^x", Binding(0))))
     )
@@ -277,14 +330,14 @@ def test_unevaluated_properties_without_names_or_patterns_still_sweeps() -> None
         prefix_count=0,
         covers_all_indexes=False,
     )
-    stmts = lower(UNEVALUATED_PROPERTIES, False, coverage=empty_coverage)
+    stmts = lower(UNEVALUATED_PROPERTIES, True, coverage=empty_coverage)
     assert stmts == _uncovered_names_sweep(not_(or_()))
 
 
 def test_unevaluated_properties_tracked_folds_the_channel_then_sweeps() -> None:
     # M9: the planner tracks the consumer; the fold binds after the loop
     # binding and the accumulator, and the sweep tests membership in it.
-    stmts = lower(UNEVALUATED_PROPERTIES, False, tracked=True)
+    stmts = lower(UNEVALUATED_PROPERTIES, True, tracked=True)
     assert stmts == _uncovered_names_sweep(
         not_(covers(2, Binding(0))), coverage_fold(2, "names", NAME_CONSUMES)
     )
@@ -292,7 +345,7 @@ def test_unevaluated_properties_tracked_folds_the_channel_then_sweeps() -> None:
 
 def test_unevaluated_properties_without_coverage_is_a_planner_bug() -> None:
     with pytest.raises(RuntimeError):
-        lower(UNEVALUATED_PROPERTIES, False, coverage=None)
+        lower(UNEVALUATED_PROPERTIES, True, coverage=None)
 
 
 # --- unevaluatedItems ---------------------------------------------------------
@@ -317,7 +370,7 @@ def test_unevaluated_items_with_total_coverage_lowers_to_nothing() -> None:
         prefix_count=0,
         covers_all_indexes=True,
     )
-    assert lower(UNEVALUATED_ITEMS, False, coverage=total) == ()
+    assert lower(UNEVALUATED_ITEMS, True, coverage=total) == ()
 
 
 def test_unevaluated_items_sweeps_from_the_covered_prefix() -> None:
@@ -328,7 +381,7 @@ def test_unevaluated_items_sweeps_from_the_covered_prefix() -> None:
         prefix_count=2,
         covers_all_indexes=False,
     )
-    stmts = lower(UNEVALUATED_ITEMS, False, coverage=cov)
+    stmts = lower(UNEVALUATED_ITEMS, True, coverage=cov)
     assert stmts == (
         when(
             type_is(INSTANCE, "array"),
@@ -347,7 +400,7 @@ def test_unevaluated_items_sweeps_from_the_covered_prefix() -> None:
 
 
 def test_unevaluated_items_tracked_folds_the_channel_then_sweeps() -> None:
-    stmts = lower(UNEVALUATED_ITEMS, False, tracked=True)
+    stmts = lower(UNEVALUATED_ITEMS, True, tracked=True)
     assert stmts == (
         when(
             type_is(INSTANCE, "array"),
@@ -381,4 +434,4 @@ def test_unevaluated_items_tracked_folds_the_channel_then_sweeps() -> None:
 
 def test_unevaluated_items_without_coverage_is_a_planner_bug() -> None:
     with pytest.raises(RuntimeError):
-        lower(UNEVALUATED_ITEMS, False, coverage=None)
+        lower(UNEVALUATED_ITEMS, True, coverage=None)

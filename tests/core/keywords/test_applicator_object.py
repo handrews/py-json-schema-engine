@@ -86,12 +86,24 @@ def run(schema: JsonValue, instance: JsonValue) -> tuple[bool, EvalState]:
 
 
 def test_pattern_properties_applies_to_matching_names_at_the_right_path() -> None:
-    schema: JsonValue = {"patternProperties": {"^x": False}}
-    valid, state = run(schema, {"xa": 1, "y": 2})
+    schema: JsonValue = {"patternProperties": {"^x": {"pattern": "^b"}}}
+    valid, state = run(schema, {"xa": "a", "y": 2})
     assert not valid
     err = state.errors[0]
     assert materialize_path(err.path_node) == "/patternProperties/^x"
     assert err.cursor.pointer == "/xa"
+
+
+def test_pattern_properties_false_names_every_match_once() -> None:
+    schema: JsonValue = {"patternProperties": {"^x": False, "a$": False, "^y": {}}}
+    valid, state = run(schema, {"xa": 1, "xb": 2, "ya": 3, "z": 4})
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "patternProperties"
+    assert err.message == (
+        'properties "xa", "xb", "ya" matching "^x", "a$" not allowed'
+    )
+    assert err.params == {"properties": ["xa", "xb", "ya"], "patterns": ["^x", "a$"]}
 
 
 def test_pattern_properties_matches_by_unanchored_search() -> None:
@@ -182,18 +194,20 @@ def test_additional_properties_skips_pattern_properties_matches() -> None:
     assert run(schema, {"xa": 1})[0] is True
 
 
-def test_additional_properties_false_rejects_extras_with_error_at_the_right_path() -> (
-    None
-):
+def test_additional_properties_false_rejects_extras_in_one_error() -> None:
     schema: JsonValue = {
         "properties": {"x": {}},
         "additionalProperties": False,
     }
-    valid, state = run(schema, {"x": 1, "extra": 2})
+    valid, state = run(schema, {"x": 1, "extra": 2, "more": 3})
     assert not valid
-    err = state.errors[0]
-    assert materialize_path(err.path_node) == "/additionalProperties"
-    assert err.cursor.pointer == "/extra"
+    (err,) = state.errors
+    assert err.keyword_name == "additionalProperties"
+    assert materialize_path(err.path_node) == ""
+    assert err.cursor.pointer == ""
+    assert err.message == 'additional properties "extra", "more" not allowed'
+    assert err.params == {"properties": ["extra", "more"]}
+    assert run(schema, {"x": 1})[0] is True
 
 
 def test_additional_properties_non_object_instance_passes() -> None:
@@ -241,13 +255,16 @@ def test_property_names_applies_subschema_to_each_name_as_the_instance() -> None
     assert run(schema, {"apple": 1, "banana": 2})[0] is False
 
 
-def test_property_names_false_rejects_every_name_with_error_at_the_right_path() -> None:
+def test_property_names_false_rejects_every_name_in_one_error() -> None:
     schema: JsonValue = {"propertyNames": False}
-    valid, state = run(schema, {"x": 1})
+    valid, state = run(schema, {"x": 1, "y": 2})
     assert not valid
-    err = state.errors[0]
-    assert materialize_path(err.path_node) == "/propertyNames"
-    assert err.cursor.pointer == "/x"
+    (err,) = state.errors
+    assert err.keyword_name == "propertyNames"
+    assert err.cursor.pointer == ""
+    assert err.message == 'no property names allowed, got "x", "y"'
+    assert err.params == {"properties": ["x", "y"]}
+    assert run(schema, {})[0] is True
 
 
 def test_property_names_non_object_instance_passes() -> None:

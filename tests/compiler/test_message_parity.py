@@ -23,6 +23,42 @@ CASES: list[tuple[str, JsonValue, JsonValue]] = [
     ("oneOf-two", {"oneOf": [{}, {"type": "integer"}, False]}, 1),
     ("oneOf-empty", {"oneOf": []}, 1),
     ("pattern", {"pattern": "^a"}, "b"),
+    # `false` subschemas: one summary error per applicator (D13).
+    (
+        "additionalProperties-false",
+        {"properties": {"a": {}}, "additionalProperties": False},
+        {"a": 1, "b": 2, "c": 3},
+    ),
+    (
+        "unevaluatedProperties-false",
+        {"properties": {"a": {}}, "unevaluatedProperties": False},
+        {"a": 1, "b": 2},
+    ),
+    (
+        "properties-false",
+        {"properties": {"a": False, "b": {"type": "string"}}},
+        {"a": 1, "b": 2},
+    ),
+    (
+        "patternProperties-false",
+        {"patternProperties": {"^x": False, "a$": False}},
+        {"xa": 1, "xb": 2, "ya": 3},
+    ),
+    ("propertyNames-false", {"propertyNames": False}, {"a": 1, "b": 2}),
+    ("dependentSchemas-false", {"dependentSchemas": {"a": False}}, {"a": 1}),
+    ("items-false", {"prefixItems": [{}], "items": False}, [1, 2, 3, 4, 5]),
+    ("prefixItems-false", {"prefixItems": [{}, False, {}, False]}, [1, 2, 3, 4]),
+    (
+        "unevaluatedItems-false",
+        {
+            "prefixItems": [{}],
+            "contains": {"type": "string"},
+            "unevaluatedItems": False,
+        },
+        [1, 2, "x", 3, 4],
+    ),
+    ("allOf-false", {"allOf": [{}, False, {"type": "string"}]}, 1),
+    ("contains-false", {"contains": False}, [1, 2]),
 ]
 
 

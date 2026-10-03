@@ -302,11 +302,14 @@ def test_detailed_condenses_the_polygon_example_node_for_node() -> None:
                 "instanceLocation": "/1",
                 "errors": [
                     {
+                        # The spec's example reports the `false` subschema
+                        # at `/1/z`. Here `additionalProperties` names `z`
+                        # in one error of its own (DESIGN.md D13).
                         "valid": False,
                         "keywordLocation": "/items/$ref/additionalProperties",
                         "absoluteKeywordLocation": "https://example.com/polygon#/$defs/point/additionalProperties",
-                        "instanceLocation": "/1/z",
-                        "error": "schema is false",
+                        "instanceLocation": "/1",
+                        "error": 'additional property "z" not allowed',
                     },
                     {
                         "valid": False,
@@ -409,19 +412,14 @@ def test_verbose_renders_the_drafts_valid_prop_example_as_a_keyword_hierarchy() 
                 ],
             },
             {
+                # The draft's example nests a `false`-subschema node at
+                # `/disallowedProp`; here the keyword names the property in
+                # one error of its own (DESIGN.md D13).
                 "valid": False,
                 "keywordLocation": "/additionalProperties",
                 "absoluteKeywordLocation": "https://example.com/polygon#/additionalProperties",
                 "instanceLocation": "",
-                "errors": [
-                    {
-                        "valid": False,
-                        "keywordLocation": "/additionalProperties",
-                        "absoluteKeywordLocation": "https://example.com/polygon#/additionalProperties",
-                        "instanceLocation": "/disallowedProp",
-                        "error": "schema is false",
-                    }
-                ],
+                "error": 'additional property "disallowedProp" not allowed',
             },
             {
                 "valid": True,

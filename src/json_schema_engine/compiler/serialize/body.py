@@ -61,6 +61,8 @@ from json_schema_engine.core.lowering import (
     Not,
     Produce,
     RegexTest,
+    Reject,
+    RejectCheck,
     Stmt,
     TypeIs,
     TypeName,
@@ -818,9 +820,25 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
                 out.extend(apply_statements(body, apply))
             case CountRange():
                 out.extend(_count_range(body, stmt))
-            case Collect(binding):
-                if body.produce_live:
+            case Collect(binding, errors):
+                # Dependency data when a consumer reads it; rejected keys
+                # for the evaluator's summary error, and never otherwise.
+                if body.evaluator if errors else body.produce_live:
                     out.append(e.assign(body.binding_name(binding), e.list_literal()))
+            case Reject(binding, key, unique):
+                if body.evaluator:
+                    out.extend(_append(body, binding, key, unique))
+                else:
+                    # Verdict only: the first rejected key settles it.
+                    out.append(e.return_(false))
+            case RejectCheck(binding, message, params):
+                if body.evaluator:
+                    out.append(
+                        e.if_(
+                            e.load(body.binding_name(binding)),
+                            _record_error(body, message, params),
+                        )
+                    )
             case Append(binding, value, unique):
                 if body.produce_live:
                     out.extend(_append(body, binding, value, unique))

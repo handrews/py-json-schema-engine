@@ -28,6 +28,13 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.keywords._rejects import (
+    is_false,
+    positions_rejected,
+    positions_sweep,
+    tail_evaluate,
+    tail_sweep,
+)
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
@@ -44,8 +51,10 @@ from json_schema_engine.core.lowering import (
     cmp,
     cond,
     const,
+    fail,
     helper,
     produce,
+    reject,
     type_is,
     when,
 )
@@ -81,17 +90,24 @@ def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
         return
     instance = lctx.instance
     length = helper("length_of", instance)
+    head, tail, r = positions_sweep(value, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
+                *head,
                 *(
                     when(
                         cmp(">", length, const(index)),
-                        (apply((index,), child(HERE, index)),),
+                        (
+                            reject(r, const(index))
+                            if is_false(schema)
+                            else apply((index,), child(HERE, index)),
+                        ),
                     )
-                    for index in range(len(value))
+                    for index, schema in enumerate(value)
                 ),
+                *tail,
                 # `True` when every element was covered, else the largest
                 # applied index; nothing for an empty array (`evaluate`).
                 *(
@@ -125,11 +141,17 @@ def _prefix_items_evaluate(
         return True
     n = min(len(value), len(instance))
     ok = True
+    rejected: list[JsonValue] = []
     for index in range(n):
-        if not ctx.apply(
+        if is_false(value[index]):
+            rejected.append(index)
+        elif not ctx.apply(
             ("prefixItems", index), child_cursor(cursor, index, instance[index])
         ):
             ok = False
+    if rejected:
+        ctx.error(*realize(*positions_rejected(Const(rejected)), instance))
+        ok = False
     # Dependency data comes only from an accepting keyword (§4 rule 6): the
     # largest applied index, or True when it covered the whole array.
     if n > 0 and ok:
@@ -166,20 +188,18 @@ def _items_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
-def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+def _items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
     start = _items_start(lctx)
     binding = lctx.binding()
+    head, step, tail = tail_sweep("items", value, start, binding, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
-                ForEachIndex(
-                    instance,
-                    binding,
-                    (apply((), child(HERE, Binding(binding))),),
-                    start=start,
-                ),
+                *head,
+                ForEachIndex(instance, binding, (step,), start=start),
+                *tail,
                 when(
                     cmp(">", helper("length_of", instance), const(start)),
                     (produce(const(True)),),
@@ -189,11 +209,13 @@ def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
     )
 
 
-def _items_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+def _items_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     instance = cursor.value
     if not isinstance(instance, list):
         return True
     start = _items_start(ctx)
+    if is_false(value):
+        return tail_evaluate("items", start, instance, ctx)
     ok = True
     applied = False
     for index in range(start, len(instance)):
@@ -274,9 +296,20 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             ),
         )
 
-    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    def lower(value: JsonValue, lctx: LoweringContext) -> None:
         instance = lctx.instance
         minimum, maximum = _contains_bounds(lctx.schema, sibling_bounds=sibling_bounds)
+        if is_false(value):
+            # Nothing can match, so nothing is probed: the only possible
+            # failure is too few matches, and it names none.
+            if int(minimum) > 0:
+                lctx.emit(
+                    when(
+                        type_is(instance, "array"),
+                        (fail(*describe(minimum, maximum, const(0), const([]))),),
+                    )
+                )
+            return
         binding = lctx.binding()
         matched = lctx.binding()
         counter = lctx.binding()
@@ -317,12 +350,13 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             )
         )
 
-    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         instance = cursor.value
         if not isinstance(instance, list):
             return True
         matched: list[int] = []
-        for index in range(len(instance)):
+        # A `false` subschema matches nothing: no probe, no per-item error.
+        for index in range(0 if is_false(value) else len(instance)):
             if ctx.apply(("contains",), child_cursor(cursor, index, instance[index])):
                 matched.append(index)
         count = len(matched)

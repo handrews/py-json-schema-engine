@@ -137,6 +137,31 @@ the `error_params` control; `keyword`/`vocabulary` are additionally absent for
 a boolean `false` schema's error, which names no keyword; `source` appears with
 the `positions` control.
 
+`params` by keyword (D13). Messages show the same facts, with values cut at
+64 characters; params carry them in full.
+
+| keyword | params |
+|---|---|
+| `type` | `expected`, `actual` (the apparent type: `integer` for a mathematical integer), `value` |
+| `enum` / `const` | `allowedValues` / `allowedValue`, `value` |
+| `multipleOf` | `multipleOf`, `value` |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | `limit`, `value` |
+| `minLength`, `maxLength` | `limit`, `value`, `length` |
+| `minItems`, `maxItems`, `minProperties`, `maxProperties` | `limit`, `count` |
+| `pattern` | `pattern`, `value` |
+| `format` (asserting) | `format`, `value` |
+| `required` | `missing`: the absent names |
+| `dependentRequired`, `dependencies` (arrays) | `missing`: present name → its absent dependencies |
+| `uniqueItems` | `duplicates`: groups of indexes of equal items |
+| `contains` | `count`, `matched` (indexes), `minContains`, `maxContains` when set |
+| `oneOf` | `passing` (indexes) |
+| `additionalProperties`, `unevaluatedProperties`, `properties`, `propertyNames`, `dependentSchemas`, `dependencies` (with `false`) | `properties`: the names rejected |
+| `patternProperties` (with `false`) | `properties`, `patterns` |
+| `items`, `additionalItems` (with `false`) | `start`, `failed`: `[first, last]` index runs |
+| `unevaluatedItems` (with `false`) | `start` (first unevaluated index), `failed` |
+| `prefixItems`, tuple `items` (with `false` members) | `failed` |
+| `allOf` (with `false` members) | `failed`: the `false` branch indexes |
+
 `AnnotationUnit`: a `TypedDict` for one rendered annotation (a keyword's own
 value at a location): `evaluationPath: str`, `schemaLocation: str`,
 `inputLocation: str`, `keyword: str`, `annotation: JsonValue`, `vocabulary:
@@ -744,11 +769,24 @@ count the matches, fail when the count falls outside `[minimum, maximum]`
 (`None` = unbounded); `matched`, when set, is a list binding that collects
 the matching indexes.
 
-`Collect`: a frozen dataclass: `binding: int` — bind an empty list to
-accumulate dependency data.
+`Collect`: a frozen dataclass: `binding: int`, `errors: bool = False` —
+bind an empty list to accumulate dependency data, or, with `errors`, the
+keys a `Reject` names. A dependency list is emitted only when a tracked
+consumer reads it; an `errors` list only in the evaluator.
 
 `Append`: a frozen dataclass: `binding: int`, `value: Expr`, `unique: bool
 = False` — append `value` to a `Collect` binding.
+
+`Reject`: a frozen dataclass: `binding: int`, `key: Expr`, `unique: bool =
+False` — a key the keyword rejects because its subschema there is `false`.
+The evaluator appends `key` to the `Collect(errors=True)` binding for one
+summary error; a verdict-only artifact fails at once, exactly as a `Fail`.
+The `false` subschema itself is never applied.
+
+`RejectCheck`: a frozen dataclass: `binding: int`, `message: LowerMessage`,
+`params: LowerParams | None = None` — after a sweep, one error naming every
+rejected key, if there are any. A verdict-only artifact has already
+returned, so it emits nothing.
 
 `Produce`: a frozen dataclass: `value: Expr` — the keyword's dependency
 data at the current cursor: the value `ctx.produce()` would carry.
@@ -855,7 +893,11 @@ CombineCheck`
 
 `covers(fold, target) -> Covers`
 
-`collect(binding) -> Collect`
+`collect(binding, *, errors=False) -> Collect`
+
+`reject(binding, key, *, unique=False) -> Reject`
+
+`reject_check(binding, message, params=None) -> RejectCheck`
 
 `append(binding, value, *, unique=False) -> Append`
 
@@ -899,8 +941,8 @@ literal text and runtime-computed parts, exactly as `evaluate` reports it.
 `evaluate` reports them.
 
 `Stmt`: the union of every statement: `If | ForEachKey | ForEachIndex |
-Fail | Apply | CombineCheck | CountRange | Collect | Append | Produce |
-CoverageFold | Annotate`.
+Fail | Apply | CombineCheck | CountRange | Collect | Append | Reject |
+RejectCheck | Produce | CoverageFold | Annotate`.
 
 ## `json_schema_engine.compiler`
 

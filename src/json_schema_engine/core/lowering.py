@@ -86,6 +86,8 @@ __all__ = [
     "Not",
     "Produce",
     "RegexTest",
+    "Reject",
+    "RejectCheck",
     "StaticCoverage",
     "Stmt",
     "TypeIs",
@@ -114,6 +116,8 @@ __all__ = [
     "or_",
     "produce",
     "regex_test",
+    "reject",
+    "reject_check",
     "type_is",
     "when",
 ]
@@ -453,9 +457,11 @@ class Annotate:
 
 @dataclass(frozen=True, slots=True)
 class Collect:
-    """Bind an empty list to accumulate dependency data."""
+    """Bind an empty list to accumulate dependency data, or (`errors`) the
+    keys a `Reject` names for one summary error."""
 
     binding: int
+    errors: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +471,29 @@ class Append:
     binding: int
     value: Expr
     unique: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Reject:
+    """A key this keyword rejects outright: its subschema there is `false`
+    (D13). The evaluator appends `key` to the `Collect(errors=True)`
+    binding, for `RejectCheck` to report once; a verdict-only artifact
+    fails at once, exactly as a `Fail`. Nothing is applied: a `false`
+    subschema's own error would only repeat the summary."""
+
+    binding: int
+    key: Expr
+    unique: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RejectCheck:
+    """After a sweep: one error naming every `Reject`ed key, if any. A
+    verdict-only artifact has already returned, so emits nothing."""
+
+    binding: int
+    message: LowerMessage
+    params: LowerParams | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,6 +528,8 @@ type Stmt = (
     | CountRange
     | Collect
     | Append
+    | Reject
+    | RejectCheck
     | Produce
     | CoverageFold
     | Annotate
@@ -680,8 +711,18 @@ def covers(fold: int, target: Expr) -> Covers:
     return Covers(fold, target)
 
 
-def collect(binding: int) -> Collect:
-    return Collect(binding)
+def collect(binding: int, *, errors: bool = False) -> Collect:
+    return Collect(binding, errors)
+
+
+def reject(binding: int, key: Expr, *, unique: bool = False) -> Reject:
+    return Reject(binding, key, unique)
+
+
+def reject_check(
+    binding: int, message: LowerMessage, params: LowerParams | None = None
+) -> RejectCheck:
+    return RejectCheck(binding, message, params)
 
 
 def append(binding: int, value: Expr, *, unique: bool = False) -> Append:

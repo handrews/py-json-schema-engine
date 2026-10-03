@@ -68,12 +68,13 @@ def run(schema: JsonValue, instance: JsonValue) -> tuple[bool, EvalState]:
 
 
 def test_items_tuple_applies_positionally_at_the_right_path() -> None:
-    schema: JsonValue = {"items": [{}, False]}
-    valid, state = run(schema, [1, 2, 3])
+    schema: JsonValue = {"items": [{}, {"items": [False]}]}
+    valid, state = run(schema, [1, [2], 3])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/items/1"
     assert err.cursor.pointer == "/1"
+    assert err.message == "items not allowed at 0"
 
 
 def test_items_tuple_ignores_elements_past_its_own_length() -> None:
@@ -137,12 +138,20 @@ def test_items_schema_form_applies_to_every_element() -> None:
 
 
 def test_items_schema_form_applies_at_the_right_path() -> None:
-    schema: JsonValue = {"items": False}
-    valid, state = run(schema, [1])
+    schema: JsonValue = {"items": {"items": [False]}}
+    valid, state = run(schema, [[1]])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/items"
     assert err.cursor.pointer == "/0"
+
+
+def test_items_schema_form_false_reports_every_index_once() -> None:
+    valid, state = run({"items": False}, [1, 2])
+    assert not valid
+    (err,) = state.errors
+    assert err.message == "items not allowed from index 0: 0, 1"
+    assert err.params == {"start": 0, "failed": [[0, 1]]}
 
 
 def test_items_schema_form_produces_true_only_when_it_applied() -> None:
@@ -167,12 +176,22 @@ def test_additional_items_with_tuple_items_applies_from_index_len() -> None:
 
 
 def test_additional_items_applies_at_the_right_path() -> None:
-    schema: JsonValue = {"items": [{}], "additionalItems": False}
-    valid, state = run(schema, [1, 2])
+    schema: JsonValue = {"items": [{}], "additionalItems": {"items": [False]}}
+    valid, state = run(schema, [1, [2]])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/additionalItems"
     assert err.cursor.pointer == "/1"
+
+
+def test_additional_items_false_reports_the_tail_once() -> None:
+    schema: JsonValue = {"items": [{}], "additionalItems": False}
+    valid, state = run(schema, [1, 2, 3, 4])
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "additionalItems"
+    assert err.message == "additional items not allowed from index 1: 1-3"
+    assert err.params == {"start": 1, "failed": [[1, 3]]}
 
 
 def test_additional_items_produces_true_only_when_it_applied() -> None:

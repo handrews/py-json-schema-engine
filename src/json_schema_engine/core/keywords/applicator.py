@@ -22,6 +22,7 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.keywords._rejects import is_false, names_rejected
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
@@ -30,17 +31,21 @@ from json_schema_engine.core.lowering import (
     LoweringContext,
     LowerMessage,
     LowerParams,
+    Stmt,
     apply,
     apply_expr,
+    collect,
     combine_check,
     fail,
     has_key,
     helper,
     lower_nothing,
+    reject,
+    reject_check,
     type_is,
     when,
 )
-from json_schema_engine.core.messages import realize
+from json_schema_engine.core.messages import index_ranges, realize
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -120,19 +125,44 @@ def _all_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _all_of_rejected(failed: list[int]) -> tuple[LowerMessage, LowerParams]:
+    if len(failed) == 1:
+        text = f"allOf branch {failed[0]} is false"
+    else:
+        text = f"allOf branches {index_ranges(failed)} are false"
+    return (text,), {"failed": Const(list(failed))}
+
+
+def _false_branches(value: list[JsonValue]) -> list[int]:
+    return [index for index, schema in enumerate(value) if is_false(schema)]
+
+
 def _all_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
-    lctx.emit(*(apply((index,), HERE) for index in range(len(value))))
+    failed = _false_branches(value)
+    lctx.emit(
+        *(
+            apply((index,), HERE)
+            for index, schema in enumerate(value)
+            if not is_false(schema)
+        ),
+        *((fail(*_all_of_rejected(failed)),) if failed else ()),
+    )
 
 
 def _all_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     assert isinstance(value, list)
     ok = True
-    for index in range(len(value)):
-        if not ctx.apply(("allOf", index), cursor):
+    for index, schema in enumerate(value):
+        if not is_false(schema) and not ctx.apply(("allOf", index), cursor):
             ok = False
-    # No message of its own: a failing branch already reported why, and that
-    # error stays relevant because `allOf` rejects too (§4 rule 6).
+    # No message of its own for a failing branch: it already reported why,
+    # and that error stays relevant because `allOf` rejects too (§4 rule
+    # 6). A `false` branch explains nothing, so `allOf` names it instead.
+    failed = _false_branches(value)
+    if failed:
+        ctx.error(*realize(*_all_of_rejected(failed), cursor.value))
+        ok = False
     return ok
 
 
@@ -339,15 +369,39 @@ def _dependent_schemas_analyze(value: JsonValue, _ctx: AnalyzeContext) -> Static
     )
 
 
+def dependents_rejected(keyword: str, names: Expr) -> tuple[LowerMessage, LowerParams]:
+    """`property "a" present, which dependentSchemas forbids`: shared with
+    draft-07's `dependencies`."""
+    return names_rejected("", f" present, which {keyword} forbids", names)
+
+
 def _dependent_schemas_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
+    r = lctx.binding()
+    forbidden = any(is_false(schema) for schema in value.values())
+
+    def step(name: str) -> Stmt:
+        if is_false(value[name]):
+            return reject(r, Const(name))
+        return apply((name,), HERE)
+
     lctx.emit(
         when(
             type_is(instance, "object"),
-            tuple(
-                when(has_key(instance, name), (apply((name,), HERE),)) for name in value
+            (
+                *((collect(r, errors=True),) if forbidden else ()),
+                *(when(has_key(instance, name), (step(name),)) for name in value),
+                *(
+                    (
+                        reject_check(
+                            r, *dependents_rejected("dependentSchemas", Binding(r))
+                        ),
+                    )
+                    if forbidden
+                    else ()
+                ),
             ),
         )
     )
@@ -360,10 +414,20 @@ def _dependent_schemas_evaluate(
     if not is_object(instance) or not is_object(value):
         return True
     ok = True
+    rejected: list[JsonValue] = []
     for name in value:
-        if name in instance and not ctx.apply(("dependentSchemas", name), cursor):
+        if name not in instance:
+            continue
+        if is_false(value[name]):
+            rejected.append(name)
+        elif not ctx.apply(("dependentSchemas", name), cursor):
             ok = False
-    # No message of its own: a failing named subschema already reported why.
+    # No message of its own for a failing named subschema: it already
+    # reported why. A `false` one explains nothing, so it is named here.
+    if rejected:
+        described = dependents_rejected("dependentSchemas", Const(rejected))
+        ctx.error(*realize(*described, instance))
+        ok = False
     return ok
 
 
