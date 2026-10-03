@@ -7,6 +7,23 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+### Added
+
+- **`KeywordContext.report(describe)`** (DESIGN.md P18): a keyword reports
+  an error as the lowering-IR description its `lower` emits, and the record
+  realizes it against the instance only if the error is rendered. Runtime
+  values go in as `Const` nodes; a `Binding` raises `LookupError` when
+  rendered. `error(message, params)` is unchanged.
+- **Lowering IR for a `false` subschema** (`json_schema_engine.core.lowering`,
+  DESIGN.md P19): `Reject` and `RejectCheck` statements, their constructors
+  `reject` and `reject_check`, and `Collect(errors=True)` (`collect(binding,
+  errors=True)`) for the keys one summary error names.
+- **Message-formatting helpers in `HelperName`**: `preview`,
+  `apparent_type`, `typed_preview`, `index_ranges`, `ranges`, `name_list`,
+  `labeled_names`, `counted_indexes`, `index_groups`, `duplicate_groups`,
+  `missing_names`, `missing_dependencies` and `dependency_list`, for use in
+  a `Fail`'s message or params and never in a condition.
+
 ### Changed
 
 - **Error messages say what was wrong with what (DESIGN.md D13).** Every

@@ -39,7 +39,6 @@ from json_schema_engine.core.keywords._ids import (
     keyword_id,
 )
 from json_schema_engine.core.lowering import (
-    INSTANCE,
     Const,
     Expr,
     LoweringContext,
@@ -54,7 +53,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import preview
+from json_schema_engine.core.messages import describe_once, preview
 
 
 def _format_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -129,7 +128,7 @@ def asserting_format(
         instance = cursor.value
         if not applies_to(definition.types, instance) or definition.test(instance):
             return True
-        ctx.report(lambda: _describe(value, INSTANCE))
+        ctx.report(describe_once(_describe, value))
         return False
 
     def lower(value: JsonValue, lctx: LoweringContext) -> None:

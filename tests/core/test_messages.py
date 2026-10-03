@@ -22,6 +22,7 @@ from json_schema_engine.core.lowering import (
     INSTANCE,
     Binding,
     Const,
+    Expr,
     HelperName,
     LoweringContext,
     LowerMessage,
@@ -35,6 +36,7 @@ from json_schema_engine.core.messages import (
     HELPERS,
     PREVIEW_LIMIT,
     apparent_type,
+    describe_once,
     duplicate_groups,
     index_groups,
     index_ranges,
@@ -280,6 +282,30 @@ def test_a_binding_in_a_reported_description_fails_loudly() -> None:
     assert engine.evaluate(uri, 1).valid is False
     with pytest.raises(LookupError, match="Const"):
         engine.evaluate(uri, 1, output="list")
+
+
+def test_describe_once_shares_a_description_per_value() -> None:
+    calls: list[JsonValue] = []
+
+    def build(value: JsonValue, instance: Expr) -> tuple[LowerMessage, LowerParams]:
+        calls.append(value)
+        return (("must be ", Const(value), ", got ", instance), {"limit": Const(value)})
+
+    first = describe_once(build, 5)
+    assert describe_once(build, 5) is first
+    assert first() == first()
+    # `1 == True` and `1 == 1.0`, yet each is its own description.
+    describe_once(build, 1)
+    describe_once(build, True)
+    describe_once(build, 1.0)
+    assert calls == [5, 1, True, 1.0]
+    # An unhashable value is built per report, never cached.
+    listed: JsonValue = [1, 2]
+    thunk = describe_once(build, listed)
+    assert thunk is not describe_once(build, listed)
+    assert len(calls) == 4  # built lazily, when the thunk is called
+    thunk()
+    assert calls[-1] == [1, 2]
 
 
 def test_every_helper_name_has_a_function() -> None:

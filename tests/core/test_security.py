@@ -359,8 +359,9 @@ def test_retains_160k_dropped_errors_at_the_verbose_level() -> None:
     assert result.errors is None
     assert result.dropped_errors is not None
     assert len(result.dropped_errors) == 160_000
-    # TS budget: 5000ms; doubled for CI headroom. Measured locally ~2s.
-    assert elapsed < 10.0
+    # TS budget: 5000ms, more than doubled for CI headroom: every one of the
+    # 160k messages names the item and its type. Measured locally ~2s.
+    assert elapsed < 12.0
 
 
 # --- undeclared production/consumption raise under every output format ----

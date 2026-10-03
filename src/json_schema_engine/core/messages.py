@@ -35,6 +35,7 @@ from json_schema_engine.core.json_model import (
     type_matches,
 )
 from json_schema_engine.core.lowering import (
+    INSTANCE,
     Binding,
     Cmp,
     Cond,
@@ -289,6 +290,49 @@ HELPERS: Final[Mapping[HelperName, Callable[..., object]]] = {
     "counted_indexes": counted_indexes,
     "index_groups": index_groups,
 }
+
+
+# --- descriptions built once ---------------------------------------------------
+
+type Description = tuple[LowerMessage, LowerParams | None]
+
+# Descriptions by (builder, value type, value), bounded so a run over many
+# schemas cannot grow it without limit. The type is part of the key because
+# `1 == True` and `1 == 1.0` while their messages differ.
+_DESCRIPTIONS: dict[tuple[object, type, object], Callable[[], Description]] = {}
+_DESCRIPTIONS_LIMIT: Final = 1024
+
+
+def describe_once[V](
+    builder: Callable[[V, Expr], Description], value: V
+) -> Callable[[], Description]:
+    """A thunk for `builder(value, INSTANCE)`, shared by every report of
+    the same `value`.
+
+    A description that depends on the keyword's value alone is the same for
+    every instance the keyword rejects, and an array of a hundred thousand
+    wrong items rejects a hundred thousand times. Building it once keeps
+    rendering from churning the garbage collector, which otherwise walks the
+    hundred thousand records already alive. An unhashable value (an `enum`
+    list) is built per report, as before.
+    """
+    try:
+        key = (builder, type(value), value)
+        hash(key)
+    except TypeError:
+        return lambda: builder(value, INSTANCE)
+    cached = _DESCRIPTIONS.get(key)
+    if cached is not None:
+        return cached
+    if len(_DESCRIPTIONS) >= _DESCRIPTIONS_LIMIT:
+        _DESCRIPTIONS.clear()
+    description = builder(value, INSTANCE)
+
+    def thunk() -> Description:
+        return description
+
+    _DESCRIPTIONS[key] = thunk
+    return thunk
 
 
 # --- realize ------------------------------------------------------------------

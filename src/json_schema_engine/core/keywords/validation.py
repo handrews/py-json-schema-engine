@@ -12,7 +12,7 @@
 # package's `_ids`. Never imports the registry or evaluator.
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import TypeGuard
+from typing import Final, TypeGuard
 
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.dialect import (
@@ -54,7 +54,11 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import missing_dependencies, preview
+from json_schema_engine.core.messages import (
+    describe_once,
+    missing_dependencies,
+    preview,
+)
 
 # --- pattern (EXEMPLAR: assertion class) ----------------------------------
 
@@ -76,7 +80,7 @@ def _pattern_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> 
         return True
     if ctx.compile_regex(value).search(instance):
         return True
-    ctx.report(lambda: _pattern_describe(value, INSTANCE))
+    ctx.report(describe_once(_pattern_describe, value))
     return False
 
 
@@ -138,7 +142,7 @@ def assertion(
     def _evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         if test(value, cursor.value):
             return True
-        ctx.report(lambda: describe(value, INSTANCE))
+        ctx.report(describe_once(describe, value))
         return False
 
     def _lower(value: JsonValue, lctx: LoweringContext) -> None:
@@ -186,7 +190,9 @@ def _type_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> boo
     instance = cursor.value
     if any(isinstance(name, str) and type_matches(instance, name) for name in names):
         return True
-    ctx.report(lambda: _type_describe(names, INSTANCE))
+    # A tuple, so the description is shared across every rejection by the
+    # same `type` value.
+    ctx.report(describe_once(_type_describe, tuple(names)))
     return False
 
 
@@ -537,6 +543,13 @@ def _unique_items_describe(instance: Expr) -> tuple[LowerMessage, LowerParams]:
     )
 
 
+def _unique_items_description() -> tuple[LowerMessage, LowerParams]:
+    return _UNIQUE_ITEMS_DESCRIPTION
+
+
+_UNIQUE_ITEMS_DESCRIPTION: Final = _unique_items_describe(INSTANCE)
+
+
 def _unique_items_evaluate(
     value: JsonValue, cursor: Cursor, ctx: KeywordContext
 ) -> bool:
@@ -548,7 +561,7 @@ def _unique_items_evaluate(
         return True
     if not has_duplicate_items(instance):
         return True
-    ctx.report(lambda: _unique_items_describe(INSTANCE))
+    ctx.report(_unique_items_description)
     return False
 
 
