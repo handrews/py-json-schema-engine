@@ -25,15 +25,22 @@ from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
+    Const,
+    Expr,
     LoweringContext,
+    LowerMessage,
+    LowerParams,
     apply,
     apply_expr,
     combine_check,
+    fail,
     has_key,
+    helper,
     lower_nothing,
     type_is,
     when,
 )
+from json_schema_engine.core.messages import realize
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -59,6 +66,14 @@ def _any_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _any_of_message(count: int) -> str:
+    # Which branches failed would say nothing new: all of them did, and
+    # each reported why.
+    if count == 1:
+        return "does not match the anyOf branch"
+    return f"does not match any of the {count} anyOf branches"
+
+
 def _any_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
     # Every branch is an `any_may_pass` apply; the combine check closes the
@@ -66,7 +81,7 @@ def _any_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     # where the plan proves the region verdict-only (§4 rule 7).
     lctx.emit(
         *(apply((index,), HERE, "any_may_pass") for index in range(len(value))),
-        combine_check(("does not match any anyOf branch",)),
+        combine_check((_any_of_message(len(value)),)),
     )
 
 
@@ -79,7 +94,7 @@ def _any_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
         if ctx.apply(("anyOf", index), cursor):
             ok = True
     if not ok:
-        ctx.error("does not match any anyOf branch")
+        ctx.error(_any_of_message(len(value)))
     return ok
 
 
@@ -143,18 +158,33 @@ def _one_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _one_of_describe(count: int, passing: Expr) -> tuple[LowerMessage, LowerParams]:
+    return (
+        (
+            "matched ",
+            helper("counted_indexes", passing, Const("branch"), Const("branches")),
+            f", expected exactly 1 of {count}",
+        ),
+        {"passing": passing},
+    )
+
+
 def _one_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
+    if not value:
+        # No branch can match, and the combine run has no apply to bind
+        # its passing list from: the failure is a constant.
+        lctx.emit(fail(*_one_of_describe(0, Const([]))))
+        return
     # Every branch is an `exactly_one` apply; the combine check closes the
-    # run and names, through its bindings, the passing count and indexes
-    # `evaluate` reports (D1: one message).
+    # run and names, through its bindings, the passing indexes `evaluate`
+    # reports (D1: one message).
     count = lctx.binding()
     passing = lctx.binding()
     lctx.emit(
         *(apply((index,), HERE, "exactly_one") for index in range(len(value))),
         combine_check(
-            ("matched ", Binding(count), " branches, expected exactly 1"),
-            {"passing": Binding(passing)},
+            *_one_of_describe(len(value), Binding(passing)),
             count=count,
             passing=passing,
         ),
@@ -170,10 +200,7 @@ def _one_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
         if ctx.apply(("oneOf", index), cursor):
             passing.append(index)
     if len(passing) != 1:
-        ctx.error(
-            f"matched {len(passing)} branches, expected exactly 1",
-            {"passing": passing},
-        )
+        ctx.error(*realize(*_one_of_describe(len(value), Const(passing)), cursor.value))
     return len(passing) == 1
 
 

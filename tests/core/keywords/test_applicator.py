@@ -128,9 +128,15 @@ def test_any_of_all_failing_reports_branch_errors_plus_its_own() -> None:
     assert messages == [
         "schema is false",
         "schema is false",
-        "does not match any anyOf branch",
+        "does not match any of the 2 anyOf branches",
     ]
     assert state.errors[-1].keyword_name == "anyOf"
+
+
+def test_any_of_with_one_branch_reads_naturally() -> None:
+    valid, state = run({"anyOf": [False]}, 1)
+    assert not valid
+    assert state.errors[-1].message == "does not match the anyOf branch"
 
 
 # --- allOf -----------------------------------------------------------------
@@ -165,7 +171,7 @@ def test_one_of_fails_with_zero_matches() -> None:
     valid, state = run(schema, 1)
     assert not valid
     err = state.errors[-1]
-    assert err.message == "matched 0 branches, expected exactly 1"
+    assert err.message == "matched none, expected exactly 1 of 2"
     assert err.params == {"passing": []}
     assert err.keyword_name == "oneOf"
 
@@ -175,7 +181,7 @@ def test_one_of_fails_with_two_matches() -> None:
     valid, state = run(schema, 1)
     assert not valid
     err = state.errors[-1]
-    assert err.message == "matched 2 branches, expected exactly 1"
+    assert err.message == "matched 2 branches (0, 1), expected exactly 1 of 3"
     assert err.params == {"passing": [0, 1]}
 
 
@@ -184,7 +190,7 @@ def test_one_of_empty_list_matches_zero_branches() -> None:
     valid, state = run(schema, 1)
     assert not valid
     err = state.errors[-1]
-    assert err.message == "matched 0 branches, expected exactly 1"
+    assert err.message == "matched none, expected exactly 1 of 0"
     assert err.params == {"passing": []}
 
 

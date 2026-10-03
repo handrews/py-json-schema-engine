@@ -73,6 +73,7 @@ def test_apparent_type() -> None:
 def test_index_ranges_and_ranges() -> None:
     assert index_ranges([5, 1, 2, 3, 7, 8, 9]) == "1-3, 5, 7-9"
     assert index_ranges([4]) == "4"
+    assert index_ranges([0, 1, 3, 4, 5]) == "0, 1, 3-5"
     assert index_ranges([]) == "none"
     assert ranges([1, 2, 3, 5]) == [[1, 3], [5, 5]]
 

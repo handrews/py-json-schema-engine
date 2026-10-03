@@ -24,7 +24,7 @@ from json_schema_engine.core.dialect import (
 from json_schema_engine.core.json_model import (
     JsonValue,
     code_point_length,
-    first_duplicate_pair,
+    has_duplicate_items,
     is_integer_value,
     is_multiple_of,
     is_object,
@@ -37,7 +37,6 @@ from json_schema_engine.core.lowering import (
     CmpOp,
     Const,
     Expr,
-    Item,
     LowerFn,
     LoweringContext,
     LowerMessage,
@@ -541,6 +540,16 @@ _min_properties_behavior = _object_bound(
 # --- uniqueItems (M2) ------------------------------------------------------
 
 
+def _unique_items_describe(instance: Expr) -> tuple[LowerMessage, LowerParams]:
+    # Every group of equal items, by index: never the items themselves,
+    # which can be arbitrarily large.
+    groups = helper("duplicate_groups", instance)
+    return (
+        ("items are not unique: ", helper("index_groups", groups)),
+        {"duplicates": groups},
+    )
+
+
 def _unique_items_evaluate(
     value: JsonValue, cursor: Cursor, ctx: KeywordContext
 ) -> bool:
@@ -550,11 +559,9 @@ def _unique_items_evaluate(
     # would treat as equal to `True` but which the keyword value never is.
     if value is not True or not isinstance(instance, list):
         return True
-    pair = first_duplicate_pair(instance)
-    if pair is None:
+    if not has_duplicate_items(instance):
         return True
-    j, i = pair
-    ctx.error(f"items at {j} and {i} are not unique", {"duplicates": [j, i]})
+    ctx.error(*realize(*_unique_items_describe(INSTANCE), instance))
     return False
 
 
@@ -563,25 +570,10 @@ def _unique_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if value is not True:
         return
     instance = lctx.instance
-    # The colliding pair is runtime data: the message and params name it
-    # through the same helper `evaluate` uses (computed only on the failure
-    # path, where the scan already ran once).
-    pair = helper("first_duplicate_pair", instance)
     lctx.emit(
         when(
             and_(type_is(instance, "array"), helper("has_duplicate_items", instance)),
-            (
-                fail(
-                    (
-                        "items at ",
-                        Item(pair, Const(0)),
-                        " and ",
-                        Item(pair, Const(1)),
-                        " are not unique",
-                    ),
-                    {"duplicates": pair},
-                ),
-            ),
+            (fail(*_unique_items_describe(instance)),),
         )
     )
 

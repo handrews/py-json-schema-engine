@@ -147,6 +147,8 @@ type HelperName = Literal[
     "dependency_list",
     "typed_preview",
     "labeled_names",
+    "counted_indexes",
+    "index_groups",
 ]
 type CmpOp = Literal["<", "<=", ">", ">=", "==", "!="]
 

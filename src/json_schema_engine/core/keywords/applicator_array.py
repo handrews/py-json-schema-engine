@@ -33,6 +33,7 @@ from json_schema_engine.core.lowering import (
     Binding,
     Const,
     CountRange,
+    Expr,
     ForEachIndex,
     LoweringContext,
     LowerMessage,
@@ -48,6 +49,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
+from json_schema_engine.core.messages import realize
 
 PREFIX_ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "prefixItems")
 ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "items")
@@ -238,6 +240,28 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
     a sibling spelled `minContains` is an ordinary unknown keyword.
     """
 
+    def describe(
+        minimum: JsonValue, maximum: JsonValue | None, count: Expr, matched: Expr
+    ) -> tuple[LowerMessage, LowerParams]:
+        params: dict[str, Expr] = {
+            "count": count,
+            "matched": matched,
+            "minContains": Const(minimum),
+        }
+        if maximum is not None:
+            params["maxContains"] = Const(maximum)
+        if not sibling_bounds:
+            # draft-07/06: one implicit minimum, so nothing matched.
+            return ("no item matches the contains subschema",), params
+        expected = f"at least {minimum}" if maximum is None else f"{minimum}-{maximum}"
+        shown = helper("counted_indexes", matched, Const("item"), Const("items"))
+        message: LowerMessage = (
+            "the contains subschema matched ",
+            shown,
+            f", expected {expected}",
+        )
+        return message, params
+
     def analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
         return StaticFacts(
             subschemas=((),),
@@ -256,23 +280,9 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
         binding = lctx.binding()
         matched = lctx.binding()
         counter = lctx.binding()
-        # The message and params name the runtime match count through the
-        # `count` binding, exactly as `evaluate` reports it.
-        if not sibling_bounds:
-            message: LowerMessage = ("no item matches the contains subschema",)
-        elif maximum is None:
-            message = (
-                Binding(counter),
-                f" item(s) match the contains subschema, expected at least {minimum}",
-            )
-        else:
-            message = (
-                Binding(counter),
-                f" item(s) match the contains subschema, expected {minimum}-{maximum}",
-            )
-        params: LowerParams = {"count": Binding(counter), "minContains": Const(minimum)}
-        if maximum is not None:
-            params = {**params, "maxContains": Const(maximum)}
+        # The message and params name the runtime count and indexes through
+        # the `count` and `matched` bindings, exactly as `evaluate` reports.
+        message, params = describe(minimum, maximum, Binding(counter), Binding(matched))
         count = helper("length_of", Binding(matched))
         lctx.emit(
             when(
@@ -318,22 +328,12 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
         count = len(matched)
         minimum, maximum = _contains_bounds(ctx.schema, sibling_bounds=sibling_bounds)
         if count < minimum or (maximum is not None and count > maximum):
-            if not sibling_bounds:
-                message = "no item matches the contains subschema"
-            elif maximum is None:
-                message = (
-                    f"{count} item(s) match the contains subschema, "
-                    f"expected at least {minimum}"
+            ctx.error(
+                *realize(
+                    *describe(minimum, maximum, Const(count), Const(list(matched))),
+                    instance,
                 )
-            else:
-                message = (
-                    f"{count} item(s) match the contains subschema, "
-                    f"expected {minimum}-{maximum}"
-                )
-            params: dict[str, JsonValue] = {"count": count, "minContains": minimum}
-            if maximum is not None:
-                params["maxContains"] = maximum
-            ctx.error(message, params)
+            )
             return False
         # Dependency data comes only from an accepting keyword: matched
         # indexes, or True when every element matched. `minContains: 0`

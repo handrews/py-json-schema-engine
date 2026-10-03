@@ -17,6 +17,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.lowering import HelperName
 
 # Fixed helper vocabulary (the exec namespace and the standalone prologue
 # define exactly these; `Names.vocabulary` records them on first use).
@@ -72,6 +73,25 @@ H_MDEP = "H_MDEP"  # missing_dependencies
 H_DLIST = "H_DLIST"  # dependency_list
 H_TPREV = "H_TPREV"  # typed_preview
 H_LNAMES = "H_LNAMES"  # labeled_names
+H_CIDX = "H_CIDX"  # counted_indexes
+H_IGRP = "H_IGRP"  # index_groups
+# The message-formatting helpers (`core/messages.py`), by IR name: called
+# only from error messages and params, so only the evaluator binds them.
+MESSAGE_HELPERS: dict[HelperName, str] = {
+    "preview": H_PREV,
+    "apparent_type": H_ATYPE,
+    "index_ranges": H_IRNG,
+    "name_list": H_NAMES,
+    "duplicate_groups": H_DUPG,
+    "ranges": H_RNGS,
+    "missing_names": H_MISS,
+    "missing_dependencies": H_MDEP,
+    "dependency_list": H_DLIST,
+    "typed_preview": H_TPREV,
+    "labeled_names": H_LNAMES,
+    "counted_indexes": H_CIDX,
+    "index_groups": H_IGRP,
+}
 EVALUATOR_NAMES = (
     STATE,
     PATH,
@@ -106,6 +126,8 @@ EVALUATOR_NAMES = (
     H_DLIST,
     H_TPREV,
     H_LNAMES,
+    H_CIDX,
+    H_IGRP,
 )
 
 BUILTINS_USED = frozenset(

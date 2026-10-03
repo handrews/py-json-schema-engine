@@ -126,6 +126,14 @@ _CONTAINS_PRODUCE = when(
 )
 
 
+def _matched_message(expected: str) -> tuple[object, ...]:
+    return (
+        "the contains subschema matched ",
+        helper("counted_indexes", Binding(1), Const("item"), Const("items")),
+        f", expected {expected}",
+    )
+
+
 def _contains_shape(
     minimum: int | float,
     maximum: int | float | None,
@@ -159,8 +167,8 @@ def test_contains_default_bounds_minimum_one_unbounded_maximum() -> None:
     assert lower(CONTAINS, {}) == _contains_shape(
         1,
         None,
-        (Binding(2), " item(s) match the contains subschema, expected at least 1"),
-        {"count": Binding(2), "minContains": Const(1)},
+        _matched_message("at least 1"),
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(1)},
     )
 
 
@@ -169,8 +177,13 @@ def test_contains_reads_sibling_min_and_max_contains() -> None:
     assert stmts == _contains_shape(
         2,
         3,
-        (Binding(2), " item(s) match the contains subschema, expected 2-3"),
-        {"count": Binding(2), "minContains": Const(2), "maxContains": Const(3)},
+        _matched_message("2-3"),
+        {
+            "count": Binding(2),
+            "matched": Binding(1),
+            "minContains": Const(2),
+            "maxContains": Const(3),
+        },
     )
 
 
@@ -180,8 +193,8 @@ def test_contains_min_contains_zero_still_emits_a_count_range() -> None:
     assert lower(CONTAINS, {}, schema={"minContains": 0}) == _contains_shape(
         0,
         None,
-        (Binding(2), " item(s) match the contains subschema, expected at least 0"),
-        {"count": Binding(2), "minContains": Const(0)},
+        _matched_message("at least 0"),
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(0)},
     )
 
 
@@ -192,8 +205,13 @@ def test_contains_whole_number_float_bounds_are_treated_as_integers() -> None:
     assert stmts == _contains_shape(
         2.0,
         3.0,
-        (Binding(2), " item(s) match the contains subschema, expected 2.0-3.0"),
-        {"count": Binding(2), "minContains": Const(2.0), "maxContains": Const(3.0)},
+        _matched_message("2.0-3.0"),
+        {
+            "count": Binding(2),
+            "matched": Binding(1),
+            "minContains": Const(2.0),
+            "maxContains": Const(3.0),
+        },
     )
 
 
@@ -206,7 +224,7 @@ def test_contains_without_sibling_bounds_uses_a_fixed_range_and_message() -> Non
         1,
         None,
         ("no item matches the contains subschema",),
-        {"count": Binding(2), "minContains": Const(1)},
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(1)},
     )
 
 

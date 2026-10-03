@@ -150,11 +150,15 @@ def ranges(indexes: Sequence[int]) -> list[list[int]]:
 
 
 def index_ranges(indexes: Sequence[int]) -> str:
-    """Indexes with consecutive runs collapsed: `1-3, 5`; `none` if empty."""
-    runs = ranges(indexes)
-    if not runs:
-        return "none"
-    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+    """Indexes with runs of three or more collapsed: `0, 1, 3-5`; `none` if
+    empty. A pair stays a pair, since `0-1` reads as a range of nothing."""
+    parts: list[str] = []
+    for a, b in ranges(indexes):
+        if b - a >= 2:
+            parts.append(f"{a}-{b}")
+        else:
+            parts.extend(str(i) for i in range(a, b + 1))
+    return ", ".join(parts) or "none"
 
 
 def name_list(names: Sequence[str]) -> str:
@@ -169,6 +173,19 @@ def labeled_names(names: Sequence[str], singular: str, plural: str) -> str:
     """`property "b"` or `properties "b", "c"`: a `name_list` with its
     noun agreeing in number."""
     return f"{singular if len(names) == 1 else plural} {name_list(names)}"
+
+
+def counted_indexes(indexes: Sequence[int], singular: str, plural: str) -> str:
+    """`none`, `1 item (4)`, or `2 items (0, 3)`."""
+    if not indexes:
+        return "none"
+    noun = singular if len(indexes) == 1 else plural
+    return f"{len(indexes)} {noun} ({index_ranges(indexes)})"
+
+
+def index_groups(groups: Sequence[Sequence[int]]) -> str:
+    """Groups of equal items: `0 = 2; 1 = 4 = 5`."""
+    return "; ".join(" = ".join(str(i) for i in group) for group in groups)
 
 
 def duplicate_groups(items: Sequence[JsonValue]) -> list[list[int]]:
@@ -240,6 +257,8 @@ HELPERS: Final[Mapping[HelperName, Callable[..., JsonValue]]] = {
     "dependency_list": dependency_list,
     "typed_preview": typed_preview,
     "labeled_names": labeled_names,  # type: ignore[dict-item]
+    "counted_indexes": counted_indexes,  # type: ignore[dict-item]
+    "index_groups": index_groups,  # type: ignore[dict-item]
 }
 
 

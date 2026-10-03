@@ -188,7 +188,7 @@ def test_contains_at_the_right_path() -> None:
     assert materialize_path(err.path_node) == "/contains/items"
     assert err.cursor.pointer == "/0/0"
     assert state.errors[-1].message == (
-        "0 item(s) match the contains subschema, expected at least 1"
+        "the contains subschema matched none, expected at least 1"
     )
 
 
@@ -213,16 +213,33 @@ def test_contains_error_message_and_params_with_only_max_contains() -> None:
     schema: JsonValue = {"contains": {"items": False}, "maxContains": 1}
     _, state = run(schema, [[], []])
     err = state.errors[0]
-    assert err.message == "2 item(s) match the contains subschema, expected 1-1"
-    assert err.params == {"count": 2, "minContains": 1, "maxContains": 1}
+    assert err.message == (
+        "the contains subschema matched 2 items (0, 1), expected 1-1"
+    )
+    assert err.params == {
+        "count": 2,
+        "matched": [0, 1],
+        "minContains": 1,
+        "maxContains": 1,
+    }
 
 
 def test_contains_error_message_and_params_default_unbounded_max() -> None:
     schema: JsonValue = {"contains": {"items": False}, "minContains": 2}
     _, state = run(schema, [[1]])
     err = state.errors[-1]
-    assert err.message == "0 item(s) match the contains subschema, expected at least 2"
-    assert err.params == {"count": 0, "minContains": 2}
+    assert err.message == "the contains subschema matched none, expected at least 2"
+    assert err.params == {"count": 0, "matched": [], "minContains": 2}
+
+
+def test_contains_names_the_matching_indexes() -> None:
+    schema: JsonValue = {"contains": {"items": False}, "minContains": 5}
+    _, state = run(schema, [[], [1], [], [], [], [2]])
+    err = state.errors[-1]
+    assert err.message == (
+        "the contains subschema matched 4 items (0, 2-4), expected at least 5"
+    )
+    assert err.params is not None and err.params["matched"] == [0, 2, 3, 4]
 
 
 def test_contains_non_array_instance_passes() -> None:

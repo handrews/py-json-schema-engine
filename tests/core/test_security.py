@@ -53,10 +53,10 @@ def test_uniqueitems_reports_a_real_duplicate_with_ascending_indices() -> None:
     assert result.valid is False
     assert result.errors is not None
     (error,) = result.errors
-    assert error["error"] == "items at 1 and 3 are not unique"
-    # `validation.py`'s uniqueItems reports the colliding pair as `duplicates`,
-    # not a keyword value or the offending items themselves.
-    assert error.get("params") == {"duplicates": [1, 3]}
+    assert error["error"] == "items are not unique: 1 = 3"
+    # `validation.py`'s uniqueItems reports each group of equal items by
+    # index as `duplicates`, never the offending items themselves.
+    assert error.get("params") == {"duplicates": [[1, 3]]}
 
 
 # --- hash-miss guard (P2): canonical_key confirmed by json_equal -----------

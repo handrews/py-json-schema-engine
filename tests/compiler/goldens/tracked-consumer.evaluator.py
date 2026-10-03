@@ -40,7 +40,7 @@ def u0(v, d, s, st, pn, cu, ev):
         H_ACUT(st, m4)
         del ev[m5:]
     if not c0:
-        H_ERR(st, x1, pn, cu, 'does not match any anyOf branch', None)
+        H_ERR(st, x1, pn, cu, 'does not match any of the 2 anyOf branches', None)
         w0 = False
     if w0:
         H_DROP(st, m1)

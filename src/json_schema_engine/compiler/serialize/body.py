@@ -245,32 +245,14 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
             return e.call(e.load(e.H_FDP), *(expression(body, a) for a in args))
         case "json_type_name":
             return e.call(e.load(e.H_TYPE), *(expression(body, a) for a in args))
-        case "preview":
-            return e.call(e.load(e.H_PREV), *(expression(body, a) for a in args))
-        case "apparent_type":
-            return e.call(e.load(e.H_ATYPE), *(expression(body, a) for a in args))
-        case "index_ranges":
-            return e.call(e.load(e.H_IRNG), *(expression(body, a) for a in args))
-        case "name_list":
-            return e.call(e.load(e.H_NAMES), *(expression(body, a) for a in args))
-        case "duplicate_groups":
-            return e.call(e.load(e.H_DUPG), *(expression(body, a) for a in args))
-        case "ranges":
-            return e.call(e.load(e.H_RNGS), *(expression(body, a) for a in args))
-        case "missing_names":
-            return e.call(e.load(e.H_MISS), *(expression(body, a) for a in args))
-        case "missing_dependencies":
-            return e.call(e.load(e.H_MDEP), *(expression(body, a) for a in args))
-        case "dependency_list":
-            return e.call(e.load(e.H_DLIST), *(expression(body, a) for a in args))
-        case "typed_preview":
-            return e.call(e.load(e.H_TPREV), *(expression(body, a) for a in args))
-        case "labeled_names":
-            return e.call(e.load(e.H_LNAMES), *(expression(body, a) for a in args))
         case "length_of" | "code_point_length":
             # `len` counts code points on `str` and elements on containers.
             (arg,) = args
             return e.call(e.load("len"), expression(body, arg))
+        case _:
+            # A message-formatting helper: bound under its fixed name.
+            fn = e.MESSAGE_HELPERS[name]
+            return e.call(e.load(fn), *(expression(body, a) for a in args))
 
 
 # --- applications ------------------------------------------------------------
@@ -1081,11 +1063,12 @@ def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
     iterable = e.call(
         e.load("range"), e.call(e.load("len"), expression(body, stmt.target))
     )
-    # The matched indexes are dependency data: collected only when a
-    # tracked consumer reads them.
+    # The matched indexes are dependency data, and the evaluator's error
+    # names them: collected when a tracked consumer reads them or a message
+    # may, never in a verdict-only artifact.
     matched = (
         body.binding_name(stmt.matched)
-        if stmt.matched is not None and body.produce_live
+        if stmt.matched is not None and (body.produce_live or body.evaluator)
         else None
     )
     hit: list[ast.stmt] = [e.aug_add(counter, e.const(1))]
