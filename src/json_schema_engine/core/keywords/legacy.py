@@ -70,7 +70,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import missing_dependencies, realize
+from json_schema_engine.core.messages import missing_dependencies
 
 ITEMS_LEGACY_ID = keyword_id(VOCAB_APPLICATOR_2019, "items")
 ADDITIONAL_ITEMS_ID = keyword_id(VOCAB_APPLICATOR_2019, "additionalItems")
@@ -198,7 +198,7 @@ def _items_legacy_evaluate(
             ):
                 ok = False
         if rejected:
-            ctx.error(*realize(*positions_rejected(Const(rejected)), instance))
+            ctx.report(lambda: positions_rejected(Const(rejected)))
             ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6):
         # the largest applied index, or True when it covered the whole array.
@@ -383,11 +383,10 @@ def _dependencies_evaluate(
         elif not ctx.apply(("dependencies", name), cursor):
             ok = False
     if rejected:
-        described = dependents_rejected("dependencies", Const(rejected))
-        ctx.error(*realize(*described, instance))
+        ctx.report(lambda: dependents_rejected("dependencies", Const(rejected)))
         ok = False
     if missing_dependencies(instance, value):
-        ctx.error(*realize(*dependency_describe(value, INSTANCE), instance))
+        ctx.report(lambda: dependency_describe(value, INSTANCE))
         ok = False
     return ok
 

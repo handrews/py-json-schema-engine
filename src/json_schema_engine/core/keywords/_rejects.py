@@ -32,7 +32,6 @@ from json_schema_engine.core.lowering import (
     reject,
     reject_check,
 )
-from json_schema_engine.core.messages import realize
 
 
 def is_false(value: JsonValue) -> bool:
@@ -109,7 +108,7 @@ def tail_evaluate(
     if len(instance) <= start:
         return True
     rejected: list[JsonValue] = list(range(start, len(instance)))
-    ctx.error(*realize(*tail_rejected(noun, start, Const(rejected)), instance))
+    ctx.report(lambda: tail_rejected(noun, start, Const(rejected)))
     return False
 
 

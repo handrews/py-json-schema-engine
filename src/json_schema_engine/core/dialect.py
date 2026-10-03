@@ -17,7 +17,7 @@ from typing import Literal, Protocol
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.errors import ReadOnlyRegistryError, UnknownDialectError
 from json_schema_engine.core.json_model import JsonValue, is_object
-from json_schema_engine.core.lowering import LowerFn
+from json_schema_engine.core.lowering import LowerFn, LowerMessage, LowerParams
 from json_schema_engine.core.ref import SchemaRef
 
 # --- Static facts --------------------------------------------------------
@@ -253,6 +253,18 @@ class KeywordContext(Protocol):
 
     def error(self, message: str, params: ErrorParams | None = None) -> None:
         """Report an assertion failure with optional structured params (D13)."""
+        ...
+
+    def report(
+        self,
+        describe: Callable[[], tuple[LowerMessage, LowerParams | None]],
+    ) -> None:
+        """Report an assertion failure described in lowering IR (P18).
+
+        `describe` returns the same message and params a keyword's `lower`
+        emits, against `INSTANCE`; it is called, and the description
+        realized against this instance, only if the error is rendered.
+        """
         ...
 
 

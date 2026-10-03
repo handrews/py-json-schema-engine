@@ -73,7 +73,6 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import realize
 
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
 ADDITIONAL_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "additionalProperties")
@@ -182,8 +181,9 @@ def unevaluated_properties(
                 ok = False
         if is_false(value) and matched:
             rejected: list[JsonValue] = list(matched)
-            described = names_rejected("unevaluated ", " not allowed", Const(rejected))
-            ctx.error(*realize(*described, instance))
+            ctx.report(
+                lambda: names_rejected("unevaluated ", " not allowed", Const(rejected))
+            )
             ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6).
         if ok:
@@ -311,7 +311,7 @@ def unevaluated_items(
             ):
                 ok = False
         if rejected:
-            ctx.error(*realize(*unevaluated_rejected(Const(rejected)), instance))
+            ctx.report(lambda: unevaluated_rejected(Const(rejected)))
             ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6).
         if applied and ok:

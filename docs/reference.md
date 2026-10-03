@@ -436,6 +436,12 @@ compiler tier.
   need from `if`).
 - `KeywordContext.error(message, params=None) -> None`: reports an assertion
   failure with optional structured params (D13).
+- `KeywordContext.report(describe) -> None`: reports an assertion failure
+  described in lowering IR (P18). `describe()` returns the `LowerMessage` and
+  `LowerParams` the keyword's `lower` emits, against `INSTANCE`. It is called,
+  and the description realized against this instance, only if the error is
+  rendered, so a verdict-only evaluation or a dropped error costs nothing.
+  This is how the built-in keywords report.
 
 `StaticFacts`: what one keyword occurrence says about itself from its value
 alone (a frozen dataclass); the compiler tier's entire window into keyword

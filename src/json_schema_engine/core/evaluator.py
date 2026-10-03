@@ -37,6 +37,7 @@ from json_schema_engine.core.channel import (
     ErrorRecord,
     Frame,
     KeywordTrace,
+    MessageBuilder,
     PathNode,
     TraceNode,
 )
@@ -65,6 +66,8 @@ from json_schema_engine.core.json_model import (
     is_object,
     json_type_of,
 )
+from json_schema_engine.core.lowering import LowerMessage, LowerParams
+from json_schema_engine.core.messages import realize
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.registry import DEFAULT_MAX_DEPTH, SchemaRegistry
 from json_schema_engine.core.uri import schema_location
@@ -344,6 +347,22 @@ class _KeywordContext:
         ]
 
     def error(self, message: str, params: ErrorParams | None = None) -> None:
+        self._record(message, params)
+
+    def report(
+        self,
+        describe: Callable[[], tuple[LowerMessage, LowerParams | None]],
+    ) -> None:
+        instance = self._cursor.value
+
+        def build() -> tuple[str, dict[str, JsonValue] | None]:
+            return realize(*describe(), instance)
+
+        self._record(build, None)
+
+    def _record(
+        self, message: str | MessageBuilder, params: ErrorParams | None
+    ) -> None:
         self.reported = True
         self._state.errors.append(
             ErrorRecord(

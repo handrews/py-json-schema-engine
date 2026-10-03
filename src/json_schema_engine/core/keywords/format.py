@@ -54,7 +54,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import preview, realize
+from json_schema_engine.core.messages import preview
 
 
 def _format_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
@@ -129,7 +129,7 @@ def asserting_format(
         instance = cursor.value
         if not applies_to(definition.types, instance) or definition.test(instance):
             return True
-        ctx.error(*realize(*_describe(value, INSTANCE), instance))
+        ctx.report(lambda: _describe(value, INSTANCE))
         return False
 
     def lower(value: JsonValue, lctx: LoweringContext) -> None:

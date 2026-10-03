@@ -58,7 +58,6 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import realize
 
 PREFIX_ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "prefixItems")
 ITEMS_ID = keyword_id(VOCAB_APPLICATOR, "items")
@@ -150,7 +149,7 @@ def _prefix_items_evaluate(
         ):
             ok = False
     if rejected:
-        ctx.error(*realize(*positions_rejected(Const(rejected)), instance))
+        ctx.report(lambda: positions_rejected(Const(rejected)))
         ok = False
     # Dependency data comes only from an accepting keyword (§4 rule 6): the
     # largest applied index, or True when it covered the whole array.
@@ -362,11 +361,8 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
         count = len(matched)
         minimum, maximum = _contains_bounds(ctx.schema, sibling_bounds=sibling_bounds)
         if count < minimum or (maximum is not None and count > maximum):
-            ctx.error(
-                *realize(
-                    *describe(minimum, maximum, Const(count), Const(list(matched))),
-                    instance,
-                )
+            ctx.report(
+                lambda: describe(minimum, maximum, Const(count), Const(list(matched)))
             )
             return False
         # Dependency data comes only from an accepting keyword: matched

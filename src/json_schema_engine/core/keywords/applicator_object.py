@@ -55,7 +55,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import name_list, realize
+from json_schema_engine.core.messages import name_list
 
 PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "properties")
 PATTERN_PROPERTIES_ID = keyword_id(VOCAB_APPLICATOR, "patternProperties")
@@ -130,9 +130,7 @@ def _properties_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) 
             ):
                 ok = False
     if rejected:
-        ctx.error(
-            *realize(*names_rejected("", " not allowed", Const(rejected)), instance)
-        )
+        ctx.report(lambda: names_rejected("", " not allowed", Const(rejected)))
         ok = False
     # Dependency data comes only from an accepting keyword (§4 rule 6,
     # draft-03 Appendix D): a rejecting `properties` communicates nothing.
@@ -259,10 +257,11 @@ def _pattern_properties_evaluate(
                 ):
                     ok = False
     if rejected:
-        described = _pattern_properties_rejected(
-            _forbidden_patterns(value), Const(rejected)
+        ctx.report(
+            lambda: _pattern_properties_rejected(
+                _forbidden_patterns(value), Const(rejected)
+            )
         )
-        ctx.error(*realize(*described, instance))
         ok = False
     if ok:
         ctx.produce(matched)
@@ -363,11 +362,8 @@ def _additional_properties_evaluate(
             ok = False
     if is_false(value) and matched:
         rejected: list[JsonValue] = list(matched)
-        ctx.error(
-            *realize(
-                *names_rejected("additional ", " not allowed", Const(rejected)),
-                instance,
-            )
+        ctx.report(
+            lambda: names_rejected("additional ", " not allowed", Const(rejected))
         )
         ok = False
     if ok:
@@ -436,7 +432,7 @@ def _property_names_evaluate(
         if not instance:
             return True
         names: list[JsonValue] = list(instance)
-        ctx.error(*realize(*_property_names_rejected(Const(names)), instance))
+        ctx.report(lambda: _property_names_rejected(Const(names)))
         return False
     ok = True
     for name in instance:

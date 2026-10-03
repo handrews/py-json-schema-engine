@@ -157,3 +157,42 @@ def test_realize_matches_the_compiled_evaluator(instance: JsonValue) -> None:
     assert compiled == interpreted
     assert interpreted.errors is not None
     assert interpreted.errors[0]["error"].startswith("got ")
+
+
+# --- the interpreter realizes a description only when it is rendered --------
+
+
+def test_a_reported_description_is_realized_only_when_rendered() -> None:
+    calls: list[int] = []
+
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+        def describe() -> tuple[LowerMessage, LowerParams | None]:
+            calls.append(1)
+            return MESSAGE, PARAMS
+
+        ctx.report(describe)
+        return False
+
+    engine = create_engine()
+    base = engine.dialects.get_dialect(DIALECT_2020_12)
+    lazy = KeywordBehavior(id=EXPLAIN_VOCAB + "#lazy", evaluate=evaluate)
+    engine.dialects.register_vocabulary(EXPLAIN_VOCAB, {"lazy": lazy})
+    engine.dialects.register_dialect(
+        EXPLAIN_DIALECT, [*base.vocabulary_uris, EXPLAIN_VOCAB]
+    )
+    uri = engine.register_schema(
+        {"anyOf": [{"lazy": True}, {}]}, "urn:test:lazy", dialect_uri=EXPLAIN_DIALECT
+    )
+    # A dropped error (the losing branch) and a verdict-only evaluation never
+    # render, so the description is never built.
+    assert engine.evaluate(uri, [1, 2]).valid is True
+    assert engine.evaluate(uri, [1, 2], output="list").valid is True
+    lone = engine.register_schema(
+        {"lazy": True}, "urn:test:lazy-lone", dialect_uri=EXPLAIN_DIALECT
+    )
+    assert engine.evaluate(lone, [1, 2]).valid is False
+    assert calls == []
+    result = engine.evaluate(lone, [1, 2], output="list")
+    assert calls == [1]
+    assert result.errors is not None
+    assert result.errors[0]["error"] == "got [1, 2] (array)2"

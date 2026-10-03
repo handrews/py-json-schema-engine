@@ -13,7 +13,7 @@
 # these only when something escapes to a caller — which is what makes
 # annotation elision (D5) a matter of not creating a record at all.
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from json_schema_engine.core.cursor import Cursor
@@ -100,7 +100,11 @@ class DependencyRecord:
     data: object
 
 
-@dataclass(eq=False, slots=True)
+# A deferred error description: called at most once, when the record is
+# first rendered, to give the message text and params.
+type MessageBuilder = Callable[[], tuple[str, Mapping[str, JsonValue] | None]]
+
+
 class ErrorRecord:
     """One assertion failure (D13).
 
@@ -111,16 +115,74 @@ class ErrorRecord:
     `params` is structured error data, kept separate from `message` so that
     rendering stays presentation and a future compatibility adapter can
     rebuild another library's error shape from the parts.
+
+    `message` may be a `MessageBuilder` rather than text (P18): the
+    interpreter defers building and realizing a description until the
+    record is rendered, since most records never are — a verdict-only
+    evaluation renders none, and an error under a losing `anyOf` branch or
+    an `if` condition is dropped. `message` and `params` realize it on first
+    read, so a reader never sees the difference.
     """
 
-    behavior_id: str | None
-    keyword_name: str | None
-    vocabulary_uri: str | None
-    schema_ref: SchemaRef
-    path_node: PathNode | None
-    cursor: Cursor
-    message: str
-    params: Mapping[str, JsonValue] | None = None
+    __slots__ = (
+        "_builder",
+        "_message",
+        "_params",
+        "behavior_id",
+        "cursor",
+        "keyword_name",
+        "path_node",
+        "schema_ref",
+        "vocabulary_uri",
+    )
+
+    def __init__(
+        self,
+        behavior_id: str | None,
+        keyword_name: str | None,
+        vocabulary_uri: str | None,
+        schema_ref: SchemaRef,
+        path_node: PathNode | None,
+        cursor: Cursor,
+        message: str | MessageBuilder,
+        params: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        self.behavior_id = behavior_id
+        self.keyword_name = keyword_name
+        self.vocabulary_uri = vocabulary_uri
+        self.schema_ref = schema_ref
+        self.path_node = path_node
+        self.cursor = cursor
+        if isinstance(message, str):
+            self._builder: MessageBuilder | None = None
+            self._message = message
+            self._params = params
+        else:
+            self._builder = message
+            self._message = ""
+            self._params = None
+
+    def _realize(self) -> None:
+        builder = self._builder
+        if builder is not None:
+            self._builder = None
+            self._message, self._params = builder()
+
+    @property
+    def message(self) -> str:
+        self._realize()
+        return self._message
+
+    @property
+    def params(self) -> Mapping[str, JsonValue] | None:
+        self._realize()
+        return self._params
+
+    def __repr__(self) -> str:
+        return (
+            f"ErrorRecord(keyword_name={self.keyword_name!r}, "
+            f"cursor={self.cursor.pointer!r}, message={self.message!r})"
+        )
 
 
 @dataclass(slots=True)

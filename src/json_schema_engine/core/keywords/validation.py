@@ -55,7 +55,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import missing_dependencies, preview, realize
+from json_schema_engine.core.messages import missing_dependencies, preview
 
 # --- pattern (EXEMPLAR: assertion class) ----------------------------------
 
@@ -77,7 +77,7 @@ def _pattern_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> 
         return True
     if ctx.compile_regex(value).search(instance):
         return True
-    ctx.error(*realize(*_pattern_describe(value, INSTANCE), instance))
+    ctx.report(lambda: _pattern_describe(value, INSTANCE))
     return False
 
 
@@ -139,7 +139,7 @@ def assertion(
     def _evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         if test(value, cursor.value):
             return True
-        ctx.error(*realize(*describe(value, INSTANCE), cursor.value))
+        ctx.report(lambda: describe(value, INSTANCE))
         return False
 
     def _lower(value: JsonValue, lctx: LoweringContext) -> None:
@@ -199,7 +199,7 @@ def _type_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> boo
     instance = cursor.value
     if any(_type_matches(name, instance) for name in names):
         return True
-    ctx.error(*realize(*_type_describe(names, INSTANCE), instance))
+    ctx.report(lambda: _type_describe(names, INSTANCE))
     return False
 
 
@@ -263,7 +263,7 @@ def _required_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) ->
     if all(not isinstance(n, str) or n in instance for n in value):
         return True
     # One error naming every missing property: a minimal error list.
-    ctx.error(*realize(*_required_describe(value, INSTANCE), instance))
+    ctx.report(lambda: _required_describe(value, INSTANCE))
     return False
 
 
@@ -561,7 +561,7 @@ def _unique_items_evaluate(
         return True
     if not has_duplicate_items(instance):
         return True
-    ctx.error(*realize(*_unique_items_describe(INSTANCE), instance))
+    ctx.report(lambda: _unique_items_describe(INSTANCE))
     return False
 
 
@@ -618,7 +618,7 @@ def _dependent_required_evaluate(
         return True
     if not missing_dependencies(instance, value):
         return True
-    ctx.error(*realize(*dependency_describe(value, INSTANCE), instance))
+    ctx.report(lambda: dependency_describe(value, INSTANCE))
     return False
 
 

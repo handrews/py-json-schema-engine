@@ -45,7 +45,7 @@ from json_schema_engine.core.lowering import (
     type_is,
     when,
 )
-from json_schema_engine.core.messages import index_ranges, realize
+from json_schema_engine.core.messages import index_ranges
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -161,7 +161,7 @@ def _all_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
     # 6). A `false` branch explains nothing, so `allOf` names it instead.
     failed = _false_branches(value)
     if failed:
-        ctx.error(*realize(*_all_of_rejected(failed), cursor.value))
+        ctx.report(lambda: _all_of_rejected(failed))
         ok = False
     return ok
 
@@ -230,7 +230,7 @@ def _one_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
         if ctx.apply(("oneOf", index), cursor):
             passing.append(index)
     if len(passing) != 1:
-        ctx.error(*realize(*_one_of_describe(len(value), Const(passing)), cursor.value))
+        ctx.report(lambda: _one_of_describe(len(value), Const(passing)))
     return len(passing) == 1
 
 
@@ -425,8 +425,7 @@ def _dependent_schemas_evaluate(
     # No message of its own for a failing named subschema: it already
     # reported why. A `false` one explains nothing, so it is named here.
     if rejected:
-        described = dependents_rejected("dependentSchemas", Const(rejected))
-        ctx.error(*realize(*described, instance))
+        ctx.report(lambda: dependents_rejected("dependentSchemas", Const(rejected)))
         ok = False
     return ok
 
