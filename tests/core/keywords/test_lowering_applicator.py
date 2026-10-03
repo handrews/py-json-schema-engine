@@ -5,6 +5,7 @@
 
 from json_schema_engine.core.dialect import AnalyzeContext, SubschemaApplication
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.keywords._rejects import dependents_rejected
 from json_schema_engine.core.keywords.applicator import (
     DEPENDENT_SCHEMAS,
     ELSE,
@@ -12,7 +13,6 @@ from json_schema_engine.core.keywords.applicator import (
     NOT,
     ONE_OF,
     THEN,
-    dependents_rejected,
 )
 from json_schema_engine.core.lowering import (
     HERE,

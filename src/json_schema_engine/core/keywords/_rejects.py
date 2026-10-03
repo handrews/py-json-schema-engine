@@ -11,7 +11,7 @@
 # Dependency direction: imports `json_model` and `lowering`; keyword
 # modules import this.
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from json_schema_engine.core.dialect import KeywordContext
 from json_schema_engine.core.json_model import JsonValue
@@ -28,6 +28,7 @@ from json_schema_engine.core.lowering import (
     apply,
     child,
     collect,
+    const,
     helper,
     reject,
     reject_check,
@@ -51,6 +52,12 @@ def names_rejected(
         ),
         {"properties": names, **(extra or {})},
     )
+
+
+def dependents_rejected(keyword: str, names: Expr) -> tuple[LowerMessage, LowerParams]:
+    """`property "a" present, which dependentSchemas forbids`: shared with
+    draft-07's `dependencies`."""
+    return names_rejected("", f" present, which {keyword} forbids", names)
 
 
 def tail_rejected(
@@ -114,15 +121,26 @@ def tail_evaluate(
 
 def positions_sweep(
     value: Sequence[JsonValue], lctx: LoweringContext
-) -> tuple[tuple[Stmt, ...], tuple[Stmt, ...], int]:
-    """Head and tail around a tuple sweep whose members may be `false`, and
-    the binding a member's `reject` names (allocated, and meaningful, only
-    when some member is `false`)."""
+) -> tuple[tuple[Stmt, ...], Callable[[int, JsonValue], Stmt], tuple[Stmt, ...]]:
+    """The head, per-position step and tail of a tuple sweep whose members
+    may be `false`: `step(index, schema)` applies the member, or, when it is
+    `false`, rejects the index and the tail reports every such position
+    once."""
     if not any(is_false(schema) for schema in value):
-        return (), (), -1
+        return (), _apply_position, ()
     r = lctx.binding()
+
+    def step(index: int, schema: JsonValue) -> Stmt:
+        if is_false(schema):
+            return reject(r, const(index))
+        return _apply_position(index, schema)
+
     return (
         (collect(r, errors=True),),
+        step,
         (reject_check(r, *positions_rejected(Binding(r))),),
-        r,
     )
+
+
+def _apply_position(index: int, _schema: JsonValue) -> Stmt:
+    return apply((index,), child(HERE, index))

@@ -45,7 +45,6 @@ from json_schema_engine.core.lowering import (
     LoweringContext,
     LowerMessage,
     LowerParams,
-    apply,
     apply_expr,
     child,
     cmp,
@@ -54,7 +53,6 @@ from json_schema_engine.core.lowering import (
     fail,
     helper,
     produce,
-    reject,
     type_is,
     when,
 )
@@ -89,7 +87,7 @@ def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
         return
     instance = lctx.instance
     length = helper("length_of", instance)
-    head, tail, r = positions_sweep(value, lctx)
+    head, step, tail = positions_sweep(value, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
@@ -98,11 +96,7 @@ def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
                 *(
                     when(
                         cmp(">", length, const(index)),
-                        (
-                            reject(r, const(index))
-                            if is_false(schema)
-                            else apply((index,), child(HERE, index)),
-                        ),
+                        (step(index, schema),),
                     )
                     for index, schema in enumerate(value)
                 ),

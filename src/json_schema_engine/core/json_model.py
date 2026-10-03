@@ -86,6 +86,20 @@ def is_integer_value(value: JsonValue) -> bool:
     return value.is_integer() if isinstance(value, float) else False
 
 
+def type_matches(value: JsonValue, name: str) -> bool:
+    """Return whether the `type` name `name` matches `value`.
+
+    `"integer"` is a numeric subtype, not a `json_type_of` result, so it
+    goes through `is_integer_value` (`1.0` is an integer; `True` matches
+    neither `"integer"` nor `"number"`, only `"boolean"`, P2). Any other
+    name is compared with `json_type_of`, so an unknown name matches
+    nothing.
+    """
+    if name == "integer":
+        return is_integer_value(value)
+    return json_type_of(value) == name
+
+
 def is_object(value: JsonValue) -> TypeGuard[dict[str, JsonValue]]:
     """Return whether `value` is a JSON object (not an array, not `null`)."""
     return isinstance(value, dict)

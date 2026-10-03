@@ -22,7 +22,10 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
-from json_schema_engine.core.keywords._rejects import is_false, names_rejected
+from json_schema_engine.core.keywords._rejects import (
+    dependents_rejected,
+    is_false,
+)
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
@@ -367,12 +370,6 @@ def _dependent_schemas_analyze(value: JsonValue, _ctx: AnalyzeContext) -> Static
             for name in names
         ),
     )
-
-
-def dependents_rejected(keyword: str, names: Expr) -> tuple[LowerMessage, LowerParams]:
-    """`property "a" present, which dependentSchemas forbids`: shared with
-    draft-07's `dependencies`."""
-    return names_rejected("", f" present, which {keyword} forbids", names)
 
 
 def _dependent_schemas_lower(value: JsonValue, lctx: LoweringContext) -> None:

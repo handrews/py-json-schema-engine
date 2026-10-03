@@ -18,7 +18,7 @@
 
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Final
+from typing import Final, cast
 
 from json_schema_engine.core.json_model import (
     JsonValue,
@@ -32,6 +32,7 @@ from json_schema_engine.core.json_model import (
     json_equal,
     json_type_name,
     json_type_of,
+    type_matches,
 )
 from json_schema_engine.core.lowering import (
     Binding,
@@ -140,7 +141,7 @@ def preview(value: JsonValue) -> str:
 def apparent_type(value: JsonValue) -> str:
     """The type a reader would name: `integer` for a mathematical integer
     (`3`, `3.0`), otherwise the JSON type. A boolean is never a number."""
-    if not isinstance(value, bool) and is_integer_value(value):
+    if is_integer_value(value):
         return "integer"
     return json_type_of(value).value
 
@@ -266,11 +267,11 @@ def dependency_list(missing: Mapping[str, Sequence[str]]) -> str:
 
 # Every helper a lowered expression may call, by its IR name. The compiled
 # runtime binds the same functions under its own names.
-HELPERS: Final[Mapping[HelperName, Callable[..., JsonValue]]] = {
+HELPERS: Final[Mapping[HelperName, Callable[..., object]]] = {
     "json_equal": json_equal,
     "is_multiple_of": is_multiple_of,
     "has_duplicate_items": has_duplicate_items,
-    "first_duplicate_pair": first_duplicate_pair,  # type: ignore[dict-item]
+    "first_duplicate_pair": first_duplicate_pair,
     "length_of": len,
     "code_point_length": code_point_length,
     "json_type_name": json_type_name,
@@ -278,15 +279,15 @@ HELPERS: Final[Mapping[HelperName, Callable[..., JsonValue]]] = {
     "apparent_type": apparent_type,
     "index_ranges": index_ranges,
     "name_list": name_list,
-    "duplicate_groups": duplicate_groups,  # type: ignore[dict-item]
-    "ranges": ranges,  # type: ignore[dict-item]
-    "missing_names": missing_names,  # type: ignore[dict-item]
-    "missing_dependencies": missing_dependencies,  # type: ignore[dict-item]
+    "duplicate_groups": duplicate_groups,
+    "ranges": ranges,
+    "missing_names": missing_names,
+    "missing_dependencies": missing_dependencies,
     "dependency_list": dependency_list,
     "typed_preview": typed_preview,
-    "labeled_names": labeled_names,  # type: ignore[dict-item]
-    "counted_indexes": counted_indexes,  # type: ignore[dict-item]
-    "index_groups": index_groups,  # type: ignore[dict-item]
+    "labeled_names": labeled_names,
+    "counted_indexes": counted_indexes,
+    "index_groups": index_groups,
 }
 
 
@@ -294,13 +295,7 @@ HELPERS: Final[Mapping[HelperName, Callable[..., JsonValue]]] = {
 
 
 def _type_is(value: JsonValue, types: Sequence[str]) -> bool:
-    for name in types:
-        if name == "integer":
-            if not isinstance(value, bool) and is_integer_value(value):
-                return True
-        elif json_type_of(value).value == name:
-            return True
-    return False
+    return any(type_matches(value, name) for name in types)
 
 
 def _compare(op: str, left: JsonValue, right: JsonValue) -> bool:
@@ -329,7 +324,12 @@ def _value(
     if type(node) is Instance:
         return instance
     if type(node) is Helper:
-        return HELPERS[node.name](*[_value(a, instance, bindings) for a in node.args])
+        # Every helper returns JSON data; the table's type is loose only
+        # because list and dict invariance keep their precise returns out.
+        # Pyright narrows the table to its literal's union of signatures on
+        # assignment, so the cast also restores the loose callable.
+        helper_fn = cast(Callable[..., JsonValue], HELPERS[node.name])
+        return helper_fn(*[_value(a, instance, bindings) for a in node.args])
     if type(node) is Binding:
         try:
             return bindings[node.id]

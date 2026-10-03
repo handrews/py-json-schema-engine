@@ -25,11 +25,10 @@ from json_schema_engine.core.json_model import (
     JsonValue,
     code_point_length,
     has_duplicate_items,
-    is_integer_value,
     is_multiple_of,
     is_object,
     json_equal,
-    json_type_of,
+    type_matches,
 )
 from json_schema_engine.core.keywords._ids import VOCAB_VALIDATION, keyword_id
 from json_schema_engine.core.lowering import (
@@ -166,18 +165,6 @@ def _is_number(x: JsonValue) -> TypeGuard[int | float]:
 # --- type -------------------------------------------------------------
 
 
-def _type_matches(name: JsonValue, instance: JsonValue) -> bool:
-    """Whether one type name matches the instance (P2: bool is never a number).
-
-    `"integer"` is a numeric subtype, not a `json_type_of` result, so it is
-    tested separately via `is_integer_value` (`1.0` is an integer; `True`
-    matches neither `"integer"` nor `"number"`, only `"boolean"`).
-    """
-    if name == "integer":
-        return is_integer_value(instance)
-    return json_type_of(instance) == name
-
-
 def _type_describe(
     names: Sequence[JsonValue], instance: Expr
 ) -> tuple[LowerMessage, LowerParams]:
@@ -197,7 +184,7 @@ def _type_describe(
 def _type_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     names = value if isinstance(value, list) else [value]
     instance = cursor.value
-    if any(_type_matches(name, instance) for name in names):
+    if any(isinstance(name, str) and type_matches(instance, name) for name in names):
         return True
     ctx.report(lambda: _type_describe(names, INSTANCE))
     return False
@@ -216,7 +203,7 @@ _TYPE_NAMES: dict[str, TypeName] = {
 
 def _type_lower(value: JsonValue, lctx: LoweringContext) -> None:
     names = value if isinstance(value, list) else [value]
-    # An unknown type name matches nothing, as in `_type_matches`.
+    # An unknown type name matches nothing, as in `type_matches`.
     known: list[TypeName] = []
     for name in names:
         if isinstance(name, str) and (known_name := _TYPE_NAMES.get(name)) is not None:

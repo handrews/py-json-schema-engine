@@ -15,9 +15,9 @@
 # coverage from two, so no consumer-side special case is needed.
 #
 # Dependency direction: imports `cursor`, `dialect`, `json_model`, `_ids`,
-# `messages`, and `validation` (the dependency builder `dependencies`'
-# array members share with `dependentRequired`). Never the evaluator or
-# the registry.
+# `_rejects`, `messages`, and `validation` (the dependency builder
+# `dependencies`' array members share with `dependentRequired`). Never
+# the evaluator or the registry.
 
 from json_schema_engine.core.cursor import Cursor, child_cursor
 from json_schema_engine.core.dialect import (
@@ -36,13 +36,13 @@ from json_schema_engine.core.keywords._ids import (
     keyword_id,
 )
 from json_schema_engine.core.keywords._rejects import (
+    dependents_rejected,
     is_false,
     positions_rejected,
     positions_sweep,
     tail_evaluate,
     tail_sweep,
 )
-from json_schema_engine.core.keywords.applicator import dependents_rejected
 from json_schema_engine.core.keywords.validation import (
     dependency_absent,
     dependency_describe,
@@ -56,7 +56,6 @@ from json_schema_engine.core.lowering import (
     LoweringContext,
     Stmt,
     apply,
-    child,
     cmp,
     collect,
     cond,
@@ -119,7 +118,7 @@ def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
         # Tuple form: same shape as 2020-12 `prefixItems`, dependency data
         # included (`True` when every element was covered, else the
         # largest applied index; nothing for an empty array).
-        head, tail, r = positions_sweep(value, lctx)
+        head, step, tail = positions_sweep(value, lctx)
         lctx.emit(
             when(
                 type_is(instance, "array"),
@@ -128,11 +127,7 @@ def _items_legacy_lower(value: JsonValue, lctx: LoweringContext) -> None:
                     *(
                         when(
                             cmp(">", length, const(index)),
-                            (
-                                reject(r, const(index))
-                                if is_false(schema)
-                                else apply((index,), child(HERE, index)),
-                            ),
+                            (step(index, schema),),
                         )
                         for index, schema in enumerate(value)
                     ),
