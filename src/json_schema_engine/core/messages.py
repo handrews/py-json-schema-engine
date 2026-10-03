@@ -13,8 +13,8 @@
 # `anyOf` branch, an `if` condition), so `preview` must cost the same for a
 # ten-megabyte instance as for a short one.
 #
-# Dependency direction: imports `json_model` and `lowering`; keyword modules
-# and the compiled runtime import this.
+# Dependency direction: imports `json_model` and `lowering`; `channel` (to
+# realize a record), keyword modules and the compiled runtime import this.
 
 import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -81,10 +81,9 @@ def _chunks(value: JsonValue, budget: int) -> Iterator[str]:
     elif isinstance(value, float):
         yield json.dumps(value)
     elif isinstance(value, str):
-        # One character past the budget is enough to know it was cut.
+        # One character past the budget is enough to know it was cut: the
+        # slice alone then exceeds it, quotes included.
         yield json.dumps(value[: budget + 1], ensure_ascii=False)
-        if len(value) > budget + 1:
-            yield _ELLIPSIS * 2
     elif isinstance(value, list):
         yield "["
         for index, item in enumerate(value):
@@ -104,16 +103,37 @@ def _chunks(value: JsonValue, budget: int) -> Iterator[str]:
         yield "}"
 
 
+def _cut(text: str) -> str:
+    if len(text) > PREVIEW_LIMIT:
+        return text[: PREVIEW_LIMIT - 1] + _ELLIPSIS
+    return text
+
+
 def preview(value: JsonValue) -> str:
     """`value` as compact JSON, cut to `PREVIEW_LIMIT` characters with `…`.
 
     JSON rather than Python's `str()`, which would show `{'a': True}`.
     """
+    # A scalar goes straight to text: this runs once per rendered error,
+    # and the generator below costs more than such a value does. Exact
+    # types, so `bool` never reads as `int` and a subclass takes the general
+    # path.
+    if type(value) is int:
+        return _cut(str(value))
+    if type(value) is str and len(value) <= PREVIEW_LIMIT:
+        # Escapes can still push the text past the limit, quotes included.
+        return _cut(json.dumps(value, ensure_ascii=False))
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "true" if value else "false"
+    if type(value) is float:
+        return json.dumps(value)
     text = ""
     for chunk in _chunks(value, PREVIEW_LIMIT):
         text += chunk
         if len(text) > PREVIEW_LIMIT:
-            return text[: PREVIEW_LIMIT - 1] + _ELLIPSIS
+            return _cut(text)
     return text
 
 
@@ -128,6 +148,12 @@ def apparent_type(value: JsonValue) -> str:
 def typed_preview(value: JsonValue) -> str:
     """A scalar with its apparent type, `3 (integer)`; a container by its
     type alone, `array`, since its value can be arbitrarily large."""
+    # The two common scalars name their type directly; a float still asks
+    # `apparent_type`, since `3.0` is an integer.
+    if type(value) is int:
+        return f"{preview(value)} (integer)"
+    if type(value) is str:
+        return f"{preview(value)} (string)"
     if isinstance(value, list) or is_object(value):
         return apparent_type(value)
     return f"{preview(value)} ({apparent_type(value)})"
@@ -293,50 +319,69 @@ def _compare(op: str, left: JsonValue, right: JsonValue) -> bool:
             return left != right
 
 
+def _value(
+    node: Expr, instance: JsonValue, bindings: Mapping[int, JsonValue]
+) -> JsonValue:
+    # The nodes nearly every message is made of, by exact type ahead of the
+    # structural match: this runs for each part of every rendered error.
+    if type(node) is Const:
+        return node.value
+    if type(node) is Instance:
+        return instance
+    if type(node) is Helper:
+        return HELPERS[node.name](*[_value(a, instance, bindings) for a in node.args])
+    if type(node) is Binding:
+        try:
+            return bindings[node.id]
+        except KeyError:
+            raise LookupError(
+                f"binding {node.id} is not available to this message: an "
+                "evaluate-side description carries runtime values as Const nodes"
+            ) from None
+
+    def ev(inner: Expr) -> JsonValue:
+        return _value(inner, instance, bindings)
+
+    match node:
+        case Member(target=target, key=key):
+            container = ev(target)
+            assert is_object(container)
+            return container[key]
+        case Item(target=target, index=index):
+            container = ev(target)
+            position = ev(index)
+            assert isinstance(container, list) and isinstance(position, int)
+            return container[position]
+        case Cond(test=test, then=then, orelse=orelse):
+            return ev(then) if ev(test) else ev(orelse)
+        case TypeIs(target=target, types=types):
+            return _type_is(ev(target), types)
+        case HasKey(target=target, key=key):
+            container = ev(target)
+            name = key if isinstance(key, str) else ev(key)
+            return is_object(container) and name in container
+        case Cmp(op=op, left=left, right=right):
+            return _compare(op, ev(left), ev(right))
+        case Not(expr=inner):
+            return not ev(inner)
+        case Logic(op=op, parts=parts):
+            if op == "and":
+                return all(ev(p) for p in parts)
+            return any(ev(p) for p in parts)
+        case _:
+            raise TypeError(f"not a message expression: {node!r}")
+
+
 def value_of(
     expr: Expr, instance: JsonValue, bindings: Mapping[int, JsonValue]
 ) -> JsonValue:
-    """Evaluate the IR subset a message or its params may use."""
+    """Evaluate the IR subset a message or its params may use.
 
-    def ev(node: Expr) -> JsonValue:
-        match node:
-            case Const(value=value):
-                return value
-            case Instance():
-                return instance
-            case Binding(id=binding):
-                return bindings[binding]
-            case Member(target=target, key=key):
-                container = ev(target)
-                assert is_object(container)
-                return container[key]
-            case Item(target=target, index=index):
-                container = ev(target)
-                position = ev(index)
-                assert isinstance(container, list) and isinstance(position, int)
-                return container[position]
-            case Helper(name=name, args=args):
-                return HELPERS[name](*(ev(a) for a in args))
-            case Cond(test=test, then=then, orelse=orelse):
-                return ev(then) if ev(test) else ev(orelse)
-            case TypeIs(target=target, types=types):
-                return _type_is(ev(target), types)
-            case HasKey(target=target, key=key):
-                container = ev(target)
-                name = key if isinstance(key, str) else ev(key)
-                return is_object(container) and name in container
-            case Cmp(op=op, left=left, right=right):
-                return _compare(op, ev(left), ev(right))
-            case Not(expr=inner):
-                return not ev(inner)
-            case Logic(op=op, parts=parts):
-                if op == "and":
-                    return all(ev(p) for p in parts)
-                return any(ev(p) for p in parts)
-            case _:
-                raise TypeError(f"not a message expression: {node!r}")
-
-    return ev(expr)
+    A `Binding` resolves only through `bindings`; an evaluate-side
+    description has none, so it carries runtime values as `Const` nodes and
+    a `Binding` there raises `LookupError`.
+    """
+    return _value(expr, instance, bindings)
 
 
 def realize(
@@ -351,10 +396,14 @@ def realize(
     literal parts as written, expression parts through `str()`.
     """
     scope = bindings or {}
-    text = "".join(
-        part if isinstance(part, str) else str(value_of(part, instance, scope))
-        for part in message
-    )
+    parts: list[str] = []
+    for part in message:
+        if isinstance(part, str):
+            parts.append(part)
+        else:
+            shown = _value(part, instance, scope)
+            parts.append(shown if isinstance(shown, str) else str(shown))
+    text = "".join(parts)
     if params is None:
         return text, None
-    return text, {k: value_of(v, instance, scope) for k, v in params.items()}
+    return text, {k: _value(v, instance, scope) for k, v in params.items()}

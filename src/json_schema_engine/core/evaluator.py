@@ -66,8 +66,6 @@ from json_schema_engine.core.json_model import (
     is_object,
     json_type_of,
 )
-from json_schema_engine.core.lowering import LowerMessage, LowerParams
-from json_schema_engine.core.messages import realize
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.registry import DEFAULT_MAX_DEPTH, SchemaRegistry
 from json_schema_engine.core.uri import schema_location
@@ -349,16 +347,11 @@ class _KeywordContext:
     def error(self, message: str, params: ErrorParams | None = None) -> None:
         self._record(message, params)
 
-    def report(
-        self,
-        describe: Callable[[], tuple[LowerMessage, LowerParams | None]],
-    ) -> None:
-        instance = self._cursor.value
-
-        def build() -> tuple[str, dict[str, JsonValue] | None]:
-            return realize(*describe(), instance)
-
-        self._record(build, None)
+    def report(self, describe: MessageBuilder) -> None:
+        # The record realizes `describe` against its own cursor's value: no
+        # closure per error, so the garbage collector has no more to walk
+        # than for an eager `error`.
+        self._record(describe, None)
 
     def _record(
         self, message: str | MessageBuilder, params: ErrorParams | None

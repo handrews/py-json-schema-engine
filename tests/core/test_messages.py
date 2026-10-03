@@ -2,6 +2,9 @@
 # guarantee that `realize` (the interpreter's side) produces exactly what
 # the compiled evaluator builds from the same description.
 
+import json
+
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -16,6 +19,7 @@ from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.dialect import KeywordContext
 from json_schema_engine.core.lowering import (
     INSTANCE,
+    Binding,
     Const,
     LoweringContext,
     LowerMessage,
@@ -35,6 +39,7 @@ from json_schema_engine.core.messages import (
     preview,
     ranges,
     realize,
+    typed_preview,
 )
 
 # --- helpers -------------------------------------------------------------------
@@ -54,6 +59,53 @@ def test_preview_cuts_at_the_limit() -> None:
     assert text.startswith('"xxx')
     exact = "y" * (PREVIEW_LIMIT - 2)  # with its quotes, exactly the limit
     assert preview(exact) == f'"{exact}"'
+
+
+def _reference_preview(value: JsonValue) -> str:
+    # What `preview` promises, spelled independently of its fast paths.
+    text = json.dumps(value, ensure_ascii=False)
+    return text[: PREVIEW_LIMIT - 1] + "…" if len(text) > PREVIEW_LIMIT else text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0,
+        -7,
+        10**80,
+        -(10**80),
+        0.5,
+        -0.0,
+        1e16,
+        1e-7,
+        True,
+        False,
+        None,
+        "",
+        'say "hi"\n',
+        "é" * 70,
+        *[
+            prefix + "x" * (n - len(prefix))
+            for n in range(PREVIEW_LIMIT - 3, PREVIEW_LIMIT + 3)
+            for prefix in ("", '"', "\\\n")
+        ],
+    ],
+    ids=repr,
+)
+def test_preview_fast_paths_match_the_general_path(value: JsonValue) -> None:
+    assert preview(value) == _reference_preview(value)
+    assert len(preview(value)) <= PREVIEW_LIMIT
+
+
+def test_typed_preview() -> None:
+    assert typed_preview(3) == "3 (integer)"
+    assert typed_preview(3.0) == "3.0 (integer)"
+    assert typed_preview(2.5) == "2.5 (number)"
+    assert typed_preview("a") == '"a" (string)'
+    assert typed_preview(True) == "true (boolean)"
+    assert typed_preview(None) == "null (null)"
+    assert typed_preview([1]) == "array"
+    assert typed_preview({"a": 1}) == "object"
 
 
 def test_preview_is_bounded_on_huge_containers() -> None:
@@ -203,3 +255,25 @@ def test_a_reported_description_is_realized_only_when_rendered() -> None:
     assert calls == [1]
     assert result.errors is not None
     assert result.errors[0]["error"] == "got [1, 2] (array)2"
+
+
+def test_a_binding_in_a_reported_description_fails_loudly() -> None:
+    # `lower` may name a binding; `evaluate` carries runtime values as
+    # `Const`, since a record realizes with no bindings.
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+        ctx.report(lambda: (("first at ", Binding(0)), None))
+        return False
+
+    engine = create_engine()
+    base = engine.dialects.get_dialect(DIALECT_2020_12)
+    bound = KeywordBehavior(id=EXPLAIN_VOCAB + "#bound", evaluate=evaluate)
+    engine.dialects.register_vocabulary(EXPLAIN_VOCAB, {"bound": bound})
+    engine.dialects.register_dialect(
+        EXPLAIN_DIALECT, [*base.vocabulary_uris, EXPLAIN_VOCAB]
+    )
+    uri = engine.register_schema(
+        {"bound": True}, "urn:test:bound", dialect_uri=EXPLAIN_DIALECT
+    )
+    assert engine.evaluate(uri, 1).valid is False
+    with pytest.raises(LookupError, match="Const"):
+        engine.evaluate(uri, 1, output="list")

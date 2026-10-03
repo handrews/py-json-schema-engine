@@ -2,10 +2,11 @@
 # the frame, and the trace tree (DESIGN.md §4 normative channel semantics;
 # D6 tracing; P6 records vs. units; P7 identity-keyed structures).
 #
-# Dependency direction: imports `cursor`, `ref`, and `json_model`. The
-# evaluator (which owns §4's rules) and the renderers import this; this
-# module holds no behavior beyond path materialization, so it never imports
-# them back.
+# Dependency direction: imports `cursor`, `ref`, `json_model`, `lowering`
+# and `messages` (to realize a deferred error description). The evaluator
+# (which owns §4's rules) and the renderers import this; this module holds
+# no behavior beyond path materialization and that realization, so it never
+# imports them back.
 #
 # These are records, not output units (P6): they are mutable, identity-keyed,
 # and hold live `Cursor`/`SchemaRef` objects plus an unmaterialized path.
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.lowering import LowerMessage, LowerParams
+from json_schema_engine.core.messages import realize
 from json_schema_engine.core.ref import SchemaRef
 
 
@@ -100,9 +103,10 @@ class DependencyRecord:
     data: object
 
 
-# A deferred error description: called at most once, when the record is
-# first rendered, to give the message text and params.
-type MessageBuilder = Callable[[], tuple[str, Mapping[str, JsonValue] | None]]
+# A deferred error description in lowering IR (P18): called at most once,
+# when the record is first rendered, and realized against the record's own
+# cursor value.
+type MessageBuilder = Callable[[], tuple[LowerMessage, LowerParams | None]]
 
 
 class ErrorRecord:
@@ -122,6 +126,12 @@ class ErrorRecord:
     evaluation renders none, and an error under a losing `anyOf` branch or
     an `if` condition is dropped. `message` and `params` realize it on first
     read, so a reader never sees the difference.
+
+    Not a dataclass because of that laziness: a dataclass field and a
+    property cannot share the name `message`, and `cached_property` needs
+    the `__dict__` that slots forbid. The record keeps the description and
+    nothing else per error, so a deferred error gives the garbage collector
+    no more to walk than an eager one.
     """
 
     __slots__ = (
@@ -166,7 +176,7 @@ class ErrorRecord:
         builder = self._builder
         if builder is not None:
             self._builder = None
-            self._message, self._params = builder()
+            self._message, self._params = realize(*builder(), self.cursor.value)
 
     @property
     def message(self) -> str:
