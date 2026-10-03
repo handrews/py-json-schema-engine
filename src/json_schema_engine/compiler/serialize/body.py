@@ -823,7 +823,8 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
             case Collect(binding, errors):
                 # Dependency data when a consumer reads it; rejected keys
                 # for the evaluator's summary error, and never otherwise.
-                if body.evaluator if errors else body.produce_live:
+                wanted = body.evaluator if errors else body.produce_live
+                if wanted:
                     out.append(e.assign(body.binding_name(binding), e.list_literal()))
             case Reject(binding, key, unique):
                 if body.evaluator:

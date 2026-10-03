@@ -41,13 +41,18 @@ from json_schema_engine.compiler import (
     compile_validator,
     emit_standalone,
 )
-from json_schema_engine.compiler.emit import BUILTINS_USED, EVALUATOR_NAMES
+from json_schema_engine.compiler.emit import (
+    BUILTINS_USED,
+    EVALUATOR_NAMES,
+    MESSAGE_HELPERS,
+)
 from json_schema_engine.core import (
     Engine,
     JsonSchemaEngineError,
     JsonValue,
     create_engine,
 )
+from json_schema_engine.core.messages import HELPERS
 
 from .test_smoke import outcome
 
@@ -118,6 +123,26 @@ EVALUATOR_VOCABULARY = MINTED_VOCABULARY | set(EVALUATOR_NAMES)
 
 def _is_minted(name: str) -> bool:
     return name in EVALUATOR_VOCABULARY or bool(_MINTED_PATTERN.fullmatch(name))
+
+
+# Mirrors the cases of `body._helper`, which emits these inline.
+INLINE_HELPERS = frozenset(
+    {
+        "json_equal",
+        "is_multiple_of",
+        "has_duplicate_items",
+        "first_duplicate_pair",
+        "length_of",
+        "code_point_length",
+        "json_type_name",
+    }
+)
+
+
+def test_message_helper_table_is_consistent() -> None:
+    assert set(MESSAGE_HELPERS) == set(HELPERS) - INLINE_HELPERS
+    assert set(MESSAGE_HELPERS.values()) <= set(EVALUATOR_NAMES)
+    assert len(set(MESSAGE_HELPERS.values())) == len(MESSAGE_HELPERS)
 
 
 def _assert_only_minted_identifiers(module: ast.Module) -> list[str]:

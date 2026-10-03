@@ -3,6 +3,7 @@
 # the compiled evaluator builds from the same description.
 
 import json
+from typing import get_args
 
 import pytest
 from hypothesis import given
@@ -21,6 +22,7 @@ from json_schema_engine.core.lowering import (
     INSTANCE,
     Binding,
     Const,
+    HelperName,
     LoweringContext,
     LowerMessage,
     LowerParams,
@@ -30,6 +32,7 @@ from json_schema_engine.core.lowering import (
     type_is,
 )
 from json_schema_engine.core.messages import (
+    HELPERS,
     PREVIEW_LIMIT,
     apparent_type,
     duplicate_groups,
@@ -277,3 +280,8 @@ def test_a_binding_in_a_reported_description_fails_loudly() -> None:
     assert engine.evaluate(uri, 1).valid is False
     with pytest.raises(LookupError, match="Const"):
         engine.evaluate(uri, 1, output="list")
+
+
+def test_every_helper_name_has_a_function() -> None:
+    # A `Helper` the IR can name must be something `realize` can call.
+    assert set(get_args(HelperName.__value__)) == set(HELPERS)

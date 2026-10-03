@@ -77,6 +77,7 @@ H_CIDX = "H_CIDX"  # counted_indexes
 H_IGRP = "H_IGRP"  # index_groups
 # The message-formatting helpers (`core/messages.py`), by IR name: called
 # only from error messages and params, so only the evaluator binds them.
+# `EVALUATOR_NAMES` takes its message-helper identifiers from here.
 MESSAGE_HELPERS: dict[HelperName, str] = {
     "preview": H_PREV,
     "apparent_type": H_ATYPE,
@@ -115,19 +116,7 @@ EVALUATOR_NAMES = (
     H_FRAGE,
     H_FDP,
     H_TYPE,
-    H_PREV,
-    H_ATYPE,
-    H_IRNG,
-    H_NAMES,
-    H_DUPG,
-    H_RNGS,
-    H_MISS,
-    H_MDEP,
-    H_DLIST,
-    H_TPREV,
-    H_LNAMES,
-    H_CIDX,
-    H_IGRP,
+    *MESSAGE_HELPERS.values(),
 )
 
 BUILTINS_USED = frozenset(

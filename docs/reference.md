@@ -437,11 +437,14 @@ compiler tier.
 - `KeywordContext.error(message, params=None) -> None`: reports an assertion
   failure with optional structured params (D13).
 - `KeywordContext.report(describe) -> None`: reports an assertion failure
-  described in lowering IR (P18). `describe()` returns the `LowerMessage` and
-  `LowerParams` the keyword's `lower` emits, against `INSTANCE`. It is called,
-  and the description realized against this instance, only if the error is
-  rendered, so a verdict-only evaluation or a dropped error costs nothing.
-  This is how the built-in keywords report.
+  described in lowering IR (P18). `describe()` returns the message and params
+  in lowering IR, exactly as the keyword's `lower` builds them, with runtime
+  values as `Const` nodes (`INSTANCE` for the instance). The record realizes
+  the description against this instance only if the error is rendered, so a
+  verdict-only evaluation or a dropped error costs nothing. A `Binding`
+  cannot be resolved there and raises `LookupError` when rendered. The
+  built-in keywords whose message carries instance data report this way;
+  `error` remains for a constant message (`anyOf`'s, the `false` schema's).
 
 `StaticFacts`: what one keyword occurrence says about itself from its value
 alone (a frozen dataclass); the compiler tier's entire window into keyword

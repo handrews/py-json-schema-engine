@@ -261,9 +261,11 @@ class KeywordContext(Protocol):
     ) -> None:
         """Report an assertion failure described in lowering IR (P18).
 
-        `describe` returns the same message and params a keyword's `lower`
-        emits, against `INSTANCE`; it is called, and the description
-        realized against this instance, only if the error is rendered.
+        `describe()` returns the message and params exactly as the keyword's
+        `lower` builds them, with runtime values as `Const` nodes (`INSTANCE`
+        for the instance). The record realizes it against this instance only
+        if the error is rendered; a `Binding` cannot be resolved there and
+        raises `LookupError` when rendered.
         """
         ...
 
