@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 from types import ModuleType
 
-from json_schema_engine.bench import compare
-from json_schema_engine.bench.harness import run
+from json_schema_engine.bench import compare, format_table
+from json_schema_engine.bench.harness import CorpusMeta, Results, TaskResult, run
 from json_schema_engine.bench.subjects import SUBJECTS
 from json_schema_engine.core import JsonValue, create_engine
 
@@ -161,3 +161,42 @@ def test_compare_ratio_and_missing_sides() -> None:
     assert "  b" in table
     assert "only in after:" in table
     assert "  c" in table
+
+
+def test_compare_says_which_way_is_faster() -> None:
+    table = compare(
+        {"results": [{"task": "a", "ops_per_sec": 100.0}]},
+        {"results": [{"task": "a", "ops_per_sec": 150.0}]},
+    )
+    assert table.startswith("Ops/s: higher is faster.")
+
+
+def _row(corpus: str, subject: str, ops: float) -> TaskResult:
+    return TaskResult(
+        f"{corpus} | hot | {subject}", corpus, "hot", subject, ops, 0.0, 1
+    )
+
+
+def test_the_report_reads_each_ratio_out_in_words() -> None:
+    results = Results(
+        generated_at="t",
+        python="3",
+        platform="p",
+        machine="m",
+        commit=None,
+        subjects={},
+        budget_ms=1,
+        corpora=[CorpusMeta("user", 1, 0)],
+        exclusions=[],
+        results=[
+            _row("user", "jse compiled flag", 3400.0),
+            _row("user", "jse interpreter flag", 33.0),
+            _row("user", "jsonschema", 100.0),
+        ],
+    )
+    report = format_table(results)
+    assert "Numbers are operations per second: higher is faster" in report
+    assert "compiled/jsonschema (hot): 34.00x (compiled faster)" in report
+    assert "interpreter/jsonschema (hot): 0.33x (interpreter slower)" in report
+    # A missing side still prints `n/a`, with nothing to read out.
+    assert "compiled/fastjsonschema (hot): n/a\n" in report
