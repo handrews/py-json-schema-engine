@@ -75,13 +75,60 @@ assert unit["evaluationPath"] == "/properties/name/$ref/minLength"
 assert unit["schemaLocation"] == "https://example.com/named#/$defs/name/minLength"
 assert unit["inputLocation"] == "/name"
 assert unit["keyword"] == "minLength"
-assert unit["params"] == {"limit": 1}
-assert unit["error"] == "must be at least 1 characters"
+assert unit["params"] == {"limit": 1, "value": "", "length": 0}
+assert unit["error"] == 'must be at least 1 characters, got "" (0)'
 ```
 
 `evaluationPath` names every keyword on the way to the failure, including
 the `$ref` segment itself; `schemaLocation` is the canonical location the
 reference resolved to, in the document that actually declares `minLength`.
+
+## Reading error messages
+
+Each message says what was required and what the instance had. Values are
+shown as compact JSON, cut at 64 characters; `params` (with
+`error_params=True`) carries the same facts in full, for tools.
+
+```python
+reading_uri = engine.register_schema(
+    {
+        "properties": {
+            "age": {"minimum": 0},
+            "tags": {"type": "array", "uniqueItems": True, "maxItems": 3},
+            "kind": {"enum": ["a", "b"]},
+        },
+        "required": ["age", "id", "name"],
+        "additionalProperties": False,
+    },
+    "https://example.com/reading",
+)
+result = engine.evaluate(
+    reading_uri,
+    {"age": -1, "tags": ["x", "y", "x", "z"], "kind": "c", "extra": True},
+    output="list",
+    error_params=True,
+)
+messages = {unit["keyword"]: unit["error"] for unit in result.errors}
+assert messages == {
+    "minimum": "must be >= 0, got -1",
+    "uniqueItems": "items are not unique: [0, 2] are equal",
+    "maxItems": "must have at most 3 items, got 4",
+    "enum": 'must be one of ["a", "b"], got "c"',
+    "additionalProperties": 'additional property "extra" not allowed',
+    "required": 'missing required properties "id", "name"',
+}
+params = {unit["keyword"]: unit["params"] for unit in result.errors}
+assert params["minimum"] == {"limit": 0, "value": -1}
+assert params["additionalProperties"] == {"properties": ["extra"]}
+assert params["required"] == {"missing": ["id", "name"]}
+```
+
+The list stays minimal. A keyword reports once, naming every missing
+property or extra key, rather than once per name. An applicator such as
+`properties` or `allOf` adds no error of its own when a subschema it applied
+already explained the failure. The exception is a subschema that is `false`:
+it explains nothing, so the applicator names the keys it rejected, as
+`additionalProperties` does above.
 
 ## Boolean schemas
 

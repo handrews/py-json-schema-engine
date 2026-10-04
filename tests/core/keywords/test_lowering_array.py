@@ -5,6 +5,7 @@
 # (`lowering_helpers.lower`) rather than running the compiler end to end —
 # that differential lives in `tests/compiler/test_parity_array.py`.
 
+from json_schema_engine.core.keywords._rejects import tail_rejected
 from json_schema_engine.core.keywords.applicator_array import (
     CONTAINS,
     ITEMS,
@@ -16,6 +17,7 @@ from json_schema_engine.core.keywords.legacy import (
     DEPENDENCIES,
     ITEMS_LEGACY,
 )
+from json_schema_engine.core.keywords.validation import dependency_describe
 from json_schema_engine.core.lowering import (
     HERE,
     INSTANCE,
@@ -24,17 +26,22 @@ from json_schema_engine.core.lowering import (
     CountRange,
     ForEachIndex,
     Stmt,
+    and_,
     apply,
     apply_expr,
     child,
     cmp,
+    collect,
     cond,
     const,
     fail,
     has_key,
     helper,
     not_,
+    or_,
     produce,
+    reject,
+    reject_check,
     type_is,
     when,
 )
@@ -123,6 +130,14 @@ _CONTAINS_PRODUCE = when(
 )
 
 
+def _matched_message(expected: str) -> tuple[object, ...]:
+    return (
+        "the contains subschema matched ",
+        helper("counted_indexes", Binding(1), Const("item"), Const("items")),
+        f", expected {expected}",
+    )
+
+
 def _contains_shape(
     minimum: int | float,
     maximum: int | float | None,
@@ -156,8 +171,8 @@ def test_contains_default_bounds_minimum_one_unbounded_maximum() -> None:
     assert lower(CONTAINS, {}) == _contains_shape(
         1,
         None,
-        (Binding(2), " item(s) match the contains subschema, expected at least 1"),
-        {"count": Binding(2), "minContains": Const(1)},
+        _matched_message("at least 1"),
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(1)},
     )
 
 
@@ -166,8 +181,13 @@ def test_contains_reads_sibling_min_and_max_contains() -> None:
     assert stmts == _contains_shape(
         2,
         3,
-        (Binding(2), " item(s) match the contains subschema, expected 2-3"),
-        {"count": Binding(2), "minContains": Const(2), "maxContains": Const(3)},
+        _matched_message("2-3"),
+        {
+            "count": Binding(2),
+            "matched": Binding(1),
+            "minContains": Const(2),
+            "maxContains": Const(3),
+        },
     )
 
 
@@ -177,8 +197,8 @@ def test_contains_min_contains_zero_still_emits_a_count_range() -> None:
     assert lower(CONTAINS, {}, schema={"minContains": 0}) == _contains_shape(
         0,
         None,
-        (Binding(2), " item(s) match the contains subschema, expected at least 0"),
-        {"count": Binding(2), "minContains": Const(0)},
+        _matched_message("at least 0"),
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(0)},
     )
 
 
@@ -189,8 +209,13 @@ def test_contains_whole_number_float_bounds_are_treated_as_integers() -> None:
     assert stmts == _contains_shape(
         2.0,
         3.0,
-        (Binding(2), " item(s) match the contains subschema, expected 2.0-3.0"),
-        {"count": Binding(2), "minContains": Const(2.0), "maxContains": Const(3.0)},
+        _matched_message("2.0-3.0"),
+        {
+            "count": Binding(2),
+            "matched": Binding(1),
+            "minContains": Const(2.0),
+            "maxContains": Const(3.0),
+        },
     )
 
 
@@ -203,7 +228,7 @@ def test_contains_without_sibling_bounds_uses_a_fixed_range_and_message() -> Non
         1,
         None,
         ("no item matches the contains subschema",),
-        {"count": Binding(2), "minContains": Const(1)},
+        {"count": Binding(2), "matched": Binding(1), "minContains": Const(1)},
     )
 
 
@@ -229,7 +254,22 @@ def test_items_legacy_schema_form_sweeps_every_index_from_zero() -> None:
 
 
 def test_items_legacy_boolean_value_is_a_schema_form() -> None:
-    assert lower(ITEMS_LEGACY, False) == _items_sweep(0)
+    assert lower(ITEMS_LEGACY, True) == _items_sweep(0)
+
+
+def test_items_legacy_false_rejects_every_index() -> None:
+    stmts = lower(ITEMS_LEGACY, False)
+    assert stmts == (
+        when(
+            type_is(INSTANCE, "array"),
+            (
+                collect(1, errors=True),
+                ForEachIndex(INSTANCE, 0, (reject(1, Binding(0)),), start=0),
+                reject_check(1, *tail_rejected("items", 0, Binding(1))),
+                when(cmp(">", _LENGTH, const(0)), (produce(const(True)),)),
+            ),
+        ),
+    )
 
 
 def test_items_legacy_non_schema_non_list_value_emits_nothing() -> None:
@@ -240,7 +280,7 @@ def test_items_legacy_non_schema_non_list_value_emits_nothing() -> None:
 
 
 def test_additional_items_lowers_only_with_a_list_items_sibling() -> None:
-    assert lower(ADDITIONAL_ITEMS, False, schema={"items": [{}, {}]}) == _items_sweep(2)
+    assert lower(ADDITIONAL_ITEMS, True, schema={"items": [{}, {}]}) == _items_sweep(2)
 
 
 def test_additional_items_emits_nothing_without_a_list_items_sibling() -> None:
@@ -258,33 +298,11 @@ def test_dependencies_array_member_lowers_to_the_dependent_required_shape() -> N
             type_is(INSTANCE, "object"),
             (
                 when(
-                    has_key(INSTANCE, "a"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "b")),
-                            (
-                                fail(
-                                    ("'a' requires 'b' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("b"),
-                                    },
-                                ),
-                            ),
-                        ),
-                        when(
-                            not_(has_key(INSTANCE, "c")),
-                            (
-                                fail(
-                                    ("'a' requires 'c' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("c"),
-                                    },
-                                ),
-                            ),
-                        ),
+                    or_(
+                        and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "b"))),
+                        and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "c"))),
                     ),
+                    (fail(*dependency_describe({"a": ["b", "c"]}, INSTANCE)),),
                 ),
             ),
         ),
@@ -302,29 +320,18 @@ def test_dependencies_schema_member_lowers_to_a_guarded_in_place_apply() -> None
 
 
 def test_dependencies_mixed_array_and_schema_members() -> None:
+    # Schema members apply first; the array members' one combined error
+    # comes after their errors, as in `evaluate`.
     stmts = lower(DEPENDENCIES, {"a": ["b"], "c": {}})
     assert stmts == (
         when(
             type_is(INSTANCE, "object"),
             (
-                when(
-                    has_key(INSTANCE, "a"),
-                    (
-                        when(
-                            not_(has_key(INSTANCE, "b")),
-                            (
-                                fail(
-                                    ("'a' requires 'b' to be present",),
-                                    {
-                                        "property": Const("a"),
-                                        "missingProperty": Const("b"),
-                                    },
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
                 when(has_key(INSTANCE, "c"), (apply(("c",), HERE),)),
+                when(
+                    or_(and_(has_key(INSTANCE, "a"), not_(has_key(INSTANCE, "b")))),
+                    (fail(*dependency_describe({"a": ["b"], "c": {}}, INSTANCE)),),
+                ),
             ),
         ),
     )

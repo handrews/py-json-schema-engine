@@ -28,21 +28,29 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.keywords._rejects import (
+    is_false,
+    positions_rejected,
+    positions_sweep,
+    tail_evaluate,
+    tail_sweep,
+)
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
     Const,
     CountRange,
+    Expr,
     ForEachIndex,
     LoweringContext,
     LowerMessage,
     LowerParams,
-    apply,
     apply_expr,
     child,
     cmp,
     cond,
     const,
+    fail,
     helper,
     produce,
     type_is,
@@ -79,17 +87,20 @@ def _prefix_items_lower(value: JsonValue, lctx: LoweringContext) -> None:
         return
     instance = lctx.instance
     length = helper("length_of", instance)
+    head, step, tail = positions_sweep(value, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
+                *head,
                 *(
                     when(
                         cmp(">", length, const(index)),
-                        (apply((index,), child(HERE, index)),),
+                        (step(index, schema),),
                     )
-                    for index in range(len(value))
+                    for index, schema in enumerate(value)
                 ),
+                *tail,
                 # `True` when every element was covered, else the largest
                 # applied index; nothing for an empty array (`evaluate`).
                 *(
@@ -123,11 +134,17 @@ def _prefix_items_evaluate(
         return True
     n = min(len(value), len(instance))
     ok = True
+    rejected: list[JsonValue] = []
     for index in range(n):
-        if not ctx.apply(
+        if is_false(value[index]):
+            rejected.append(index)
+        elif not ctx.apply(
             ("prefixItems", index), child_cursor(cursor, index, instance[index])
         ):
             ok = False
+    if rejected:
+        ctx.report(lambda: positions_rejected(Const(rejected)))
+        ok = False
     # Dependency data comes only from an accepting keyword (§4 rule 6): the
     # largest applied index, or True when it covered the whole array.
     if n > 0 and ok:
@@ -164,20 +181,18 @@ def _items_analyze(_value: JsonValue, ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
-def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
+def _items_lower(value: JsonValue, lctx: LoweringContext) -> None:
     instance = lctx.instance
     start = _items_start(lctx)
     binding = lctx.binding()
+    head, step, tail = tail_sweep("items", value, start, binding, lctx)
     lctx.emit(
         when(
             type_is(instance, "array"),
             (
-                ForEachIndex(
-                    instance,
-                    binding,
-                    (apply((), child(HERE, Binding(binding))),),
-                    start=start,
-                ),
+                *head,
+                ForEachIndex(instance, binding, (step,), start=start),
+                *tail,
                 when(
                     cmp(">", helper("length_of", instance), const(start)),
                     (produce(const(True)),),
@@ -187,11 +202,13 @@ def _items_lower(_value: JsonValue, lctx: LoweringContext) -> None:
     )
 
 
-def _items_evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+def _items_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     instance = cursor.value
     if not isinstance(instance, list):
         return True
     start = _items_start(ctx)
+    if is_false(value):
+        return tail_evaluate("items", start, instance, ctx)
     ok = True
     applied = False
     for index in range(start, len(instance)):
@@ -238,6 +255,34 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
     a sibling spelled `minContains` is an ordinary unknown keyword.
     """
 
+    def describe(
+        minimum: JsonValue, maximum: JsonValue | None, count: Expr, matched: Expr
+    ) -> tuple[LowerMessage, LowerParams]:
+        params: dict[str, Expr] = {
+            "count": count,
+            "matched": matched,
+            "minContains": Const(minimum),
+        }
+        if maximum is not None:
+            params["maxContains"] = Const(maximum)
+        if not sibling_bounds:
+            # draft-07/06: one implicit minimum, so nothing matched.
+            return ("no item matches the contains subschema",), params
+        if maximum is None:
+            expected = f"at least {minimum}"
+        elif maximum == minimum:
+            # Exactly one count is acceptable: a range of one is just it.
+            expected = f"{minimum}"
+        else:
+            expected = f"{minimum}-{maximum}"
+        shown = helper("counted_indexes", matched, Const("item"), Const("items"))
+        message: LowerMessage = (
+            "the contains subschema matched ",
+            shown,
+            f", expected {expected}",
+        )
+        return message, params
+
     def analyze(_value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
         return StaticFacts(
             subschemas=((),),
@@ -250,29 +295,26 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             ),
         )
 
-    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    def lower(value: JsonValue, lctx: LoweringContext) -> None:
         instance = lctx.instance
         minimum, maximum = _contains_bounds(lctx.schema, sibling_bounds=sibling_bounds)
+        if is_false(value):
+            # Nothing can match, so nothing is probed: the only possible
+            # failure is too few matches, and it names none.
+            if int(minimum) > 0:
+                lctx.emit(
+                    when(
+                        type_is(instance, "array"),
+                        (fail(*describe(minimum, maximum, const(0), const([]))),),
+                    )
+                )
+            return
         binding = lctx.binding()
         matched = lctx.binding()
         counter = lctx.binding()
-        # The message and params name the runtime match count through the
-        # `count` binding, exactly as `evaluate` reports it.
-        if not sibling_bounds:
-            message: LowerMessage = ("no item matches the contains subschema",)
-        elif maximum is None:
-            message = (
-                Binding(counter),
-                f" item(s) match the contains subschema, expected at least {minimum}",
-            )
-        else:
-            message = (
-                Binding(counter),
-                f" item(s) match the contains subschema, expected {minimum}-{maximum}",
-            )
-        params: LowerParams = {"count": Binding(counter), "minContains": Const(minimum)}
-        if maximum is not None:
-            params = {**params, "maxContains": Const(maximum)}
+        # The message and params name the runtime count and indexes through
+        # the `count` and `matched` bindings, exactly as `evaluate` reports.
+        message, params = describe(minimum, maximum, Binding(counter), Binding(matched))
         count = helper("length_of", Binding(matched))
         lctx.emit(
             when(
@@ -307,33 +349,21 @@ def contains_behavior(behavior_id: str, *, sibling_bounds: bool) -> KeywordBehav
             )
         )
 
-    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         instance = cursor.value
         if not isinstance(instance, list):
             return True
         matched: list[int] = []
-        for index in range(len(instance)):
+        # A `false` subschema matches nothing: no probe, no per-item error.
+        for index in range(0 if is_false(value) else len(instance)):
             if ctx.apply(("contains",), child_cursor(cursor, index, instance[index])):
                 matched.append(index)
         count = len(matched)
         minimum, maximum = _contains_bounds(ctx.schema, sibling_bounds=sibling_bounds)
         if count < minimum or (maximum is not None and count > maximum):
-            if not sibling_bounds:
-                message = "no item matches the contains subschema"
-            elif maximum is None:
-                message = (
-                    f"{count} item(s) match the contains subschema, "
-                    f"expected at least {minimum}"
-                )
-            else:
-                message = (
-                    f"{count} item(s) match the contains subschema, "
-                    f"expected {minimum}-{maximum}"
-                )
-            params: dict[str, JsonValue] = {"count": count, "minContains": minimum}
-            if maximum is not None:
-                params["maxContains"] = maximum
-            ctx.error(message, params)
+            ctx.report(
+                lambda: describe(minimum, maximum, Const(count), Const(list(matched)))
+            )
             return False
         # Dependency data comes only from an accepting keyword: matched
         # indexes, or True when every element matched. `minContains: 0`

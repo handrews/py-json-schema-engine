@@ -68,12 +68,13 @@ def run(schema: JsonValue, instance: JsonValue) -> tuple[bool, EvalState]:
 
 
 def test_items_tuple_applies_positionally_at_the_right_path() -> None:
-    schema: JsonValue = {"items": [{}, False]}
-    valid, state = run(schema, [1, 2, 3])
+    schema: JsonValue = {"items": [{}, {"items": [False]}]}
+    valid, state = run(schema, [1, [2], 3])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/items/1"
     assert err.cursor.pointer == "/1"
+    assert err.message == "items not allowed at 0"
 
 
 def test_items_tuple_ignores_elements_past_its_own_length() -> None:
@@ -137,12 +138,20 @@ def test_items_schema_form_applies_to_every_element() -> None:
 
 
 def test_items_schema_form_applies_at_the_right_path() -> None:
-    schema: JsonValue = {"items": False}
-    valid, state = run(schema, [1])
+    schema: JsonValue = {"items": {"items": [False]}}
+    valid, state = run(schema, [[1]])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/items"
     assert err.cursor.pointer == "/0"
+
+
+def test_items_schema_form_false_reports_every_index_once() -> None:
+    valid, state = run({"items": False}, [1, 2])
+    assert not valid
+    (err,) = state.errors
+    assert err.message == "items not allowed from index 0: 0, 1"
+    assert err.params == {"start": 0, "failed": [[0, 1]]}
 
 
 def test_items_schema_form_produces_true_only_when_it_applied() -> None:
@@ -167,12 +176,22 @@ def test_additional_items_with_tuple_items_applies_from_index_len() -> None:
 
 
 def test_additional_items_applies_at_the_right_path() -> None:
-    schema: JsonValue = {"items": [{}], "additionalItems": False}
-    valid, state = run(schema, [1, 2])
+    schema: JsonValue = {"items": [{}], "additionalItems": {"items": [False]}}
+    valid, state = run(schema, [1, [2]])
     assert not valid
-    err = state.errors[0]
+    (err,) = state.errors
     assert materialize_path(err.path_node) == "/additionalItems"
     assert err.cursor.pointer == "/1"
+
+
+def test_additional_items_false_reports_the_tail_once() -> None:
+    schema: JsonValue = {"items": [{}], "additionalItems": False}
+    valid, state = run(schema, [1, 2, 3, 4])
+    assert not valid
+    (err,) = state.errors
+    assert err.keyword_name == "additionalItems"
+    assert err.message == "additional items not allowed from index 1: 1-3"
+    assert err.params == {"start": 1, "failed": [[1, 3]]}
 
 
 def test_additional_items_produces_true_only_when_it_applied() -> None:
@@ -217,17 +236,11 @@ def test_dependencies_array_form_present_triggers_and_absent_does_not() -> None:
     assert run(schema, {"x": 1})[0] is True
 
 
-def test_dependencies_array_form_multiple_missing_reports_in_order() -> None:
+def test_dependencies_array_form_reports_every_missing_name_in_one_error() -> None:
     schema: JsonValue = {"dependencies": {"a": ["b", "c"]}}
     _, state = run(schema, {"a": 1})
-    assert [e.message for e in state.errors] == [
-        "'a' requires 'b' to be present",
-        "'a' requires 'c' to be present",
-    ]
-    assert [e.params for e in state.errors] == [
-        {"property": "a", "missingProperty": "b"},
-        {"property": "a", "missingProperty": "c"},
-    ]
+    assert [e.message for e in state.errors] == ['"a" requires "b", "c"']
+    assert [e.params for e in state.errors] == [{"missing": {"a": ["b", "c"]}}]
 
 
 def test_dependencies_non_object_instance_passes() -> None:
@@ -249,7 +262,7 @@ def test_dependencies_schema_form_applies_in_place_at_the_same_cursor() -> None:
     assert not valid
     err = state.errors[0]
     assert err.cursor.pointer == ""
-    assert err.message == "'x' requires 'y' to be present"
+    assert err.message == '"x" requires "y"'
 
 
 def test_dependencies_boolean_subschema_form() -> None:
@@ -266,10 +279,8 @@ def test_dependencies_escaped_names() -> None:
     assert run(schema, {"foo\nbar": 1, 'foo"bar': 1})[0] is True
     valid, state = run(schema, {"foo\nbar": 1})
     assert not valid
-    assert state.errors[0].params == {
-        "property": "foo\nbar",
-        "missingProperty": 'foo"bar',
-    }
+    assert state.errors[0].params == {"missing": {"foo\nbar": ['foo"bar']}}
+    assert state.errors[0].message == '"foo\\nbar" requires "foo\\"bar"'
 
 
 def test_dependencies_mixed_map_of_array_and_schema_members() -> None:

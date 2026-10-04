@@ -22,18 +22,33 @@ from json_schema_engine.core.dialect import (
 )
 from json_schema_engine.core.json_model import JsonValue, is_object
 from json_schema_engine.core.keywords._ids import VOCAB_APPLICATOR, keyword_id
+from json_schema_engine.core.keywords._rejects import (
+    dependents_rejected,
+    is_false,
+)
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
+    Const,
+    Expr,
     LoweringContext,
+    LowerMessage,
+    LowerParams,
+    Stmt,
     apply,
     apply_expr,
+    collect,
     combine_check,
+    fail,
     has_key,
+    helper,
     lower_nothing,
+    reject,
+    reject_check,
     type_is,
     when,
 )
+from json_schema_engine.core.messages import index_ranges
 
 ANY_OF_ID = keyword_id(VOCAB_APPLICATOR, "anyOf")
 ALL_OF_ID = keyword_id(VOCAB_APPLICATOR, "allOf")
@@ -59,6 +74,14 @@ def _any_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _any_of_message(count: int) -> str:
+    # Which branches failed would say nothing new: all of them did, and
+    # each reported why.
+    if count == 1:
+        return "does not match the anyOf branch"
+    return f"does not match any of the {count} anyOf branches"
+
+
 def _any_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
     # Every branch is an `any_may_pass` apply; the combine check closes the
@@ -66,7 +89,7 @@ def _any_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     # where the plan proves the region verdict-only (§4 rule 7).
     lctx.emit(
         *(apply((index,), HERE, "any_may_pass") for index in range(len(value))),
-        combine_check(("does not match any anyOf branch",)),
+        combine_check((_any_of_message(len(value)),)),
     )
 
 
@@ -79,7 +102,7 @@ def _any_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
         if ctx.apply(("anyOf", index), cursor):
             ok = True
     if not ok:
-        ctx.error("does not match any anyOf branch")
+        ctx.error(_any_of_message(len(value)))
     return ok
 
 
@@ -105,19 +128,44 @@ def _all_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _all_of_rejected(failed: list[int]) -> tuple[LowerMessage, LowerParams]:
+    if len(failed) == 1:
+        text = f"allOf branch {failed[0]} is false"
+    else:
+        text = f"allOf branches {index_ranges(failed)} are false"
+    return (text,), {"failed": Const(list(failed))}
+
+
+def _false_branches(value: list[JsonValue]) -> list[int]:
+    return [index for index, schema in enumerate(value) if is_false(schema)]
+
+
 def _all_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
-    lctx.emit(*(apply((index,), HERE) for index in range(len(value))))
+    failed = _false_branches(value)
+    lctx.emit(
+        *(
+            apply((index,), HERE)
+            for index, schema in enumerate(value)
+            if not is_false(schema)
+        ),
+        *((fail(*_all_of_rejected(failed)),) if failed else ()),
+    )
 
 
 def _all_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
     assert isinstance(value, list)
     ok = True
-    for index in range(len(value)):
-        if not ctx.apply(("allOf", index), cursor):
+    for index, schema in enumerate(value):
+        if not is_false(schema) and not ctx.apply(("allOf", index), cursor):
             ok = False
-    # No message of its own: a failing branch already reported why, and that
-    # error stays relevant because `allOf` rejects too (§4 rule 6).
+    # No message of its own for a failing branch: it already reported why,
+    # and that error stays relevant because `allOf` rejects too (§4 rule
+    # 6). A `false` branch explains nothing, so `allOf` names it instead.
+    failed = _false_branches(value)
+    if failed:
+        ctx.report(lambda: _all_of_rejected(failed))
+        ok = False
     return ok
 
 
@@ -143,18 +191,33 @@ def _one_of_analyze(value: JsonValue, _ctx: AnalyzeContext) -> StaticFacts:
     )
 
 
+def _one_of_describe(count: int, passing: Expr) -> tuple[LowerMessage, LowerParams]:
+    return (
+        (
+            "matched ",
+            helper("counted_indexes", passing, Const("branch"), Const("branches")),
+            f", expected exactly 1 of {count}",
+        ),
+        {"passing": passing},
+    )
+
+
 def _one_of_lower(value: JsonValue, lctx: LoweringContext) -> None:
     assert isinstance(value, list)
+    if not value:
+        # No branch can match, and the combine run has no apply to bind
+        # its passing list from: the failure is a constant.
+        lctx.emit(fail(*_one_of_describe(0, Const([]))))
+        return
     # Every branch is an `exactly_one` apply; the combine check closes the
-    # run and names, through its bindings, the passing count and indexes
-    # `evaluate` reports (D1: one message).
+    # run and names, through its bindings, the passing indexes `evaluate`
+    # reports (D1: one message).
     count = lctx.binding()
     passing = lctx.binding()
     lctx.emit(
         *(apply((index,), HERE, "exactly_one") for index in range(len(value))),
         combine_check(
-            ("matched ", Binding(count), " branches, expected exactly 1"),
-            {"passing": Binding(passing)},
+            *_one_of_describe(len(value), Binding(passing)),
             count=count,
             passing=passing,
         ),
@@ -170,10 +233,7 @@ def _one_of_evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> b
         if ctx.apply(("oneOf", index), cursor):
             passing.append(index)
     if len(passing) != 1:
-        ctx.error(
-            f"matched {len(passing)} branches, expected exactly 1",
-            {"passing": passing},
-        )
+        ctx.report(lambda: _one_of_describe(len(value), Const(passing)))
     return len(passing) == 1
 
 
@@ -316,11 +376,29 @@ def _dependent_schemas_lower(value: JsonValue, lctx: LoweringContext) -> None:
     if not is_object(value):
         return
     instance = lctx.instance
+    r = lctx.binding()
+    forbidden = any(is_false(schema) for schema in value.values())
+
+    def step(name: str) -> Stmt:
+        if is_false(value[name]):
+            return reject(r, Const(name))
+        return apply((name,), HERE)
+
     lctx.emit(
         when(
             type_is(instance, "object"),
-            tuple(
-                when(has_key(instance, name), (apply((name,), HERE),)) for name in value
+            (
+                *((collect(r, errors=True),) if forbidden else ()),
+                *(when(has_key(instance, name), (step(name),)) for name in value),
+                *(
+                    (
+                        reject_check(
+                            r, *dependents_rejected("dependentSchemas", Binding(r))
+                        ),
+                    )
+                    if forbidden
+                    else ()
+                ),
             ),
         )
     )
@@ -333,10 +411,19 @@ def _dependent_schemas_evaluate(
     if not is_object(instance) or not is_object(value):
         return True
     ok = True
+    rejected: list[JsonValue] = []
     for name in value:
-        if name in instance and not ctx.apply(("dependentSchemas", name), cursor):
+        if name not in instance:
+            continue
+        if is_false(value[name]):
+            rejected.append(name)
+        elif not ctx.apply(("dependentSchemas", name), cursor):
             ok = False
-    # No message of its own: a failing named subschema already reported why.
+    # No message of its own for a failing named subschema: it already
+    # reported why. A `false` one explains nothing, so it is named here.
+    if rejected:
+        ctx.report(lambda: dependents_rejected("dependentSchemas", Const(rejected)))
+        ok = False
     return ok
 
 

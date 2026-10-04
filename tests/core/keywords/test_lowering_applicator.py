@@ -5,6 +5,7 @@
 
 from json_schema_engine.core.dialect import AnalyzeContext, SubschemaApplication
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.keywords._rejects import dependents_rejected
 from json_schema_engine.core.keywords.applicator import (
     DEPENDENT_SCHEMAS,
     ELSE,
@@ -18,12 +19,17 @@ from json_schema_engine.core.lowering import (
     Apply,
     ApplyExpr,
     Binding,
+    Collect,
     CombineCheck,
+    Const,
     HasKey,
     If,
     Instance,
     LowerApply,
+    Reject,
+    RejectCheck,
     TypeIs,
+    helper,
 )
 
 from .lowering_helpers import lower
@@ -48,7 +54,13 @@ def test_one_of_lowers_to_an_exactly_one_run_closed_by_a_combine_check() -> None
         # The message names the runtime count and passing indexes through
         # the check's bindings, exactly as `evaluate` reports them (M9).
         CombineCheck(
-            ("matched ", Binding(0), " branches, expected exactly 1"),
+            (
+                "matched ",
+                helper(
+                    "counted_indexes", Binding(1), Const("branch"), Const("branches")
+                ),
+                ", expected exactly 1 of 2",
+            ),
             {"passing": Binding(1)},
             count=0,
             passing=1,
@@ -169,7 +181,7 @@ def test_dependent_schemas_applications_are_conditional_and_assert() -> None:
 
 
 def test_dependent_schemas_lowers_to_a_guarded_has_key_check_per_name() -> None:
-    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": False})
+    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": {}})
     assert stmts == (
         If(
             TypeIs(Instance(), ("object",)),
@@ -182,6 +194,24 @@ def test_dependent_schemas_lowers_to_a_guarded_has_key_check_per_name() -> None:
                     HasKey(Instance(), "b"),
                     (Apply(LowerApply(("b",), HERE, "all_must_pass")),),
                 ),
+            ),
+        ),
+    )
+
+
+def test_dependent_schemas_false_members_are_rejected_not_applied() -> None:
+    stmts = lower(DEPENDENT_SCHEMAS, {"a": True, "b": False})
+    assert stmts == (
+        If(
+            TypeIs(Instance(), ("object",)),
+            (
+                Collect(0, errors=True),
+                If(
+                    HasKey(Instance(), "a"),
+                    (Apply(LowerApply(("a",), HERE, "all_must_pass")),),
+                ),
+                If(HasKey(Instance(), "b"), (Reject(0, Const("b")),)),
+                RejectCheck(0, *dependents_rejected("dependentSchemas", Binding(0))),
             ),
         ),
     )

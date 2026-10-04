@@ -3,6 +3,8 @@
 # positional error correlation against `Result.errors`, so a consumer never
 # parses location strings to reconstruct application context.
 
+import pytest
+
 from json_schema_engine.core import JsonValue, Result, TraceUnit, create_engine
 
 
@@ -96,14 +98,31 @@ def test_trace_records_property_names_applications_at_the_object_location() -> N
 
 
 def test_trace_attaches_boolean_false_errors_to_the_application_node() -> None:
-    result = run({"properties": {"a": False}}, {"a": 1})
+    # An applicator never applies a `false` subschema of its own (it names
+    # the keys instead); a `$ref` to one is still applied, and its error
+    # belongs to that application.
+    result = run(
+        {"properties": {"a": {"$ref": "#/$defs/no"}}, "$defs": {"no": False}},
+        {"a": 1},
+    )
     assert result.trace is not None and result.errors is not None
-    app = find(result.trace, ["properties", "a"])
+    app = find(find(result.trace, ["properties", "a"]), ["$ref"])
     assert app["valid"] is False
     assert len(app["errorIndexes"]) == 1
     unit = result.errors[app["errorIndexes"][0]]
     assert "keyword" not in unit
     assert unit["inputLocation"] == "/a"
+    assert unit["error"] == "schema is false"
+
+
+def test_trace_has_no_application_for_a_rejected_false_subschema() -> None:
+    result = run({"properties": {"a": False}}, {"a": 1})
+    assert result.trace is not None and result.errors is not None
+    with pytest.raises(LookupError):
+        find(result.trace, ["properties", "a"])
+    (unit,) = result.errors
+    assert unit["error"] == 'property "a" not allowed'
+    assert unit["inputLocation"] == ""
 
 
 def test_trace_decodes_escaped_path_segments() -> None:

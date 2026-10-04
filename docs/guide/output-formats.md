@@ -148,7 +148,7 @@ assert result.output_document == {
             "keywordLocation": "/properties/count/type",
             "absoluteKeywordLocation": "https://example.com/config#/properties/count/type",
             "instanceLocation": "/count",
-            "error": "expected integer",
+            "error": 'expected integer, got "nope" (string)',
         }
     ],
 }
@@ -157,7 +157,7 @@ assert result.errors == [
         "evaluationPath": "/properties/count/type",
         "schemaLocation": "https://example.com/config#/properties/count/type",
         "inputLocation": "/count",
-        "error": "expected integer",
+        "error": 'expected integer, got "nope" (string)',
     }
 ]
 ```
@@ -218,7 +218,7 @@ level every unit is.
 result = engine.evaluate(uri, {"item": "widget", "count": "nope"}, output="list")
 detail = result.output_document["details"][0]
 assert detail["evaluationPath"] == "/properties/count"
-assert detail["errors"] == {"type": "expected integer"}
+assert detail["errors"] == {"type": 'expected integer, got "nope" (string)'}
 ```
 
 ## Detailed
@@ -302,8 +302,8 @@ params_uri = engine.register_schema(
 )
 result = engine.evaluate(params_uri, {"a": 1}, output="list", error_params=True)
 by_keyword = {u["keyword"]: u["params"] for u in result.errors}
-assert by_keyword["required"] == {"missingProperty": "b"}
-assert by_keyword["enum"] == {"allowedValues": [{"a": 1, "b": 2}]}
+assert by_keyword["required"] == {"missing": ["b"]}
+assert by_keyword["enum"] == {"allowedValues": [{"a": 1, "b": 2}], "value": {"a": 1}}
 ```
 
 ## Trace
@@ -345,13 +345,13 @@ assert result.dropped_errors == [
         "evaluationPath": "/anyOf/1/required",
         "schemaLocation": "https://example.com/anyof#/anyOf/1/required",
         "inputLocation": "",
-        "error": "missing required property 'b'",
+        "error": 'missing required property "b"',
     }
 ]
 losing_branch = next(
     d for d in result.output_document["details"] if d["evaluationPath"] == "/anyOf/1"
 )
-assert losing_branch["droppedErrors"] == {"required": "missing required property 'b'"}
+assert losing_branch["droppedErrors"] == {"required": 'missing required property "b"'}
 ```
 
 The markers classify records, not units. Read `errors`/`annotations`
@@ -371,7 +371,7 @@ assert units[""]["valid"] is False
 assert units["/anyOf/1"]["valid"] is False
 assert "errors" not in units["/anyOf/1"]
 assert units["/anyOf/1"]["droppedErrors"] == {
-    "required": "missing required property 'b'"
+    "required": 'missing required property "b"'
 }
 ```
 

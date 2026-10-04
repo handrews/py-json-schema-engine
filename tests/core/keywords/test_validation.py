@@ -5,6 +5,7 @@
 # three vocabularies, evaluated with `run_evaluation`, mirroring
 # `tests/core/test_evaluator.py`'s pattern.
 
+import json
 import re
 
 import pytest
@@ -95,21 +96,32 @@ def test_type_matrix(instance: JsonValue, expected: frozenset[str]) -> None:
             assert not valid
             error = state.errors[0]
             assert error.keyword_name == "type"
-            assert error.message == f"expected {name}"
+            actual = _apparent_type_name(instance)
+            shown = (
+                actual
+                if isinstance(instance, list | dict)
+                else f"{json.dumps(instance)} ({actual})"
+            )
+            assert error.message == f"expected {name}, got {shown}"
             assert error.params == {
                 "expected": [name],
-                "actual": _actual_type_name(instance),
+                "actual": actual,
+                "value": instance,
             }
 
 
-def _actual_type_name(instance: JsonValue) -> str:
+def _apparent_type_name(instance: JsonValue) -> str:
     # Derived independently of the module under test, from the P2 truth
-    # table: bool before int, integral-ness is irrelevant to the base type.
+    # table: bool before int, and a mathematical integer reads as one.
     if instance is None:
         return "null"
     if isinstance(instance, bool):
         return "boolean"
-    if isinstance(instance, int | float):
+    if isinstance(instance, int) or (
+        isinstance(instance, float) and instance.is_integer()
+    ):
+        return "integer"
+    if isinstance(instance, float):
         return "number"
     if isinstance(instance, str):
         return "string"
@@ -124,8 +136,12 @@ def test_type_array_of_names_matches_any() -> None:
     valid, state = run({"type": ["string", "null"]}, 5)
     assert not valid
     error = state.errors[0]
-    assert error.message == "expected string, null"
-    assert error.params == {"expected": ["string", "null"], "actual": "number"}
+    assert error.message == "expected string, null, got 5 (integer)"
+    assert error.params == {
+        "expected": ["string", "null"],
+        "actual": "integer",
+        "value": 5,
+    }
 
 
 def test_type_true_never_matches_number_or_integer() -> None:
@@ -146,8 +162,8 @@ def test_required_missing_reports_one_error() -> None:
     assert not valid
     assert len(state.errors) == 1
     error = state.errors[0]
-    assert error.message == "missing required property 'b'"
-    assert error.params == {"missingProperty": "b"}
+    assert error.message == 'missing required property "b"'
+    assert error.params == {"missing": ["b"]}
     assert error.keyword_name == "required"
 
 
@@ -155,14 +171,12 @@ def test_required_all_present_passes() -> None:
     assert run({"required": ["a", "b"]}, {"a": 1, "b": 2})[0]
 
 
-def test_required_reports_one_error_per_missing_name_in_order() -> None:
-    valid, state = run({"required": ["a", "b", "c"]}, {})
+def test_required_reports_every_missing_name_in_one_error() -> None:
+    valid, state = run({"required": ["a", "b", "c"]}, {"b": 1})
     assert not valid
-    assert [e.params["missingProperty"] for e in state.errors if e.params] == [
-        "a",
-        "b",
-        "c",
-    ]
+    assert len(state.errors) == 1
+    assert state.errors[0].message == 'missing required properties "a", "c"'
+    assert state.errors[0].params == {"missing": ["a", "c"]}
 
 
 def test_required_non_object_instance_is_vacuous() -> None:
@@ -179,7 +193,8 @@ def test_required_prototype_trap_names_are_ordinary_keys() -> None:
     schema: JsonValue = {"required": names}
     valid, state = run(schema, {})
     assert not valid
-    assert [e.params["missingProperty"] for e in state.errors if e.params] == names
+    assert len(state.errors) == 1
+    assert state.errors[0].params == {"missing": names}
     present: JsonValue = {str(n): n for n in names}
     assert run(schema, present)[0]
 
@@ -192,8 +207,8 @@ def test_pattern_match_and_mismatch() -> None:
     valid, state = run({"pattern": "^a"}, "xyz")
     assert not valid
     error = state.errors[0]
-    assert error.message == "does not match pattern"
-    assert error.params == {"pattern": "^a"}
+    assert error.message == 'must match pattern "^a", got "xyz"'
+    assert error.params == {"pattern": "^a", "value": "xyz"}
     assert error.keyword_name == "pattern"
 
 
@@ -236,8 +251,8 @@ def test_enum_no_match_reports_error() -> None:
     valid, state = run({"enum": [1, 2]}, 3)
     assert not valid
     error = state.errors[0]
-    assert error.message == "not one of the allowed values"
-    assert error.params == {"allowedValues": [1, 2]}
+    assert error.message == "must be one of [1, 2], got 3"
+    assert error.params == {"allowedValues": [1, 2], "value": 3}
     assert error.keyword_name == "enum"
 
 
@@ -263,8 +278,8 @@ def test_const_mismatch_reports_error() -> None:
     valid, state = run({"const": 5}, 6)
     assert not valid
     error = state.errors[0]
-    assert error.message == "does not equal the required constant"
-    assert error.params == {"allowedValue": 5}
+    assert error.message == "must equal 5, got 6"
+    assert error.params == {"allowedValue": 5, "value": 6}
     assert error.keyword_name == "const"
 
 
@@ -295,8 +310,8 @@ def test_multiple_of_error_params() -> None:
     valid, state = run({"multipleOf": 2}, 5)
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be a multiple of 2"
-    assert error.params == {"multipleOf": 2}
+    assert error.message == "must be a multiple of 2, got 5"
+    assert error.params == {"multipleOf": 2, "value": 5}
     assert error.keyword_name == "multipleOf"
 
 
@@ -354,10 +369,10 @@ def test_numeric_bounds_1_0_vs_1_compare_exactly() -> None:
 @pytest.mark.parametrize(
     ("keyword", "message"),
     [
-        ("maximum", "must be <= 5"),
-        ("exclusiveMaximum", "must be < 5"),
-        ("minimum", "must be >= 5"),
-        ("exclusiveMinimum", "must be > 5"),
+        ("maximum", "must be <= 5, got 10"),
+        ("exclusiveMaximum", "must be < 5, got 10"),
+        ("minimum", "must be >= 5, got 0"),
+        ("exclusiveMinimum", "must be > 5, got 0"),
     ],
 )
 def test_numeric_bounds_error_message_and_params(keyword: str, message: str) -> None:
@@ -366,7 +381,7 @@ def test_numeric_bounds_error_message_and_params(keyword: str, message: str) -> 
     assert not valid
     error = state.errors[0]
     assert error.message == message
-    assert error.params == {"limit": 5}
+    assert error.params == {"limit": 5, "value": instance}
     assert error.keyword_name == keyword
 
 
@@ -397,15 +412,43 @@ def test_length_bounds_error_message_and_params() -> None:
     valid, state = run({"maxLength": 3}, "abcd")
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be at most 3 characters"
-    assert error.params == {"limit": 3}
+    assert error.message == 'must be at most 3 characters, got "abcd" (4)'
+    assert error.params == {"limit": 3, "value": "abcd", "length": 4}
     assert error.keyword_name == "maxLength"
 
     valid, state = run({"minLength": 3}, "ab")
     assert not valid
     error = state.errors[0]
-    assert error.message == "must be at least 3 characters"
-    assert error.params == {"limit": 3}
+    assert error.message == 'must be at least 3 characters, got "ab" (2)'
+    assert error.params == {"limit": 3, "value": "ab", "length": 2}
+
+
+def test_a_long_instance_is_shown_truncated_but_carried_whole() -> None:
+    long = "x" * 200
+    valid, state = run({"maxLength": 3}, long)
+    assert not valid
+    error = state.errors[0]
+    assert error.message.startswith('must be at most 3 characters, got "xxx')
+    assert "…" in error.message
+    assert error.message.endswith("… (200)")
+    assert error.params is not None and error.params["value"] == long
+
+
+def test_a_length_is_counted_in_code_points() -> None:
+    valid, state = run({"minLength": 3}, "\U0001f600")
+    assert not valid
+    assert state.errors[0].message.endswith(" (1)")
+
+
+def test_enum_and_const_show_values_as_json() -> None:
+    valid, state = run({"enum": [True, None, {"a": "b"}]}, False)
+    assert not valid
+    assert state.errors[0].message == (
+        'must be one of [true, null, {"a": "b"}], got false'
+    )
+    valid, state = run({"const": {"a": [1, 2]}}, [1])
+    assert not valid
+    assert state.errors[0].message == 'must equal {"a": [1, 2]}, got [1]'
 
 
 # --- maxItems / minItems (M2) -----------------------------------------------
@@ -428,8 +471,8 @@ def test_item_count_bounds_error_message_and_params() -> None:
     valid, state = run({"maxItems": 2}, [1, 2, 3])
     assert not valid
     error = state.errors[0]
-    assert error.message == "must have at most 2 items"
-    assert error.params == {"limit": 2}
+    assert error.message == "must have at most 2 items, got 3"
+    assert error.params == {"limit": 2, "count": 3}
     assert error.keyword_name == "maxItems"
 
 
@@ -453,8 +496,8 @@ def test_property_count_bounds_error_message_and_params() -> None:
     valid, state = run({"maxProperties": 2}, {"a": 1, "b": 2, "c": 3})
     assert not valid
     error = state.errors[0]
-    assert error.message == "must have at most 2 properties"
-    assert error.params == {"limit": 2}
+    assert error.message == "must have at most 2 properties, got 3"
+    assert error.params == {"limit": 2, "count": 3}
     assert error.keyword_name == "maxProperties"
 
 
@@ -466,8 +509,8 @@ def test_unique_items_rejects_1_and_1_0_as_duplicates() -> None:
     valid, state = run({"uniqueItems": True}, [1, 1.0])
     assert not valid
     error = state.errors[0]
-    assert error.message == "items at 0 and 1 are not unique"
-    assert error.params == {"duplicates": [0, 1]}
+    assert error.message == "items are not unique: [0, 1] are equal"
+    assert error.params == {"duplicates": [[0, 1]]}
     assert error.keyword_name == "uniqueItems"
 
 
@@ -485,10 +528,13 @@ def test_unique_items_non_array_instance_is_vacuous() -> None:
     assert run({"uniqueItems": True}, None)[0]
 
 
-def test_unique_items_reports_first_colliding_pair() -> None:
-    valid, state = run({"uniqueItems": True}, [1, 2, 1, 2])
+def test_unique_items_reports_every_group_of_equal_items() -> None:
+    valid, state = run({"uniqueItems": True}, [1, 2, 1, 2, 3, 1])
     assert not valid
-    assert state.errors[0].params == {"duplicates": [0, 2]}
+    assert state.errors[0].message == (
+        "items are not unique: [0, 2, 5] are equal; [1, 3] are equal"
+    )
+    assert state.errors[0].params == {"duplicates": [[0, 2, 5], [1, 3]]}
 
 
 # --- dependentRequired (M2) --------------------------------------------------
@@ -508,19 +554,15 @@ def test_dependent_required_non_object_instance_is_vacuous() -> None:
     assert run({"dependentRequired": {"a": ["b"]}}, [1, 2])[0]
 
 
-def test_dependent_required_reports_every_missing_dependency_in_order() -> None:
+def test_dependent_required_reports_every_missing_dependency_in_one_error() -> None:
     schema: JsonValue = {"dependentRequired": {"a": ["b", "c"], "x": ["y"]}}
     valid, state = run(schema, {"a": 1, "x": 1})
     assert not valid
-    assert len(state.errors) == 3
-    assert [
-        (e.params["property"], e.params["missingProperty"])
-        for e in state.errors
-        if e.params
-    ] == [("a", "b"), ("a", "c"), ("x", "y")]
-    for error in state.errors:
-        assert error.keyword_name == "dependentRequired"
-    assert state.errors[0].message == "'a' requires 'b' to be present"
+    assert len(state.errors) == 1
+    error = state.errors[0]
+    assert error.keyword_name == "dependentRequired"
+    assert error.params == {"missing": {"a": ["b", "c"], "x": ["y"]}}
+    assert error.message == '"a" requires "b", "c"; "x" requires "y"'
 
 
 # --- minContains / maxContains (inert siblings, M2) --------------------------

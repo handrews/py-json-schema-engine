@@ -52,7 +52,7 @@ def u2(v, d, s, st, pn, cu):
     w4 = True
     m4 = H_EMARK(st)
     if type(v) is not str:
-        H_ERR(st, x7, pn, cu, 'expected string', {'expected': k0, 'actual': H_TYPE(v)})
+        H_ERR(st, x7, pn, cu, 'expected string, got ' + str(H_TPREV(v)), {'expected': k0, 'actual': H_ATYPE(v), 'value': v})
         w4 = False
     if w4:
         H_DROP(st, m4)

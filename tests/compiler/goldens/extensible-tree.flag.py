@@ -43,9 +43,8 @@ def u1(v, d, s):
             t5 = v['rank']
             if type(t5) is not str:
                 return False
-    if g1:
-        if 'rank' not in v:
-            return False
+    if g1 and 'rank' not in v:
+        return False
     if g1:
         for b1 in v:
             if b1 not in k0:

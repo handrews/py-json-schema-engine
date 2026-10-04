@@ -97,7 +97,7 @@ COUNT_ERROR: ErrorUnit = {
     "evaluationPath": "/properties/count/type",
     "schemaLocation": "https://golden.example/schema#/properties/count/type",
     "inputLocation": "/count",
-    "error": "expected integer",
+    "error": 'expected integer, got "nope" (string)',
 }
 
 
@@ -171,7 +171,7 @@ def test_list_verbose_level_includes_every_unit_with_markers() -> None:
     assert [u["evaluationPath"] for u in details] == ["", "/properties/name"]
     assert details[0]["droppedAnnotations"] == {"title": "root"}
     assert details[1]["droppedAnnotations"] == {"title": "the name"}
-    assert details[1]["errors"] == {"type": "expected string"}
+    assert details[1]["errors"] == {"type": "expected string, got 3 (integer)"}
     assert result.dropped_annotations is not None
     assert [a["annotation"] for a in result.dropped_annotations] == [
         "the name",
@@ -302,18 +302,21 @@ def test_detailed_condenses_the_polygon_example_node_for_node() -> None:
                 "instanceLocation": "/1",
                 "errors": [
                     {
+                        # The spec's example reports the `false` subschema
+                        # at `/1/z`. Here `additionalProperties` names `z`
+                        # in one error of its own (DESIGN.md D13).
                         "valid": False,
                         "keywordLocation": "/items/$ref/additionalProperties",
                         "absoluteKeywordLocation": "https://example.com/polygon#/$defs/point/additionalProperties",
-                        "instanceLocation": "/1/z",
-                        "error": "schema is false",
+                        "instanceLocation": "/1",
+                        "error": 'additional property "z" not allowed',
                     },
                     {
                         "valid": False,
                         "keywordLocation": "/items/$ref/required",
                         "absoluteKeywordLocation": "https://example.com/polygon#/$defs/point/required",
                         "instanceLocation": "/1",
-                        "error": "missing required property 'y'",
+                        "error": 'missing required property "y"',
                     },
                 ],
             },
@@ -409,19 +412,14 @@ def test_verbose_renders_the_drafts_valid_prop_example_as_a_keyword_hierarchy() 
                 ],
             },
             {
+                # The draft's example nests a `false`-subschema node at
+                # `/disallowedProp`; here the keyword names the property in
+                # one error of its own (DESIGN.md D13).
                 "valid": False,
                 "keywordLocation": "/additionalProperties",
                 "absoluteKeywordLocation": "https://example.com/polygon#/additionalProperties",
                 "instanceLocation": "",
-                "errors": [
-                    {
-                        "valid": False,
-                        "keywordLocation": "/additionalProperties",
-                        "absoluteKeywordLocation": "https://example.com/polygon#/additionalProperties",
-                        "instanceLocation": "/disallowedProp",
-                        "error": "schema is false",
-                    }
-                ],
+                "error": 'additional property "disallowedProp" not allowed',
             },
             {
                 "valid": True,

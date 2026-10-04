@@ -2,10 +2,11 @@
 # the frame, and the trace tree (DESIGN.md §4 normative channel semantics;
 # D6 tracing; P6 records vs. units; P7 identity-keyed structures).
 #
-# Dependency direction: imports `cursor`, `ref`, and `json_model`. The
-# evaluator (which owns §4's rules) and the renderers import this; this
-# module holds no behavior beyond path materialization, so it never imports
-# them back.
+# Dependency direction: imports `cursor`, `ref`, `json_model`, `lowering`
+# and `messages` (to realize a deferred error description). The evaluator
+# (which owns §4's rules) and the renderers import this; this module holds
+# no behavior beyond path materialization and that realization, so it never
+# imports them back.
 #
 # These are records, not output units (P6): they are mutable, identity-keyed,
 # and hold live `Cursor`/`SchemaRef` objects plus an unmaterialized path.
@@ -13,11 +14,13 @@
 # these only when something escapes to a caller — which is what makes
 # annotation elision (D5) a matter of not creating a record at all.
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from json_schema_engine.core.cursor import Cursor
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.lowering import LowerMessage, LowerParams
+from json_schema_engine.core.messages import realize
 from json_schema_engine.core.ref import SchemaRef
 
 
@@ -100,7 +103,12 @@ class DependencyRecord:
     data: object
 
 
-@dataclass(eq=False, slots=True)
+# A deferred error description in lowering IR (P18): called at most once,
+# when the record is first rendered, and realized against the record's own
+# cursor value.
+type MessageBuilder = Callable[[], tuple[LowerMessage, LowerParams | None]]
+
+
 class ErrorRecord:
     """One assertion failure (D13).
 
@@ -111,16 +119,80 @@ class ErrorRecord:
     `params` is structured error data, kept separate from `message` so that
     rendering stays presentation and a future compatibility adapter can
     rebuild another library's error shape from the parts.
+
+    `message` may be a `MessageBuilder` rather than text (P18): the
+    interpreter defers building and realizing a description until the
+    record is rendered, since most records never are — a verdict-only
+    evaluation renders none, and an error under a losing `anyOf` branch or
+    an `if` condition is dropped. `message` and `params` realize it on first
+    read, so a reader never sees the difference.
+
+    Not a dataclass because of that laziness: a dataclass field and a
+    property cannot share the name `message`, and `cached_property` needs
+    the `__dict__` that slots forbid. The record keeps the description and
+    nothing else per error, so a deferred error gives the garbage collector
+    no more to walk than an eager one.
     """
 
-    behavior_id: str | None
-    keyword_name: str | None
-    vocabulary_uri: str | None
-    schema_ref: SchemaRef
-    path_node: PathNode | None
-    cursor: Cursor
-    message: str
-    params: Mapping[str, JsonValue] | None = None
+    __slots__ = (
+        "_builder",
+        "_message",
+        "_params",
+        "behavior_id",
+        "cursor",
+        "keyword_name",
+        "path_node",
+        "schema_ref",
+        "vocabulary_uri",
+    )
+
+    def __init__(
+        self,
+        behavior_id: str | None,
+        keyword_name: str | None,
+        vocabulary_uri: str | None,
+        schema_ref: SchemaRef,
+        path_node: PathNode | None,
+        cursor: Cursor,
+        message: str | MessageBuilder,
+        params: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        self.behavior_id = behavior_id
+        self.keyword_name = keyword_name
+        self.vocabulary_uri = vocabulary_uri
+        self.schema_ref = schema_ref
+        self.path_node = path_node
+        self.cursor = cursor
+        if isinstance(message, str):
+            self._builder: MessageBuilder | None = None
+            self._message = message
+            self._params = params
+        else:
+            self._builder = message
+            self._message = ""
+            self._params = None
+
+    def _realize(self) -> None:
+        builder = self._builder
+        if builder is not None:
+            self._builder = None
+            self._message, self._params = realize(*builder(), self.cursor.value)
+
+    @property
+    def message(self) -> str:
+        self._realize()
+        return self._message
+
+    @property
+    def params(self) -> Mapping[str, JsonValue] | None:
+        self._realize()
+        return self._params
+
+    def __repr__(self) -> str:
+        return (
+            f"ErrorRecord(keyword_name={self.keyword_name!r}, "
+            f"cursor={self.cursor.pointer!r}, message={self.message!r})"
+        )
 
 
 @dataclass(slots=True)

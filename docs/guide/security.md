@@ -251,8 +251,8 @@ dup_result = unique_engine.evaluate(
 )
 assert dup_result.valid is False
 (dup_error,) = dup_result.errors
-assert dup_error["error"] == "items at 1 and 3 are not unique"
-assert dup_error["params"] == {"duplicates": [1, 3]}
+assert dup_error["error"] == "items are not unique: [1, 3] are equal"
+assert dup_error["params"] == {"duplicates": [[1, 3]]}
 ```
 
 ## `InfiniteLoopError`

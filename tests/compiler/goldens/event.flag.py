@@ -14,11 +14,8 @@ def u0(v, d, s):
                 return False
     if not g0:
         return False
-    if g0:
-        if 'id' not in v:
-            return False
-        if 'actor' not in v:
-            return False
+    if g0 and ('id' not in v or 'actor' not in v):
+        return False
     if g0:
         if 'createdAt' in v:
             t2 = v['createdAt']
@@ -30,9 +27,8 @@ def u0(v, d, s):
                 return False
     if not g0:
         return False
-    if g0:
-        if 'createdAt' not in v:
-            return False
+    if g0 and 'createdAt' not in v:
+        return False
     if g0:
         if 'kind' in v:
             t4 = v['kind']
@@ -40,9 +36,8 @@ def u0(v, d, s):
                 return False
     if not g0:
         return False
-    if g0:
-        if 'kind' not in v:
-            return False
+    if g0 and 'kind' not in v:
+        return False
     if g0:
         for b0 in v:
             if b0 not in k1:

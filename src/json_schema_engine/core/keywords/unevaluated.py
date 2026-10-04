@@ -34,6 +34,11 @@ from json_schema_engine.core.keywords._ids import (
     VOCAB_UNEVALUATED,
     keyword_id,
 )
+from json_schema_engine.core.keywords._rejects import (
+    is_false,
+    names_rejected,
+    unevaluated_rejected,
+)
 from json_schema_engine.core.keywords.applicator_array import (
     CONTAINS_ID,
     ITEMS_ID,
@@ -43,6 +48,7 @@ from json_schema_engine.core.keywords.applicator_object import PROPERTIES_ID
 from json_schema_engine.core.lowering import (
     HERE,
     Binding,
+    Const,
     Expr,
     ForEachIndex,
     ForEachKey,
@@ -62,6 +68,8 @@ from json_schema_engine.core.lowering import (
     or_,
     produce,
     regex_test,
+    reject,
+    reject_check,
     type_is,
     when,
 )
@@ -99,11 +107,23 @@ def unevaluated_properties(
             ),
         )
 
-    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    def lower(value: JsonValue, lctx: LoweringContext) -> None:
         instance = lctx.instance
         b = lctx.binding()
         n = lctx.binding()
         head: list[Stmt] = [collect(n)]
+        step: Stmt = apply((), child(HERE, Binding(b)))
+        tail: tuple[Stmt, ...] = ()
+        if is_false(value):
+            # Every unevaluated name fails: report them once, apply nothing.
+            r = lctx.binding()
+            head.append(collect(r, errors=True))
+            step = reject(r, Binding(b))
+            tail = (
+                reject_check(
+                    r, *names_rejected("unevaluated ", " not allowed", Binding(r))
+                ),
+            )
         if lctx.runtime_coverage():
             # Tracked (M9): fold the region channel once, then sweep.
             f = lctx.binding()
@@ -130,22 +150,15 @@ def unevaluated_properties(
                     ForEachKey(
                         instance,
                         b,
-                        (
-                            when(
-                                uncovered,
-                                (
-                                    append(n, Binding(b)),
-                                    apply((), child(HERE, Binding(b))),
-                                ),
-                            ),
-                        ),
+                        (when(uncovered, (append(n, Binding(b)), step)),),
                     ),
+                    *tail,
                     produce(Binding(n)),
                 ),
             )
         )
 
-    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         instance = cursor.value
         if not is_object(instance):
             return True
@@ -162,10 +175,16 @@ def unevaluated_properties(
             if name in covered:
                 continue
             matched.append(name)
-            if not ctx.apply(
+            if not is_false(value) and not ctx.apply(
                 ("unevaluatedProperties",), child_cursor(cursor, name, instance[name])
             ):
                 ok = False
+        if is_false(value) and matched:
+            rejected: list[JsonValue] = list(matched)
+            ctx.report(
+                lambda: names_rejected("unevaluated ", " not allowed", Const(rejected))
+            )
+            ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6).
         if ok:
             ctx.produce(matched)
@@ -207,21 +226,25 @@ def unevaluated_items(
             ),
         )
 
-    def lower(_value: JsonValue, lctx: LoweringContext) -> None:
+    def lower(value: JsonValue, lctx: LoweringContext) -> None:
         instance = lctx.instance
         b = lctx.binding()
         n = lctx.binding()
+        step: Stmt = apply((), child(HERE, Binding(b)))
+        rejecting: tuple[Stmt, ...] = ()
+        checked: tuple[Stmt, ...] = ()
+        if is_false(value):
+            # Every unevaluated index fails: report them once, apply nothing.
+            r = lctx.binding()
+            step = reject(r, Binding(b))
+            rejecting = (collect(r, errors=True),)
+            checked = (reject_check(r, *unevaluated_rejected(Binding(r))),)
         if lctx.runtime_coverage():
             f = lctx.binding()
             sweep = ForEachIndex(
                 instance,
                 b,
-                (
-                    when(
-                        not_(covers(f, Binding(b))),
-                        (append(n, Binding(b)), apply((), child(HERE, Binding(b)))),
-                    ),
-                ),
+                (when(not_(covers(f, Binding(b))), (append(n, Binding(b)), step)),),
             )
             head: tuple[Stmt, ...] = (
                 coverage_fold(
@@ -242,7 +265,7 @@ def unevaluated_items(
             sweep = ForEachIndex(
                 instance,
                 b,
-                (append(n, Binding(b)), apply((), child(HERE, Binding(b)))),
+                (append(n, Binding(b)), step),
                 start=cov.prefix_count,
             )
             head = (collect(n),)
@@ -251,7 +274,9 @@ def unevaluated_items(
                 type_is(instance, "array"),
                 (
                     *head,
+                    *rejecting,
                     sweep,
+                    *checked,
                     when(
                         cmp(">", helper("length_of", Binding(n)), const(0)),
                         (produce(const(True)),),
@@ -260,7 +285,7 @@ def unevaluated_items(
             )
         )
 
-    def evaluate(_value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
+    def evaluate(value: JsonValue, cursor: Cursor, ctx: KeywordContext) -> bool:
         instance = cursor.value
         if not isinstance(instance, list):
             return True
@@ -274,14 +299,20 @@ def unevaluated_items(
         )
         ok = True
         applied = False
+        rejected: list[JsonValue] = []
         for index in range(covered_prefix, length):
             if index in covered:
                 continue
             applied = True
-            if not ctx.apply(
+            if is_false(value):
+                rejected.append(index)
+            elif not ctx.apply(
                 ("unevaluatedItems",), child_cursor(cursor, index, instance[index])
             ):
                 ok = False
+        if rejected:
+            ctx.report(lambda: unevaluated_rejected(Const(rejected)))
+            ok = False
         # Dependency data comes only from an accepting keyword (§4 rule 6).
         if applied and ok:
             ctx.produce(True)

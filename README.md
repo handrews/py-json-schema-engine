@@ -103,7 +103,7 @@ assert result.output_document == {
             "evaluationPath": "/properties/name",
             "schemaLocation": "https://example.com/person#/properties/name",
             "instanceLocation": "/name",
-            "errors": {"type": "expected string"},
+            "errors": {"type": "expected string, got 3 (integer)"},
         }
     ],
 }

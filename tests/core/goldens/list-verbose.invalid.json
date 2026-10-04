@@ -37,7 +37,7 @@
       "schemaLocation": "https://golden.example/schema#/properties/count",
       "instanceLocation": "/count",
       "errors": {
-        "type": "expected integer"
+        "type": "expected integer, got \"nope\" (string)"
       }
     }
   ]

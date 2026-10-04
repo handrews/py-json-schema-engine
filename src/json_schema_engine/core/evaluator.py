@@ -37,6 +37,7 @@ from json_schema_engine.core.channel import (
     ErrorRecord,
     Frame,
     KeywordTrace,
+    MessageBuilder,
     PathNode,
     TraceNode,
 )
@@ -344,6 +345,17 @@ class _KeywordContext:
         ]
 
     def error(self, message: str, params: ErrorParams | None = None) -> None:
+        self._record(message, params)
+
+    def report(self, describe: MessageBuilder) -> None:
+        # The record realizes `describe` against its own cursor's value: no
+        # closure per error, so the garbage collector has no more to walk
+        # than for an eager `error`.
+        self._record(describe, None)
+
+    def _record(
+        self, message: str | MessageBuilder, params: ErrorParams | None
+    ) -> None:
         self.reported = True
         self._state.errors.append(
             ErrorRecord(

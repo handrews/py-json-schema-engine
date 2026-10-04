@@ -17,6 +17,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
 from json_schema_engine.core.json_model import JsonValue
+from json_schema_engine.core.lowering import HelperName
 
 # Fixed helper vocabulary (the exec namespace and the standalone prologue
 # define exactly these; `Names.vocabulary` records them on first use).
@@ -61,6 +62,37 @@ H_ROOT = "H_ROOT"  # root_cursor
 H_FRAGE = "H_FRAGE"  # trampoline on the shared state
 H_FDP = "H_FDP"  # first_duplicate_pair
 H_TYPE = "H_TYPE"  # json_type_name
+H_PREV = "H_PREV"  # preview
+H_ATYPE = "H_ATYPE"  # apparent_type
+H_IRNG = "H_IRNG"  # index_ranges
+H_NAMES = "H_NAMES"  # name_list
+H_DUPG = "H_DUPG"  # duplicate_groups
+H_RNGS = "H_RNGS"  # ranges
+H_MISS = "H_MISS"  # missing_names
+H_MDEP = "H_MDEP"  # missing_dependencies
+H_DLIST = "H_DLIST"  # dependency_list
+H_TPREV = "H_TPREV"  # typed_preview
+H_LNAMES = "H_LNAMES"  # labeled_names
+H_CIDX = "H_CIDX"  # counted_indexes
+H_IGRP = "H_IGRP"  # index_groups
+# The message-formatting helpers (`core/messages.py`), by IR name: called
+# only from error messages and params, so only the evaluator binds them.
+# `EVALUATOR_NAMES` takes its message-helper identifiers from here.
+MESSAGE_HELPERS: dict[HelperName, str] = {
+    "preview": H_PREV,
+    "apparent_type": H_ATYPE,
+    "index_ranges": H_IRNG,
+    "name_list": H_NAMES,
+    "duplicate_groups": H_DUPG,
+    "ranges": H_RNGS,
+    "missing_names": H_MISS,
+    "missing_dependencies": H_MDEP,
+    "dependency_list": H_DLIST,
+    "typed_preview": H_TPREV,
+    "labeled_names": H_LNAMES,
+    "counted_indexes": H_CIDX,
+    "index_groups": H_IGRP,
+}
 EVALUATOR_NAMES = (
     STATE,
     PATH,
@@ -84,6 +116,7 @@ EVALUATOR_NAMES = (
     H_FRAGE,
     H_FDP,
     H_TYPE,
+    *MESSAGE_HELPERS.values(),
 )
 
 BUILTINS_USED = frozenset(

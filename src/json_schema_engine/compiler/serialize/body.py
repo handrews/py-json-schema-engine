@@ -61,6 +61,8 @@ from json_schema_engine.core.lowering import (
     Not,
     Produce,
     RegexTest,
+    Reject,
+    RejectCheck,
     Stmt,
     TypeIs,
     TypeName,
@@ -249,6 +251,10 @@ def _helper(body: BodyContext, name: HelperName, args: tuple[Expr, ...]) -> ast.
             # `len` counts code points on `str` and elements on containers.
             (arg,) = args
             return e.call(e.load("len"), expression(body, arg))
+        case _:
+            # A message-formatting helper: bound under its fixed name.
+            fn = e.MESSAGE_HELPERS[name]
+            return e.call(e.load(fn), *(expression(body, a) for a in args))
 
 
 # --- applications ------------------------------------------------------------
@@ -814,9 +820,26 @@ def statements(body: BodyContext, stmts: tuple[Stmt, ...]) -> list[ast.stmt]:
                 out.extend(apply_statements(body, apply))
             case CountRange():
                 out.extend(_count_range(body, stmt))
-            case Collect(binding):
-                if body.produce_live:
+            case Collect(binding, errors):
+                # Dependency data when a consumer reads it; rejected keys
+                # for the evaluator's summary error, and never otherwise.
+                wanted = body.evaluator if errors else body.produce_live
+                if wanted:
                     out.append(e.assign(body.binding_name(binding), e.list_literal()))
+            case Reject(binding, key, unique):
+                if body.evaluator:
+                    out.extend(_append(body, binding, key, unique))
+                else:
+                    # Verdict only: the first rejected key settles it.
+                    out.append(e.return_(false))
+            case RejectCheck(binding, message, params):
+                if body.evaluator:
+                    out.append(
+                        e.if_(
+                            e.load(body.binding_name(binding)),
+                            _record_error(body, message, params),
+                        )
+                    )
             case Append(binding, value, unique):
                 if body.produce_live:
                     out.extend(_append(body, binding, value, unique))
@@ -1059,11 +1082,12 @@ def _count_range(body: BodyContext, stmt: CountRange) -> list[ast.stmt]:
     iterable = e.call(
         e.load("range"), e.call(e.load("len"), expression(body, stmt.target))
     )
-    # The matched indexes are dependency data: collected only when a
-    # tracked consumer reads them.
+    # The matched indexes are dependency data, and the evaluator's error
+    # names them: collected when a tracked consumer reads them or a message
+    # may, never in a verdict-only artifact.
     matched = (
         body.binding_name(stmt.matched)
-        if stmt.matched is not None and body.produce_live
+        if stmt.matched is not None and (body.produce_live or body.evaluator)
         else None
     )
     hit: list[ast.stmt] = [e.aug_add(counter, e.const(1))]

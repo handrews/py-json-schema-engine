@@ -19,9 +19,8 @@ def u0(v, d, s):
                 return False
     if not g0:
         return False
-    if g0:
-        if 'id' not in v:
-            return False
+    if g0 and 'id' not in v:
+        return False
     return True
 
 def validate(v):

@@ -30,6 +30,7 @@ from json_schema_engine.core.lowering import (
     Const,
     Fail,
     FormatTest,
+    Helper,
     If,
     Logic,
     Not,
@@ -93,8 +94,8 @@ def test_assert_formats_asserts_known_names_in_every_dialect() -> None:
         assert result.valid is False
         assert result.errors is not None
         (error,) = result.errors
-        assert error["error"] == "must match format 'ipv4'"
-        assert error.get("params") == {"format": "ipv4"}
+        assert error["error"] == 'must match format "ipv4", got "nope"'
+        assert error.get("params") == {"format": "ipv4", "value": "nope"}
         assert error.get("keyword") == "format"
 
 
@@ -197,7 +198,10 @@ def test_lowered_shape() -> None:
         "and", (TypeIs(INSTANCE, ("string",)), Not(FormatTest("ipv4", INSTANCE)))
     )
     assert stmt.then == (
-        Fail(("must match format 'ipv4'",), {"format": Const("ipv4")}),
+        Fail(
+            ('must match format "ipv4", got ', Helper("preview", (INSTANCE,))),
+            {"format": Const("ipv4"), "value": INSTANCE},
+        ),
     )
     assert lower(behavior, "no-such") == (Annotate(),)
     assert lower(behavior, 5) == (Annotate(),)

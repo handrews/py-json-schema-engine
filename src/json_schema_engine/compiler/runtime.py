@@ -32,6 +32,7 @@ from json_schema_engine.core.json_model import (
     json_equal,
     json_type_name,
 )
+from json_schema_engine.core.messages import HELPERS as MESSAGE_FUNCTIONS
 from json_schema_engine.core.ref import SchemaRef
 from json_schema_engine.core.regex import RegexCache
 from json_schema_engine.core.registry import SchemaRegistry, attach_location_chain
@@ -214,6 +215,7 @@ def make_namespace(
         e.H_DUP: has_duplicate_items,
         e.H_FDP: first_duplicate_pair,
         e.H_TYPE: json_type_name,
+        **{name: MESSAGE_FUNCTIONS[ir] for ir, name in e.MESSAGE_HELPERS.items()},
         e.H_FRAG: runtime.frag,
         e.H_FRAGC: runtime.frag_cov,
         e.H_FRAGE: runtime.frag_eval,
