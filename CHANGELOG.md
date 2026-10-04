@@ -7,6 +7,8 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-03
+
 ### Added
 
 - **`KeywordContext.report(describe)`** (DESIGN.md P18): a keyword reports
