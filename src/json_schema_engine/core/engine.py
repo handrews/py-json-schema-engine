@@ -684,12 +684,22 @@ def assemble_evaluation(
     # The P3 backstop again, for assembly: the located tree, the hierarchical
     # document, and the rendered trace all recurse once per application, and
     # a compiled evaluator spends so few frames per application that it can
-    # finish a run whose tree the stack then cannot hold.
+    # finish a run whose tree the stack then cannot hold. The relevant
+    # level's pruned tree holds only applications with records at or below
+    # them, so a record-free chain renders where `detailed`'s condensation
+    # used to overflow; a chain carrying records still runs every level.
     try:
         root = None
         if demand.tracing:
             assert state.trace_root is not None
-            root = to_render_node(state.trace_root, records)
+            # The verbose level renders every application and `trace`
+            # reports every one; the relevant level needs only those with
+            # records at or below them.
+            root = to_render_node(
+                state.trace_root,
+                records,
+                prune_empty=not demand.verbose and not trace,
+            )
         result = assemble_result(demand, valid, units, root, root_location, trace)
     except RecursionError:
         raise MaxDepthExceededError(

@@ -5,7 +5,7 @@
 # layer, the registry, the evaluator, and the records all build on it; it
 # knows about none of them.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from json_schema_engine.core.json_model import JsonValue
 from json_schema_engine.core.uri import schema_location
@@ -29,6 +29,12 @@ class SchemaRef:
     # the document root, which may differ once an embedded `$id` starts a new
     # resource.
     pointer: str
+    # `location`, built on first read: the renderers ask every record and
+    # the trace node of an application for it, and the interpreter's cycle
+    # guard asks on entry and exit. Derived from the fields above, so the
+    # ref stays frozen and the fill goes through `object.__setattr__`, as
+    # `PathNode._path` does.
+    _location: str | None = field(default=None, init=False, repr=False)
 
     @property
     def location(self) -> str:
@@ -38,4 +44,8 @@ class SchemaRef:
         result can be pasted into a `$ref` or handed back to
         `Engine.locate` even when a member name holds a space or a `%`.
         """
-        return schema_location(self.base_uri, self.pointer)
+        cached = self._location
+        if cached is None:
+            cached = schema_location(self.base_uri, self.pointer)
+            object.__setattr__(self, "_location", cached)
+        return cached

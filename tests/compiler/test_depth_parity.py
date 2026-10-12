@@ -145,3 +145,19 @@ def test_backstop_covers_output_assembly(output: str, extra: dict[str, bool]) ->
     with pytest.raises(MaxDepthExceededError):
         evaluator(_nest(400), output=output, **extra)
     assert evaluator(_nest(3), output=output, **extra).valid is True
+
+
+def test_relevant_level_renders_a_record_free_chain_the_stack_could_not_rebuild() -> (
+    None
+):
+    # The relevant level prunes record-free applications before rendering,
+    # so `detailed` (whose condensation spends four frames per application)
+    # no longer trips the backstop on a valid chain that carries no records.
+    # `test_backstop_covers_output_assembly` keeps the verbose level and
+    # `trace`, which rebuild every application, on the backstop.
+    engine = create_engine(max_depth=1_000_000)
+    uri = engine.register_schema(
+        {"properties": {"child": {"$ref": "#"}}}, "https://depth.example/pruned"
+    )
+    evaluator = compile_evaluator(engine, uri).evaluate
+    assert evaluator(_nest(200), output="detailed").valid is True

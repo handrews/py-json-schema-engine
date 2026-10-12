@@ -14,6 +14,7 @@ from json_schema_engine.core.output import (
     ErrorUnit,
     RenderInput,
     RenderNode,
+    keyword_suffixes,
     make_record_predicate,
     render_basic,
     render_detailed,
@@ -685,3 +686,15 @@ def test_annotations_option_accepts_bool_or_selection(
 ) -> None:
     # Type-level smoke test: every AnnotationsOption member is accepted.
     make_record_predicate(selection)
+
+
+def test_keyword_suffixes_gives_both_location_forms() -> None:
+    # Plain text for an `evaluationPath`, fragment-encoded for a
+    # `schemaLocation` (P10): RFC 6901 escaping in both, percent-encoding
+    # only in the second.
+    plain, fragment = keyword_suffixes("a/b%c")
+    assert plain == "/a~1b%c"
+    assert fragment == "/a~1b%25c"
+    assert keyword_suffixes("type") == ("/type", "/type")
+    # Memoized per keyword name: the same pair comes back.
+    assert keyword_suffixes("a/b%c") is keyword_suffixes("a/b%c")
