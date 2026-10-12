@@ -7,6 +7,8 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-12
+
 ### Changed
 
 - **Large results render faster.** The relevant level of `list`,
