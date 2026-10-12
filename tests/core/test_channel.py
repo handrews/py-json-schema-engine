@@ -211,3 +211,60 @@ def test_trace_node_defaults() -> None:
     assert node.keywords == [KeywordTrace("type", False)]
     assert child.keywords == []
     assert node != child
+
+
+# --- the materialized-path cache ------------------------------------------
+
+
+def test_materialize_caches_the_path_on_the_node() -> None:
+    node = path_of("properties", "a")
+    assert node is not None
+    first = node.materialize()
+    assert first == "/properties/a"
+    # The second read is the cached string itself, not a rebuilt equal one.
+    assert node.materialize() is first
+    assert materialize_path(node) is first
+
+
+def test_materialize_fills_in_a_partially_cached_chain() -> None:
+    parent = PathNode(None, "properties")
+    assert parent.materialize() == "/properties"
+    deep = PathNode(PathNode(parent, "a"), "items")
+    assert deep.materialize() == "/properties/a/items"
+    # The intermediate node was filled on the way back down.
+    assert deep.parent is not None
+    assert deep.parent.materialize() == "/properties/a"
+
+
+def test_materialize_caches_a_shared_prefix_once() -> None:
+    # One `items` application per element, each minting its own node under
+    # one shared parent: after the first, every sibling is one concatenation
+    # on top of the parent's cached path.
+    parent = PathNode(PathNode(None, "anyOf"), "0")
+    left = PathNode(parent, "items")
+    right = PathNode(parent, "items")
+    assert left.materialize() == "/anyOf/0/items"
+    assert parent.materialize() == "/anyOf/0"
+    assert right.materialize() == "/anyOf/0/items"
+    assert left.materialize() is not right.materialize()
+
+
+def test_deep_chains_do_not_exhaust_the_interpreter_stack() -> None:
+    # The chain's length is the evaluation depth; materialization must not
+    # recurse over it (P3).
+    node: PathNode | None = None
+    for i in range(5000):
+        node = PathNode(node, str(i))
+    assert node is not None
+    path = node.materialize()
+    assert path.startswith("/0/1/2/")
+    assert path.endswith("/4999")
+
+
+def test_path_cache_does_not_change_identity_or_frozenness() -> None:
+    node = PathNode(None, "properties")
+    node.materialize()
+    twin = PathNode(None, "properties")
+    assert node != twin
+    with pytest.raises(AttributeError):
+        setattr(node, "segment", "items")  # noqa: B010 -- pyright rejects `node.segment = ...` on a frozen field

@@ -39,25 +39,49 @@ class PathNode:
     # materialization path, which may run once per emitted unit, and the
     # producers (keyword names, array indices) know their own segment's form.
     segment: str
+    # The materialized path, filled on first use by `materialize`, the
+    # way `Cursor._pointer` is. Derived from the two fields above and never
+    # drifting from them, so the node stays frozen and the fill goes through
+    # `object.__setattr__`. Every record and the trace node of one
+    # application share the node, and the renderers ask each of them.
+    _path: str | None = field(default=None, init=False, repr=False)
 
     def materialize(self) -> str:
-        """The evaluation path as a JSON Pointer string."""
-        return materialize_path(self)
+        """The evaluation path as a JSON Pointer string.
+
+        Walks up to the nearest node that already holds its path and fills
+        in the chain on the way back down, so a fresh node under a cached
+        parent (the usual case: `items` over an array mints one node per
+        element, all under one shared parent) costs one concatenation.
+        Iterative rather than recursive: the chain's length is the
+        evaluation depth, which `max_depth` bounds but the stack this runs
+        on need not accommodate (P3).
+        """
+        cached = self._path
+        if cached is not None:
+            return cached
+        chain: list[PathNode] = []
+        current: PathNode | None = self
+        while current is not None and current._path is None:
+            chain.append(current)
+            current = current.parent
+        # The loop stopped either at a cached ancestor or past the root;
+        # both give a prefix the chain below extends.
+        ancestor = current._path if current is not None else None
+        path = ancestor if ancestor is not None else ""
+        for link in reversed(chain):
+            path = path + "/" + link.segment
+            object.__setattr__(link, "_path", path)
+        return path
 
 
 def materialize_path(node: PathNode | None) -> str:
-    """Walk a path chain to the root and join it; the root path is `""`.
+    """The path of `node` as a JSON Pointer string; the root path is `""`.
 
     Takes `PathNode | None` because the root application has no node at all,
     and `""` is the pointer it needs.
     """
-    segments: list[str] = []
-    current = node
-    while current is not None:
-        segments.append(current.segment)
-        current = current.parent
-    segments.reverse()
-    return "".join("/" + segment for segment in segments)
+    return "" if node is None else node.materialize()
 
 
 @dataclass(eq=False, slots=True)

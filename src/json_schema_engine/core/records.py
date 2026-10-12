@@ -8,10 +8,10 @@
 # again.
 #
 # Dependency direction: imports `channel`, `cursor` (via the `Cursor.pointer`
-# property, not the module itself), `json_model` (for `escape_segment`), and
-# `output` (the unit types, `RenderNode`, and the selection helpers). The
-# evaluator (which owns the live records) imports this; this module never
-# imports the evaluator back.
+# property, not the module itself), `ref` (for `SchemaRef.location`), and
+# `output` (the unit types, `RenderNode`, the selection helpers, and the
+# keyword-suffix memo). The evaluator (which owns the live records) imports
+# this; this module never imports the evaluator back.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -23,50 +23,41 @@ from json_schema_engine.core.channel import (
     TraceNode,
     materialize_path,
 )
-from json_schema_engine.core.json_model import escape_segment
 from json_schema_engine.core.output import (
     AnnotationSelection,
     AnnotationsOption,
     AnnotationUnit,
     ErrorUnit,
     RenderNode,
+    keyword_suffixes,
     make_record_predicate,
 )
 from json_schema_engine.core.ref import SchemaRef
-from json_schema_engine.core.uri import schema_location
 
-
-def _keyword_suffix(keyword_name: str | None) -> str:
-    """The `/`-prefixed, escaped keyword segment, or `""` when there is none.
-
-    A record's `path_node`/`schema_ref` locate the *schema object*; sibling
-    keywords share them (channel.py). The keyword's own segment is appended
-    here, at render time, once per unit — which is why several annotation
-    records with different `keyword_name`s can hold the very same
-    `path_node`.
-
-    Plain text, as an `evaluationPath` stays (P10). `_schema_location`
-    takes the same suffix and fragment-encodes the whole pointer, since a
-    `schemaLocation` is a URI.
-    """
-    return "" if keyword_name is None else "/" + escape_segment(keyword_name)
+# A record's `path_node`/`schema_ref` locate the *schema object*; sibling
+# keywords share them (channel.py). The keyword's own segment is appended at
+# render time, once per unit — which is why several annotation records with
+# different `keyword_name`s can hold the very same `path_node`. `keyword_name`
+# is `None` for a boolean `false` schema, which has no keyword to name, so
+# the unit sits at the application's own location. Both forms of the
+# segment come from `keyword_suffixes` (P10): plain text for the
+# `evaluationPath`, fragment-encoded for the `schemaLocation`, which is a
+# URI an unknown keyword's name (whatever the schema author wrote — a space,
+# a `%`) must not break.
 
 
 def _evaluation_path(path_node: PathNode | None, keyword_name: str | None) -> str:
-    return materialize_path(path_node) + _keyword_suffix(keyword_name)
+    path = materialize_path(path_node)
+    if keyword_name is None:
+        return path
+    return path + keyword_suffixes(keyword_name)[0]
 
 
 def _schema_location(schema_ref: SchemaRef, keyword_name: str | None) -> str:
-    """The unit's `schemaLocation`: a URI, keyword segment included.
-
-    Built from the ref's parts rather than by appending to `.location`,
-    because the suffix has to be fragment-encoded too (P10) and an unknown
-    keyword's name is whatever the schema author wrote — a keyword holding
-    a space or a `%` must not break the URI the rest of the location is.
-    """
-    return schema_location(
-        schema_ref.base_uri, schema_ref.pointer + _keyword_suffix(keyword_name)
-    )
+    location = schema_ref.location
+    if keyword_name is None:
+        return location
+    return location + keyword_suffixes(keyword_name)[1]
 
 
 def render_error(record: ErrorRecord, *, error_params: bool) -> ErrorUnit:
@@ -174,30 +165,84 @@ def _index_by_path(
     return at
 
 
-def to_render_node(root: TraceNode, records: RecordSets) -> RenderNode:
+def to_render_node(
+    root: TraceNode, records: RecordSets, *, prune_empty: bool = False
+) -> RenderNode:
     """Adapt the interpreter's trace into the located tree.
 
     Every location is materialized once per application; the index lists
     point into the unit sequences paired with `records`.
+
+    With `prune_empty`, an application with no record in any of the four
+    sets, at itself or anywhere below, is left out together with its
+    subtree; the root always remains. That is the tree the relevant level
+    renders: `hierarchical`/`list` omit a unit with nothing to report and
+    `detailed` condenses one away, so the pruned tree renders to the same
+    documents while its size follows the records rather than the
+    applications. The verbose level and `trace` render every application
+    and take the whole tree. Children are filtered, never reordered, and a
+    kept application keeps its parent, so the `RenderNode` invariants hold
+    either way.
     """
     errors_at = _index_by_path(records.errors)
     dropped_errors_at = _index_by_path(records.dropped_errors)
     annotations_at = _index_by_path(records.annotations)
     dropped_annotations_at = _index_by_path(records.dropped_annotations)
 
-    def to_node(node: TraceNode) -> RenderNode:
+    def to_node(node: TraceNode) -> RenderNode | None:
+        # Children first, then the record test, and only then the
+        # locations: a pruned application never materializes anything.
+        # The generator over `map` is deliberate: it keeps two frames per
+        # level, which is what lets the P3 backstop in `assemble_evaluation`
+        # see a chain the compiled tier could evaluate but the stack cannot
+        # rebuild (tests/compiler/test_depth_parity.py pins it).
+        children = (
+            tuple(child for child in map(to_node, node.children) if child is not None)
+            if node.children
+            else ()
+        )
         key = id(node.path_node)
-        return RenderNode(
-            evaluation_path=materialize_path(node.path_node),
-            schema_location=node.schema_ref.location,
-            input_location=node.cursor.pointer,
-            valid=node.valid,
-            keywords=tuple(node.keywords),
-            errors=tuple(errors_at.get(key, ())),
-            dropped_errors=tuple(dropped_errors_at.get(key, ())),
-            annotations=tuple(annotations_at.get(key, ())),
-            dropped_annotations=tuple(dropped_annotations_at.get(key, ())),
-            children=tuple(to_node(child) for child in node.children),
+        errors = errors_at.get(key)
+        dropped_errors = dropped_errors_at.get(key)
+        annotations = annotations_at.get(key)
+        dropped_annotations = dropped_annotations_at.get(key)
+        if (
+            prune_empty
+            and not children
+            and errors is None
+            and dropped_errors is None
+            and annotations is None
+            and dropped_annotations is None
+        ):
+            return None
+        return _render_node(
+            node, errors, dropped_errors, annotations, dropped_annotations, children
         )
 
-    return to_node(root)
+    rendered = to_node(root)
+    if rendered is None:
+        # Nothing anywhere: the root alone, with every child pruned.
+        rendered = _render_node(root, None, None, None, None, ())
+    return rendered
+
+
+def _render_node(
+    node: TraceNode,
+    errors: list[int] | None,
+    dropped_errors: list[int] | None,
+    annotations: list[int] | None,
+    dropped_annotations: list[int] | None,
+    children: tuple[RenderNode, ...],
+) -> RenderNode:
+    return RenderNode(
+        evaluation_path=materialize_path(node.path_node),
+        schema_location=node.schema_ref.location,
+        input_location=node.cursor.pointer,
+        valid=node.valid,
+        keywords=tuple(node.keywords),
+        errors=tuple(errors) if errors else (),
+        dropped_errors=tuple(dropped_errors) if dropped_errors else (),
+        annotations=tuple(annotations) if annotations else (),
+        dropped_annotations=tuple(dropped_annotations) if dropped_annotations else (),
+        children=children,
+    )

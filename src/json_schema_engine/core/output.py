@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
@@ -326,7 +327,27 @@ def _pick[T](indexes: Sequence[int], units: Sequence[T]) -> list[T]:
 def _join_messages(errors: Sequence[ErrorUnit]) -> str:
     # A keyword may report several errors (`required`'s missing names); a
     # one-message-per-keyword field joins them.
+    if len(errors) == 1:
+        return errors[0]["error"]
     return "; ".join(e["error"] for e in errors)
+
+
+@functools.lru_cache(maxsize=1024)
+def keyword_suffixes(keyword_name: str) -> tuple[str, str]:
+    """A keyword's own path segment in both location forms (P10).
+
+    `("/" + escaped, fragment)`: the `/`-prefixed RFC 6901 segment an
+    `evaluationPath` (plain text) appends, and the same segment
+    percent-encoded for a `schemaLocation` (a URI). Encoding the segment on
+    its own equals encoding the joined pointer, since percent-encoding works
+    byte by byte, so a location is the application's location plus
+    `fragment`. Memoized because keyword names come from the schema, a
+    small set that every unit and every keyword node of the draft-03 tree
+    repeats; the bound keeps a pathological schema from growing the cache
+    without limit.
+    """
+    plain = "/" + escape_segment(keyword_name)
+    return plain, pointer_fragment(plain)
 
 
 # --- list / hierarchical (machines-oriented proposal) ----------------------
@@ -522,14 +543,17 @@ def _build_draft03_tree(
         errors = _pick(node.errors, render_input.errors)
         annotations = _pick(node.annotations, render_input.annotations)
         if level == "verbose":
-            errors += _pick(node.dropped_errors, render_input.dropped_errors)
-            annotations += _pick(
-                node.dropped_annotations, render_input.dropped_annotations
-            )
+            if node.dropped_errors:
+                errors += _pick(node.dropped_errors, render_input.dropped_errors)
+            if node.dropped_annotations:
+                annotations += _pick(
+                    node.dropped_annotations, render_input.dropped_annotations
+                )
         # A boolean `false` schema's error belongs to the application itself.
-        own = [e for e in errors if e["evaluationPath"] == keyword_location]
-        if own:
-            unit["error"] = _join_messages(own)
+        if errors:
+            own = [e for e in errors if e["evaluationPath"] == keyword_location]
+            if own:
+                unit["error"] = _join_messages(own)
 
         # The first evaluation-path segment of a child application below its
         # parent names the applying keyword.
@@ -541,7 +565,7 @@ def _build_draft03_tree(
 
         nested: list[DetailedOutputUnit] = []
         for keyword in node.keywords:
-            suffix = "/" + escape_segment(keyword.name)
+            suffix, fragment = keyword_suffixes(keyword.name)
             kw_location = keyword_location + suffix
             kw_unit: DetailedOutputUnit = {
                 "valid": keyword.valid,
@@ -549,18 +573,18 @@ def _build_draft03_tree(
                 # `keywordLocation` is a plain-text pointer and
                 # `absoluteKeywordLocation` a URI, so the same segment is
                 # appended in two forms (P10).
-                "absoluteKeywordLocation": node.schema_location
-                + pointer_fragment(suffix),
+                "absoluteKeywordLocation": node.schema_location + fragment,
                 "instanceLocation": node.input_location,
             }
-            kw_errors = [e for e in errors if e["evaluationPath"] == kw_location]
-            if kw_errors:
-                kw_unit["error"] = _join_messages(kw_errors)
+            if errors:
+                kw_errors = [e for e in errors if e["evaluationPath"] == kw_location]
+                if kw_errors:
+                    kw_unit["error"] = _join_messages(kw_errors)
             for annotation in annotations:
                 if annotation["keyword"] == keyword.name:
                     kw_unit["annotation"] = annotation["annotation"]
                     break
-            applied = children_of.pop(keyword.name, None)
+            applied = children_of.pop(keyword.name, None) if children_of else None
             if applied is not None:
                 _attach_nested(kw_unit, [build(c) for c in applied])
             nested.append(kw_unit)

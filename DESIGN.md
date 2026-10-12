@@ -139,7 +139,7 @@ Modules of `json_schema_engine.core` (M1 set; later milestones add
 | `registry.py`   | `SchemaRegistry`: registration walk over `analyze().subschemas` only, identifier index, produced/consumed unions, reference resolution.      |
 | `evaluator.py`  | `EvalState`, `apply_schema`, `evaluate_keyword`, the `KeywordContext` implementation: the only home of §4.                                  |
 | `regex.py`      | Thin adapter over `ecma_regex`: dialect selection, `RegexCache`, error mapping, `detect_unsafe_regex` (P1, D20).                            |
-| `records.py`    | Records → located units and `RenderInput`.                                                                                                  |
+| `records.py`    | Records → located units and `RenderInput`; prunes record-free applications from the relevant level's tree.                                  |
 | `output.py`     | Units, `AnnotationSelection`, `make_record_predicate`, the format renderers. Engine-free.                                                   |
 | `result.py`     | `OutputFormat`, `EvaluateOptions`, `resolve_output_demand`, `assemble_result`, `Result`.                                                    |
 | `loader.py`     | `LoadedDocument`, `Loader` protocol (P4).                                                                                                   |
@@ -395,6 +395,26 @@ Python-specific (measured 2026-09-20 on CPython 3.14):
   string-keyed attribution would merge their records. `to_render_node`
   keys on `id(path_node)`, which is safe because the state keeps every
   record and trace node alive until the tree is built.
+- The relevant level never materializes a record-free application:
+  `to_render_node(prune_empty=True)` drops every subtree with no record
+  in any set, which `hierarchical`/`list` would omit and `detailed` would
+  condense away anyway, so the located tree follows the records rather
+  than the applications (a 160k-element array under `anyOf` rendered
+  `list` in 0.5 s instead of 0.85 s; verbose output and `trace` take the
+  whole tree). The tree walk keeps two Python frames per level — a
+  generator over `map`, not a comprehension, which 3.12 inlines — because
+  the assembly backstop test relies on an 800-application chain
+  overflowing there.
+- Measured 2026-10-11 on CPython 3.12: a third of a large `verbose` render
+  is the cyclic collector walking the live cursors, path nodes, trace
+  nodes, records and units (11 full collections over a 160k-node run;
+  `gc.disable()` took it from 1.35 s to 0.91 s). Trimming allocations at
+  the margin (a tuple `KeywordTrace`, lazily allocated `TraceNode` lists)
+  changed neither the collection count nor the time, and a library must
+  not toggle the collector. Caching the materialized path on `PathNode`,
+  `SchemaRef.location`, and a keyword's two suffix forms is worth 10–15%
+  and is as far as string work goes: cProfile overstates `quote` and
+  `materialize_path` by inflating many tiny calls.
 - A `NotRequired` unit field whose value may be JSON `null` (`annotation`,
   a `default` of `null`) is tested by key presence, never by `.get() is
   None`; the renderers' condensation rule keys on presence.

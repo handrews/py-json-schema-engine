@@ -7,6 +7,21 @@ minor versions may change public API.
 
 ## [Unreleased]
 
+### Changed
+
+- **Large results render faster.** The relevant level of `list`,
+  `hierarchical` and `detailed` no longer builds the parts of the located
+  tree it would then leave out: a schema application with no error or
+  annotation at or below it is skipped, so the cost follows the records
+  rather than the applications (about 35–40% faster on large, mostly
+  record-free evaluations). Both tiers cache a path node's evaluation path
+  and a schema position's location, and build a keyword's two location
+  suffixes once per keyword name (about 10–15% on `verbose` and the
+  verbose level of `list`/`hierarchical`). Documents are unchanged. One
+  consequence: `detailed` through a compiled evaluator on a deep,
+  record-free chain of applications now renders where it used to raise
+  `MaxDepthExceededError` from the output-assembly backstop.
+
 ## [0.0.5] - 2026-10-03
 
 ### Added
